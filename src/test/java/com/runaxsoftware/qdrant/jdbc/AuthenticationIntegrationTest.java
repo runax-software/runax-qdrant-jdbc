@@ -85,8 +85,8 @@ class AuthenticationIntegrationTest {
                     names.add(columns.getString("COLUMN_NAME"));
                 }
 
-                assertEquals(List.of("id", "created_at", "in_stock", "name", "price", "specs",
-                    "specs.color", "tags", "payload", "vector"), names);
+                assertEquals(List.of("_id", "created_at", "in_stock", "name", "price", "specs",
+                    "specs.color", "tags", "_payload", "_vector"), names);
             } finally {
                 SampleCollections.delete(gateway, prefix);
             }

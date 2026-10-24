@@ -115,8 +115,8 @@ class ShadedJarIntegrationTest {
                         }
                     }
 
-                    assertEquals(List.of("id VARCHAR", "author JSON", "author.name VARCHAR",
-                        "lang VARCHAR", "title VARCHAR", "year BIGINT", "payload JSON",
+                    assertEquals(List.of("_id VARCHAR", "author JSON", "author.name VARCHAR",
+                        "lang VARCHAR", "title VARCHAR", "year BIGINT", "_payload JSON",
                         "colbert MULTIVECTOR", "dense VECTOR", "keywords SPARSE_VECTOR"), columns);
                     assertTrue(connection.isValid(5));
                 }

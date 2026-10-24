@@ -50,7 +50,7 @@ class SchemaReaderTest {
         TableSchema schema = new SchemaReader(gateway, 50).read("products");
 
         assertEquals("products", schema.name());
-        assertEquals("id name price stock payload vector", names(schema));
+        assertEquals("_id name price stock _payload _vector", names(schema));
 
         ScrollPoints scroll = server.scrollRequests().get(0);
         assertEquals("products", scroll.getCollectionName());
@@ -63,7 +63,7 @@ class SchemaReaderTest {
     void readsOnlyOnePage() throws SQLException {
         TableSchema schema = new SchemaReader(gateway, 1).read("products");
 
-        assertEquals("id name price payload vector", names(schema));
+        assertEquals("_id name price _payload _vector", names(schema));
         assertEquals(1, server.scrollRequests().size());
     }
 
@@ -71,7 +71,7 @@ class SchemaReaderTest {
     void usesPayloadIndexesAloneWithoutASample() throws SQLException {
         TableSchema schema = new SchemaReader(gateway, 0).read("products");
 
-        assertEquals("id name payload vector", names(schema));
+        assertEquals("_id name _payload _vector", names(schema));
         assertTrue(server.scrollRequests().isEmpty());
     }
 

@@ -158,12 +158,12 @@ class QdrantDatabaseMetaDataTest {
         }
 
         assertEquals(List.of(
-            "1 id " + Types.VARCHAR + " VARCHAR null null NO",
+            "1 _id " + Types.VARCHAR + " VARCHAR null null NO",
             "2 count " + Types.BIGINT + " BIGINT 19 10 YES",
             "3 name " + Types.VARCHAR + " VARCHAR null null YES",
             "4 price " + Types.DOUBLE + " DOUBLE 17 10 YES",
-            "5 payload " + Types.VARCHAR + " JSON null null YES",
-            "6 vector " + Types.VARCHAR + " VECTOR 4 null YES"), described);
+            "5 _payload " + Types.VARCHAR + " JSON null null YES",
+            "6 _vector " + Types.VARCHAR + " VECTOR 4 null YES"), described);
     }
 
     @Test
@@ -176,8 +176,8 @@ class QdrantDatabaseMetaDataTest {
             }
         }
 
-        assertEquals("Point ID: an unsigned integer or a UUID", remarks.get("id"));
-        assertEquals("The whole payload as JSON", remarks.get("payload"));
+        assertEquals("Point ID: an unsigned integer or a UUID", remarks.get("_id"));
+        assertEquals("The whole payload as JSON", remarks.get("_payload"));
         assertEquals("Dense vector, 3 dimensions, Euclid distance", remarks.get("dense"));
         assertEquals("Sparse vector", remarks.get("keywords"));
     }
@@ -187,14 +187,14 @@ class QdrantDatabaseMetaDataTest {
         assertEquals(List.of("name"), column(metaData.getColumns(null, null, "products", "n%"),
             "COLUMN_NAME"));
         assertEquals(List.of("Mixed-Case", "articles", "products"),
-            column(metaData.getColumns(null, null, "%", "id"), "TABLE_NAME"));
+            column(metaData.getColumns(null, null, "%", "\\_id"), "TABLE_NAME"));
         assertEquals(List.of(), column(metaData.getColumns("qdrant", null, "%", "%"),
             "COLUMN_NAME"));
     }
 
     @Test
     void skipsCollectionsThatDisappearWhileReading() throws SQLException {
-        List<String> tables = column(metaData.getColumns(null, null, "%", "payload"), "TABLE_NAME");
+        List<String> tables = column(metaData.getColumns(null, null, "%", "\\_payload"), "TABLE_NAME");
 
         assertFalse(tables.contains("ghost"));
         assertEquals(3, tables.size());
@@ -224,7 +224,7 @@ class QdrantDatabaseMetaDataTest {
     void usesOnlyPayloadIndexesWhenSamplingIsOff() throws Exception {
         try (Connection unsampled = new QdrantDriver().connect(server.jdbcUrl("sampleSize=0"),
             new Properties())) {
-            assertEquals(List.of("id", "name", "price", "payload", "vector"),
+            assertEquals(List.of("_id", "name", "price", "_payload", "_vector"),
                 column(unsampled.getMetaData().getColumns(null, null, "products", "%"),
                     "COLUMN_NAME"));
         }
@@ -241,7 +241,7 @@ class QdrantDatabaseMetaDataTest {
                 "PK_NAME"), labels(keys));
             assertTrue(keys.next());
             assertEquals("products", keys.getString("TABLE_NAME"));
-            assertEquals("id", keys.getString("COLUMN_NAME"));
+            assertEquals("_id", keys.getString("COLUMN_NAME"));
             assertEquals(1, keys.getShort("KEY_SEQ"));
             assertEquals("products_pkey", keys.getString("PK_NAME"));
             assertFalse(keys.next());
@@ -262,7 +262,7 @@ class QdrantDatabaseMetaDataTest {
             assertTrue(indexes.next());
             assertEquals("products_pkey", indexes.getString("INDEX_NAME"));
             assertFalse(indexes.getBoolean("NON_UNIQUE"));
-            assertEquals("id", indexes.getString("COLUMN_NAME"));
+            assertEquals("_id", indexes.getString("COLUMN_NAME"));
             assertEquals(42, indexes.getLong("CARDINALITY"));
             assertEquals(DatabaseMetaData.tableIndexOther, indexes.getShort("TYPE"));
             assertEquals(1, indexes.getShort("ORDINAL_POSITION"));

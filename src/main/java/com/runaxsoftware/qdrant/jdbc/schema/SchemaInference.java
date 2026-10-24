@@ -18,30 +18,41 @@ import java.util.TreeMap;
 /**
  * Works out a collection's columns from its configuration and a sample of its points.
  *
- * <p>Columns come in this order: {@code id}; one column per payload field, sorted by name;
- * {@code payload}, the whole payload as JSON; and one column per vector. Payload fields are
- * every top-level key in the sample plus every indexed path, so an indexed nested field such
- * as {@code specs.color} gets a column of its own. A field's type comes from its payload index
+ * <p>Columns come in this order: {@code _id}, the point ID; one column per payload field,
+ * sorted by name; {@code _payload}, the whole payload as JSON; and one column per vector, named
+ * after it ({@code _vector} for a collection's single unnamed vector). Payload fields are every
+ * top-level key in the sample plus every indexed path, so an indexed nested field such as
+ * {@code specs.color} gets a column of its own. A field's type comes from its payload index
  * when it has one, checked against the sampled values; objects, arrays, and fields with mixed
- * value types become JSON. A payload field named like a reserved column ({@code id},
- * {@code payload}, or a vector) gets no column of its own; its values stay in {@code payload}.
+ * value types become JSON.
+ *
+ * <p>The driver's own columns start with {@code _}, so payload fields keep their names, even
+ * {@code id}. A payload field named like one of {@link #RESERVED_COLUMNS} or like a vector
+ * gets no column of its own; its values stay in {@code _payload}.
  */
 public final class SchemaInference {
 
     /**
      * The point ID column.
      */
-    public static final String ID_COLUMN = "id";
+    public static final String ID_COLUMN = "_id";
 
     /**
      * The whole-payload column.
      */
-    public static final String PAYLOAD_COLUMN = "payload";
+    public static final String PAYLOAD_COLUMN = "_payload";
 
     /**
      * The column for a collection's single unnamed vector.
      */
-    public static final String UNNAMED_VECTOR_COLUMN = "vector";
+    public static final String UNNAMED_VECTOR_COLUMN = "_vector";
+
+    /**
+     * Column names the driver uses for itself, now or in query results: the point ID, the
+     * payload, the unnamed vector, a search score, and query group columns.
+     */
+    public static final Set<String> RESERVED_COLUMNS = Set.of(ID_COLUMN, PAYLOAD_COLUMN,
+        UNNAMED_VECTOR_COLUMN, "_score", "_group", "_lookup");
 
     private SchemaInference() {
     }
@@ -52,10 +63,7 @@ public final class SchemaInference {
      */
     public static TableSchema infer(CollectionInfo collection, List<Point> sample) {
         List<ColumnDefinition> vectors = vectorColumns(collection.vectors());
-        Set<String> reserved = new HashSet<>();
-
-        reserved.add(ID_COLUMN);
-        reserved.add(PAYLOAD_COLUMN);
+        Set<String> reserved = new HashSet<>(RESERVED_COLUMNS);
         vectors.forEach(vector -> reserved.add(vector.name()));
 
         List<ColumnDefinition> columns = new ArrayList<>();
@@ -119,7 +127,7 @@ public final class SchemaInference {
         for (VectorField vector : ordered) {
             String name = vector.isUnnamed() ? UNNAMED_VECTOR_COLUMN : vector.name();
 
-            if (name.equals(ID_COLUMN) || name.equals(PAYLOAD_COLUMN)) {
+            if (!vector.isUnnamed() && RESERVED_COLUMNS.contains(name)) {
                 name = name + "_vector";
             }
 

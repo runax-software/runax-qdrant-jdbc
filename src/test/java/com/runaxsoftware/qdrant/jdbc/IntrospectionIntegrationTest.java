@@ -122,7 +122,7 @@ class IntrospectionIntegrationTest {
                 readAll(metaData.getColumnPrivileges(null, null, table, "%"));
             }
 
-            assertEquals(27, columns, "products 10, articles 10, events 7");
+            assertEquals(28, columns, "products 10, articles 10, events 8");
         }
     }
 

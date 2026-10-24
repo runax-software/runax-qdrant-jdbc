@@ -83,14 +83,14 @@ class CollectionShapesIntegrationTest {
 
             assertEquals(List.of(MIXED_CASE), tables(metaData, like(MIXED_CASE)));
             assertEquals(List.of(), tables(metaData, like(PREFIX + "mixed-case.v2")));
-            assertEquals(List.of("id", "payload", "vector"), columns(metaData, MIXED_CASE));
+            assertEquals(List.of("_id", "_payload", "_vector"), columns(metaData, MIXED_CASE));
         }
     }
 
     @Test
     void describesAnEmptyCollectionFromItsIndexes() throws SQLException {
         try (Connection connection = connect("")) {
-            assertEquals(List.of("id", "lang", "year", "payload", "vector"),
+            assertEquals(List.of("_id", "lang", "year", "_payload", "_vector"),
                 columns(connection.getMetaData(), EMPTY));
         }
     }
@@ -98,7 +98,7 @@ class CollectionShapesIntegrationTest {
     @Test
     void describesACollectionWithOnlySparseVectors() throws SQLException {
         try (Connection connection = connect("")) {
-            assertEquals(List.of("id VARCHAR", "payload JSON", "bm25 SPARSE_VECTOR"),
+            assertEquals(List.of("_id VARCHAR", "_payload JSON", "bm25 SPARSE_VECTOR"),
                 typedColumns(connection.getMetaData(), SPARSE_ONLY));
         }
     }
@@ -106,13 +106,14 @@ class CollectionShapesIntegrationTest {
     @Test
     void findsFieldsOnlyInThePointsItSamples() throws SQLException {
         // Qdrant returns points in ID order. Point 1 has kind, a whole-number count, a boolean
-        // flag, and an "id" field that stays in the payload; later points add a fractional
-        // count, a text flag, and meta.
+        // flag, and its own "id" payload field; later points add a fractional count, a text
+        // flag, and meta.
         try (Connection one = connect("sampleSize=1"); Connection all = connect("sampleSize=100")) {
-            assertEquals(List.of("id VARCHAR", "count BIGINT", "flag BOOLEAN", "kind VARCHAR",
-                "payload JSON", "vector VECTOR"), typedColumns(one.getMetaData(), PREFIX + "events"));
-            assertEquals(List.of("id VARCHAR", "count DOUBLE", "flag JSON", "kind VARCHAR",
-                "meta JSON", "payload JSON", "vector VECTOR"),
+            assertEquals(List.of("_id VARCHAR", "count BIGINT", "flag BOOLEAN", "id VARCHAR",
+                "kind VARCHAR", "_payload JSON", "_vector VECTOR"),
+                typedColumns(one.getMetaData(), PREFIX + "events"));
+            assertEquals(List.of("_id VARCHAR", "count DOUBLE", "flag JSON", "id VARCHAR", "kind VARCHAR",
+                "meta JSON", "_payload JSON", "_vector VECTOR"),
                 typedColumns(all.getMetaData(), PREFIX + "events"));
         }
     }
@@ -122,9 +123,9 @@ class CollectionShapesIntegrationTest {
         // Without a sample, the indexed tags field can't be seen to hold arrays, so it's typed
         // from its keyword index.
         try (Connection connection = connect("sampleSize=0")) {
-            assertEquals(List.of("id VARCHAR", "created_at TIMESTAMP WITH TIME ZONE", "name VARCHAR",
-                "price DOUBLE", "specs.color VARCHAR", "tags VARCHAR", "payload JSON",
-                "vector VECTOR"), typedColumns(connection.getMetaData(), PREFIX + "products"));
+            assertEquals(List.of("_id VARCHAR", "created_at TIMESTAMP WITH TIME ZONE", "name VARCHAR",
+                "price DOUBLE", "specs.color VARCHAR", "tags VARCHAR", "_payload JSON",
+                "_vector VECTOR"), typedColumns(connection.getMetaData(), PREFIX + "products"));
         }
     }
 
@@ -132,7 +133,7 @@ class CollectionShapesIntegrationTest {
     void listsColumnsOfEveryMatchingCollection() throws SQLException {
         try (Connection connection = connect("");
              ResultSet columns = connection.getMetaData().getColumns(null, null, like(PREFIX) + "%",
-                 "id")) {
+                 "\\_id")) {
             List<String> tables = new ArrayList<>();
 
             while (columns.next()) {

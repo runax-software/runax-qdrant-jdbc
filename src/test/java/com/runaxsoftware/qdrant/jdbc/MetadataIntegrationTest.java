@@ -81,24 +81,24 @@ class MetadataIntegrationTest {
     @Test
     void describesProductColumns() throws SQLException {
         assertEquals(List.of(
-            "id VARCHAR", "created_at TIMESTAMP WITH TIME ZONE", "in_stock BOOLEAN", "name VARCHAR",
-            "price DOUBLE", "specs JSON", "specs.color VARCHAR", "tags JSON", "payload JSON",
-            "vector VECTOR(4)"), columns("products"));
+            "_id VARCHAR", "created_at TIMESTAMP WITH TIME ZONE", "in_stock BOOLEAN", "name VARCHAR",
+            "price DOUBLE", "specs JSON", "specs.color VARCHAR", "tags JSON", "_payload JSON",
+            "_vector VECTOR(4)"), columns("products"));
     }
 
     @Test
     void describesArticleColumns() throws SQLException {
         assertEquals(List.of(
-            "id VARCHAR", "author JSON", "author.name VARCHAR", "lang VARCHAR", "title VARCHAR",
-            "year BIGINT", "payload JSON", "colbert MULTIVECTOR(2)", "dense VECTOR(4)",
+            "_id VARCHAR", "author JSON", "author.name VARCHAR", "lang VARCHAR", "title VARCHAR",
+            "year BIGINT", "_payload JSON", "colbert MULTIVECTOR(2)", "dense VECTOR(4)",
             "keywords SPARSE_VECTOR"), columns("articles"));
     }
 
     @Test
     void describesEventColumnsFromSampledValues() throws SQLException {
         assertEquals(List.of(
-            "id VARCHAR", "count DOUBLE", "flag JSON", "kind VARCHAR", "meta JSON", "payload JSON",
-            "vector VECTOR(2)"), columns("events"));
+            "_id VARCHAR", "count DOUBLE", "flag JSON", "id VARCHAR", "kind VARCHAR", "meta JSON",
+            "_payload JSON", "_vector VECTOR(2)"), columns("events"));
     }
 
     @Test
@@ -118,7 +118,7 @@ class MetadataIntegrationTest {
     void marksOnlyTheIdAsNotNull() throws SQLException {
         try (ResultSet rows = metaData.getColumns(null, null, like(PREFIX + "products"), "%")) {
             while (rows.next()) {
-                boolean id = rows.getString("COLUMN_NAME").equals("id");
+                boolean id = rows.getString("COLUMN_NAME").equals("_id");
                 assertEquals(id ? "NO" : "YES", rows.getString("IS_NULLABLE"));
                 assertEquals(id ? DatabaseMetaData.columnNoNulls : DatabaseMetaData.columnNullable,
                     rows.getInt("NULLABLE"));
@@ -132,7 +132,7 @@ class MetadataIntegrationTest {
 
         try (ResultSet rows = metaData.getPrimaryKeys(null, null, table)) {
             assertTrue(rows.next());
-            assertEquals("id", rows.getString("COLUMN_NAME"));
+            assertEquals("_id", rows.getString("COLUMN_NAME"));
             assertEquals(1, rows.getShort("KEY_SEQ"));
             assertEquals(table + "_pkey", rows.getString("PK_NAME"));
             assertFalse(rows.next());
@@ -156,7 +156,7 @@ class MetadataIntegrationTest {
         }
 
         assertEquals(List.of(
-            table + "_pkey id unique", "created_at_idx created_at", "name_idx name",
+            table + "_pkey _id unique", "created_at_idx created_at", "name_idx name",
             "price_idx price", "specs.color_idx specs.color", "tags_idx tags"), indexes);
     }
 

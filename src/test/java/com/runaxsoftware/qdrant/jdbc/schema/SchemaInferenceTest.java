@@ -31,7 +31,7 @@ class SchemaInferenceTest {
         TableSchema schema = infer(List.of(UNNAMED), Map.of(),
                 "{\"b\": 1, \"a\": \"x\"}");
 
-        assertEquals("id a b payload vector", names(schema));
+        assertEquals("_id a b _payload _vector", names(schema));
     }
 
     @Test
@@ -77,7 +77,7 @@ class SchemaInferenceTest {
         TableSchema schema = infer(List.of(UNNAMED), Map.of("specs.color", "keyword"),
                 "{\"specs\": {\"color\": \"black\", \"weight\": 1.2}}");
 
-        assertEquals("id specs specs.color payload vector", names(schema));
+        assertEquals("_id specs specs.color _payload _vector", names(schema));
         assertEquals(ColumnType.JSON, type(schema, "specs"));
         assertEquals(ColumnType.TEXT, type(schema, "specs.color"));
         assertEquals("specs.color", column(schema, "specs.color").source());
@@ -91,16 +91,43 @@ class SchemaInferenceTest {
                 new CollectionInfo("empty", 0, List.of(UNNAMED), Map.of("lang", "keyword")),
                 List.of());
 
-        assertEquals("id lang payload vector", names(schema));
+        assertEquals("_id lang _payload _vector", names(schema));
+    }
+
+    @Test
+    void givesPayloadFieldsNamedIdPayloadOrVectorTheirOwnColumns() throws Exception {
+        TableSchema schema = infer(List.of(UNNAMED), Map.of(),
+            "{\"id\": \"evt-1\", \"payload\": 1, \"vector\": [1], \"kind\": \"a\"}");
+
+        assertEquals("_id id kind payload vector _payload _vector", names(schema));
+        assertEquals(ColumnKind.ID, column(schema, "_id").kind());
+        assertEquals(ColumnKind.PAYLOAD_FIELD, column(schema, "id").kind());
+        assertEquals("id", column(schema, "id").source());
     }
 
     @Test
     void leavesPayloadFieldsNamedLikeReservedColumnsInThePayload() throws Exception {
-        TableSchema schema = infer(List.of(UNNAMED), Map.of(),
-                "{\"id\": \"evt-1\", \"payload\": 1, \"vector\": [1], \"kind\": \"a\"}");
+        TableSchema schema = infer(List.of(UNNAMED), Map.of("_score", "float"),
+            "{\"_id\": \"mongo-id\", \"_payload\": 1, \"_vector\": 2, \"_score\": 0.5,"
+                + " \"_group\": 3, \"_lookup\": 4, \"kind\": \"a\"}");
 
-        assertEquals("id kind payload vector", names(schema));
-        assertEquals(ColumnKind.ID, column(schema, "id").kind());
+        assertEquals("_id kind _payload _vector", names(schema));
+    }
+
+    @Test
+    void keepsOtherUnderscoreFieldsAsColumns() throws Exception {
+        TableSchema schema = infer(List.of(UNNAMED), Map.of(), "{\"_ts\": 1, \"id\": \"x\"}");
+
+        assertEquals("_id _ts id _payload _vector", names(schema));
+    }
+
+    @Test
+    void letsAVectorWinOverAPayloadFieldOfTheSameName() throws Exception {
+        TableSchema schema = infer(List.of(new VectorField("dense", VectorKind.DENSE, 4, "Dot")),
+            Map.of(), "{\"dense\": \"text\", \"kind\": \"a\"}");
+
+        assertEquals("_id kind _payload dense", names(schema));
+        assertEquals(ColumnKind.VECTOR, column(schema, "dense").kind());
     }
 
     @Test
@@ -109,14 +136,16 @@ class SchemaInferenceTest {
                 new VectorField("keywords", VectorKind.SPARSE, 0, null),
                 new VectorField("dense", VectorKind.DENSE, 4, "Dot"),
                 new VectorField("colbert", VectorKind.MULTIVECTOR, 2, "Cosine"),
-                new VectorField("payload", VectorKind.DENSE, 3, "Cosine")), Map.of());
+                new VectorField("payload", VectorKind.DENSE, 3, "Cosine"),
+            new VectorField("_score", VectorKind.DENSE, 3, "Cosine")), Map.of());
 
-        assertEquals("id payload colbert dense payload_vector keywords", names(schema));
+        assertEquals("_id _payload _score_vector colbert dense payload keywords", names(schema));
         assertEquals(ColumnType.MULTIVECTOR, type(schema, "colbert"));
         assertEquals(ColumnType.VECTOR, type(schema, "dense"));
         assertEquals(ColumnType.SPARSE_VECTOR, type(schema, "keywords"));
         assertEquals(4, column(schema, "dense").size());
-        assertEquals("payload", column(schema, "payload_vector").source());
+        assertEquals("payload", column(schema, "payload").source());
+        assertEquals("_score", column(schema, "_score_vector").source());
         assertEquals("Dense vector, 4 dimensions, Dot distance", column(schema, "dense").remarks());
         assertEquals("Multivector of 2-dimension vectors, Cosine distance",
                 column(schema, "colbert").remarks());
@@ -126,9 +155,9 @@ class SchemaInferenceTest {
     void makesOnlyTheIdNotNull() throws Exception {
         TableSchema schema = infer(List.of(UNNAMED), Map.of(), "{\"a\": 1}");
 
-        assertFalse(column(schema, "id").nullable());
+        assertFalse(column(schema, "_id").nullable());
         assertTrue(column(schema, "a").nullable());
-        assertTrue(column(schema, "payload").nullable());
+        assertTrue(column(schema, "_payload").nullable());
     }
 
     @Test
@@ -159,7 +188,7 @@ class SchemaInferenceTest {
             new CollectionInfo("test", 1, List.of(UNNAMED), Map.of()),
             List.of(new Point(JSON.getNodeFactory().numberNode(1), null, null)));
 
-        assertEquals("id payload vector", names(schema));
+        assertEquals("_id _payload _vector", names(schema));
     }
 
     @Test
@@ -167,7 +196,7 @@ class SchemaInferenceTest {
         TableSchema schema = infer(List.of(UNNAMED), Map.of("variants[].sku", "keyword"),
             "{\"variants\": [{\"sku\": \"A1\"}]}");
 
-        assertEquals("id variants variants[].sku payload vector", names(schema));
+        assertEquals("_id variants variants[].sku _payload _vector", names(schema));
         assertEquals(ColumnType.TEXT, type(schema, "variants[].sku"));
         assertEquals("Nested payload field (keyword index)",
             column(schema, "variants[].sku").remarks());
@@ -220,7 +249,7 @@ class SchemaInferenceTest {
         TableSchema schema = infer(List.of(UNNAMED), Map.of("b.c", "keyword"),
             "{\"c\": 1, \"B\": 2, \"a\": 3, \"b\": {\"c\": \"x\"}}");
 
-        assertEquals("id B a b b.c c payload vector", names(schema));
+        assertEquals("_id B a b b.c c _payload _vector", names(schema));
     }
 
     @Test
@@ -228,9 +257,9 @@ class SchemaInferenceTest {
         TableSchema schema = infer(List.of(
             new VectorField("", VectorKind.MULTIVECTOR, 128, "Cosine")), Map.of());
 
-        assertEquals(ColumnType.MULTIVECTOR, type(schema, "vector"));
-        assertEquals("", column(schema, "vector").source());
-        assertEquals(128, column(schema, "vector").size());
+        assertEquals(ColumnType.MULTIVECTOR, type(schema, "_vector"));
+        assertEquals("", column(schema, "_vector").source());
+        assertEquals(128, column(schema, "_vector").size());
     }
 
     @Test
