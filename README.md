@@ -6,7 +6,7 @@ first target; any JDBC client (DBeaver, BI tools) should work the same way.
 
 > **Status: early development.** Nothing is published yet and the driver can't connect
 > to Qdrant so far. Everything below describes the planned design — see
-> [ROADMAP.md](ROADMAP.md) for what lands in which release.
+> [ROADMAP.md](ROADMAP.md) for the plan.
 
 - **Collections as tables** — collections show up in the database explorer, and points
   as rows: an `id`, a raw `payload` JSON column, one column per indexed payload field,

@@ -1,9 +1,6 @@
 # Runax JDBC Driver for Qdrant — Roadmap
 
-Planned work, grouped by release. Each release is usable on its own: 0.1 browses and
-searches, 0.2 adds text search and richer queries, 0.3 adds writes.
-
-## 0.1 — Read-only browsing
+Planned work, roughly in the order it will land.
 
 - [ ] **Connection** — `jdbc:qdrant://host:6333`, TLS, and the Qdrant API key taken
   from the password field.
@@ -26,9 +23,6 @@ searches, 0.2 adds text search and richer queries, 0.3 adds writes.
 - [ ] **Integration tests** against Qdrant in Docker.
 - [ ] **Packaging** — one self-contained jar, a DataGrip setup guide, and publishing to
   Maven Central as `com.runaxsoftware:qdrant-jdbc`.
-
-## 0.2 — Text search and richer queries
-
 - [ ] **`embed('text')`** through any OpenAI-compatible embeddings endpoint (OpenAI,
   Ollama, vLLM, LM Studio).
 - [ ] **Qdrant Cloud inference** — let Qdrant embed the text server-side where available.
@@ -36,16 +30,10 @@ searches, 0.2 adds text search and richer queries, 0.3 adds writes.
   per connection, so a query can't silently use the wrong model.
 - [ ] **GROUP BY** with `COUNT(*)` through the facet API.
 - [ ] **ORDER BY** on range-indexed payload fields.
-
-## 0.3 — Writes
-
 - [ ] **Prepared statements** with parameters.
 - [ ] **Grid edits** — `UPDATE ... WHERE id = ?` from DataGrip's data editor, mapped to
   Qdrant's set-payload call.
 - [ ] **DELETE** mapped to deleting points.
-
-## Later
-
 - [ ] **DataGrip plugin** (`runax-qdrant-datagrip`, a separate repository) — a search
   panel that writes SQL into a console, collection tools, and a bundled driver
   definition.
