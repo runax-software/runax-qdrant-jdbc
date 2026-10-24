@@ -1,3 +1,2 @@
-# Request review from Katyara11 on all PRs (including Dependabot).
-# Replaces the deprecated `reviewers` option in dependabot.yml.
+# Request review from Katyara11 on all PRs.
 * @Katyara11

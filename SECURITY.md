@@ -27,4 +27,4 @@ We will acknowledge your report within 48 hours and aim to provide a fix or miti
 
 ## Scope
 
-This policy covers the code in the driver. The driver handles Qdrant API keys and embedding-provider API keys, so keys leaking through logs, exception messages, or connection URLs are in scope. Third-party dependencies are bundled into the driver jar and updated through Dependabot.
+This policy covers the code in the driver. The driver handles Qdrant API keys and embedding-provider API keys, so keys leaking through logs, exception messages, or connection URLs are in scope. Third-party dependencies are bundled into the driver jar.
