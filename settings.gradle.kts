@@ -1,0 +1,1 @@
+rootProject.name = "runax-qdrant-jdbc"
