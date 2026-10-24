@@ -9,8 +9,8 @@ first target; any JDBC client (DBeaver, BI tools) should work the same way.
 > The querying sections below describe the planned design — see [ROADMAP.md](ROADMAP.md).
 
 - **Collections as tables** — collections show up in the database explorer, and points
-  as rows: an `id`, a raw `payload` JSON column, one column per indexed payload field,
-  and the collection's vectors.
+  as rows: every payload field is a column under its own name, next to the driver's own
+  `_id` (the point ID), `_payload` (the whole payload as JSON), and the vectors.
 - **SQL over the Qdrant API** — `WHERE` becomes a Qdrant filter, plus `LIMIT`,
   `COUNT(*)`, `GROUP BY` through facets, and `ORDER BY` on range-indexed fields.
 - **Similarity search** — rank points by similarity to a vector or to text embedded on
@@ -61,7 +61,7 @@ collections with `./gradlew seedQdrant`.
 Regular SQL against a collection:
 
 ```sql
-SELECT id, payload
+SELECT _id, _payload
 FROM docs
 WHERE lang = 'en' AND year >= 2024
 LIMIT 50
@@ -70,7 +70,7 @@ LIMIT 50
 Similarity search, combined with a filter:
 
 ```sql
-SELECT id, _score, payload
+SELECT _id, _score, _payload
 FROM docs
 WHERE lang = 'en'
 ORDER BY similarity(dense, embed('refund policy')) DESC
@@ -92,6 +92,9 @@ with the embedding model configured for that vector. A vector literal works in i
 | `GROUP BY field` + `COUNT(*)` | Facet API | Needs a keyword index on the field |
 | `ORDER BY similarity(...)` | Query API | Score returned as `_score` |
 | `JOIN`, `SUM`, `AVG`, subqueries | — | Rejected with an error |
+
+The full mapping, covering writes, DDL, aliases, hybrid search, and the rest of Qdrant's API,
+is in the [SQL dialect spec](docs/specs/sql-dialect.md).
 
 ## Building
 
