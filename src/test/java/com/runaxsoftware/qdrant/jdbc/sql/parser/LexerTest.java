@@ -17,8 +17,9 @@ import org.junit.jupiter.api.Timeout;
 import java.sql.SQLSyntaxErrorException;
 import java.util.List;
 
-// A lexer bug usually shows up as a loop that never ends, so no test may run for long
-@Timeout(5)
+// A lexer bug usually shows up as a loop that never ends. A separate thread lets the timeout
+// stop such a loop: on the test's own thread it could only ask, and the loop would ignore it
+@Timeout(value = 2, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
 class LexerTest {
 
     @Test

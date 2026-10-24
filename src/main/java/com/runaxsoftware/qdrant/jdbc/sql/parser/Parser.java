@@ -1,8 +1,6 @@
 package com.runaxsoftware.qdrant.jdbc.sql.parser;
 
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.*;
-
-import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.*;
 import java.sql.SQLSyntaxErrorException;
 import java.util.ArrayList;
 import java.util.List;
@@ -119,14 +117,14 @@ public final class Parser {
 
         boolean negated = matchKeyword("NOT");
         if (matchKeyword("IN")) {
-            expectKeyword("(");
+            expectSymbol("(");
 
             var values = new ArrayList<Expression>();
             do {
                 values.add(parseValue());
             } while (matchSymbol(","));
 
-            expectKeyword(")");
+            expectSymbol(")");
 
             return new InList(column, values, negated);
         }
@@ -145,9 +143,7 @@ public final class Parser {
 
     private Expression parseValue() throws SQLSyntaxErrorException {
         Token token = peek();
-        pos++;
-
-        return switch (token.type()) {
+        Expression value = switch (token.type()) {
             case STRING -> new Literal(token.text());
             case NUMBER -> new Literal(token.text().contains(".")
                 ? (Object) Double.parseDouble(token.text())
@@ -160,6 +156,9 @@ public final class Parser {
             };
             default -> throw error("Expected a value");
         };
+
+        pos++;
+        return value;
     }
 
     // Token helpers
@@ -182,7 +181,7 @@ public final class Parser {
     }
 
     private boolean matchSymbol(String symbol) {
-        if (peek().type() == TokenType.SYMBOL == peek().text().equals(symbol)) {
+        if (peek().type() == TokenType.SYMBOL && peek().text().equals(symbol)) {
             pos++;
 
             return true;

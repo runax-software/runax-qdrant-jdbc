@@ -33,6 +33,8 @@ final class Lexer {
 
                 return tokens;
             }
+
+            tokens.add(next());
         }
     }
 
@@ -50,11 +52,11 @@ final class Lexer {
             String upper = word.toUpperCase(Locale.ROOT);
 
             return KETWORDS.contains(upper)
-                ? new Token(TokenType.KEYWORD, upper, pos)
-                : new Token(TokenType.IDENTIFIER, word, pos);
+                ? new Token(TokenType.KEYWORD, upper, start)
+                : new Token(TokenType.IDENTIFIER, word, start);
         }
 
-        if (Character.isDigit(c) || (c == '_' && isDiditAt(pos + 1))) {
+        if (Character.isDigit(c) || (c == '-' && isDiditAt(pos + 1))) {
             do {
                 pos++;
             } while (isDiditAt(pos));
@@ -69,11 +71,17 @@ final class Lexer {
         }
 
         if (c == '\'') {
-            return quoted('\'', TokenType.PARAMETER);
+            return quoted('\'', TokenType.STRING);
         }
 
         if (c == '"') {
             return quoted('"', TokenType.IDENTIFIER);
+        }
+
+        if (c == '?') {
+            pos++;
+
+            return new Token(TokenType.PARAMETER, "?", start);
         }
 
         for (String symbol : TWO_CHAR_SYMBOLS) {
