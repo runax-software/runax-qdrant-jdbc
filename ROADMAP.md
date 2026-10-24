@@ -2,11 +2,11 @@
 
 Planned work, roughly in the order it will land.
 
-- [ ] **Connection** — `jdbc:qdrant://host:6333`, TLS, and the Qdrant API key taken
-  from the password field.
-- [ ] **Collections as tables** — `DatabaseMetaData` lists collections, so DataGrip's
+- [x] **Connection** — `jdbc:qdrant://host:6334` over gRPC through the official Qdrant
+  Java SDK, TLS, and the Qdrant API key taken from the password field.
+- [x] **Collections as tables** — `DatabaseMetaData` lists collections, so DataGrip's
   database explorer fills in on its own.
-- [ ] **Columns** — `id` (text, since Qdrant IDs are unsigned 64-bit integers or UUIDs),
+- [x] **Columns** — `id` (text, since Qdrant IDs are unsigned 64-bit integers or UUIDs),
   a raw `payload` JSON column, one column per indexed payload field (found from the
   collection's payload indexes and a sample of points), and vector columns for named,
   sparse, and multi-vectors.
@@ -44,4 +44,5 @@ Planned work, roughly in the order it will land.
 - **JOINs and arbitrary aggregates** (`SUM`, `AVG`, ...) — Qdrant can't run them, and
   emulating them means scanning whole collections on the client. They fail with an
   error instead.
-- **Native code and local embedding models** — the driver stays pure Java.
+- **Local embedding models** — the driver doesn't run models itself; it calls an
+  embeddings endpoint or Qdrant's own inference.
