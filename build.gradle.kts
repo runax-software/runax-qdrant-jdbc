@@ -77,3 +77,29 @@ tasks.test {
         excludeTags("integration")
     }
 }
+
+// Integration tests run against a real Qdrant: start it with `docker compose up -d`. They also
+// load the shaded jar on its own, the way DataGrip does, so it's built first.
+tasks.register<Test>("integrationTest") {
+    description = "Runs the integration tests against Qdrant (start it with docker compose up -d)."
+    group = LifecycleBasePlugin.VERIFICATION_GROUP
+    testClassesDirs = sourceSets.test.get().output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnitPlatform {
+        includeTags("integration")
+    }
+    shouldRunAfter(tasks.test)
+
+    val shadedJar = tasks.shadowJar.flatMap { it.archiveFile }
+    inputs.file(shadedJar)
+    jvmArgumentProviders.add(CommandLineArgumentProvider {
+        listOf("-Dqdrant.jdbc.shadedJar=${shadedJar.get().asFile.absolutePath}")
+    })
+}
+
+tasks.register<JavaExec>("seedQdrant") {
+    description = "Loads the sample collections into Qdrant (start it with docker compose up -d)."
+    group = "qdrant"
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass = "com.runaxsoftware.qdrant.jdbc.support.SeedSampleData"
+}

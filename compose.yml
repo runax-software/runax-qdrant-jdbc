@@ -12,5 +12,15 @@ services:
     volumes:
       - qdrant-data:/qdrant/storage
 
+  # A second server that requires an API key, for the authentication integration tests.
+  # gRPC on localhost:6336, REST on localhost:6335. It keeps no data between runs.
+  qdrant-secured:
+    image: qdrant/qdrant:v1.20.0
+    ports:
+      - "6335:6333"
+      - "6336:6334"
+    environment:
+      QDRANT__SERVICE__API_KEY: integration-test-key
+
 volumes:
   qdrant-data:

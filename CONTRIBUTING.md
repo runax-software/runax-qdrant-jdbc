@@ -24,27 +24,60 @@ version.
     ```bash
     ./gradlew build
     ```
-4. Run the tests
+4. Run the unit tests (no Qdrant or Docker needed)
     ```bash
     ./gradlew test
     ```
-5. Start Qdrant locally when you want to try the driver against a real server
+5. Start Qdrant locally and run the integration tests against it
     ```bash
     docker compose up -d
+    ./gradlew integrationTest
     ```
-    The REST API listens on `localhost:6333`, with a web dashboard at
-    <http://localhost:6333/dashboard>. `docker compose down -v` stops it and deletes the
-    stored collections.
+    `compose.yml` starts two servers:
+
+    | Server | gRPC (what the driver uses) | REST and dashboard | API key |
+    | --- | --- | --- | --- |
+    | `qdrant` | `localhost:6334` | <http://localhost:6333/dashboard> | none |
+    | `qdrant-secured` | `localhost:6336` | `localhost:6335` | `integration-test-key` |
+
+    The integration tests create and delete their own collections. `integrationTest` also
+    builds the shaded jar and checks it on its own, in a separate class loader, the way
+    DataGrip loads drivers. To test against other servers, set `QDRANT_JDBC_URL` and
+    `QDRANT_API_KEY`, and `QDRANT_SECURED_JDBC_URL` and `QDRANT_SECURED_API_KEY` for the
+    authentication tests. `docker compose down -v` stops both servers and deletes the stored
+    collections.
+6. Load sample collections to try the driver by hand, for example in DataGrip
+    ```bash
+    ./gradlew seedQdrant
+    ```
+    This creates `sample_articles`, `sample_events`, and `sample_products`, replacing any
+    collections with those names.
 
 ## Project structure
 
 ```
-src/main/java/com/runaxsoftware/qdrant/jdbc/   # The driver
-src/test/java/com/runaxsoftware/qdrant/jdbc/   # Tests
-build.gradle.kts                                # Build, dependencies, and packaging
-settings.gradle.kts                             # Gradle project settings
+src/main/java/com/runaxsoftware/qdrant/jdbc/
+  QdrantDriver, QdrantConnection, ...          # The JDBC classes
+  client/                                      # Calls to Qdrant through the official Java SDK
+  schema/                                      # How a collection maps to columns
+  result/                                      # Read-only result sets
+src/test/java/com/runaxsoftware/qdrant/jdbc/   # Unit tests and *IntegrationTest classes
+  support/                                     # Fake Qdrant server, sample collections,
+                                               # and test server settings
+build.gradle.kts                                # Build, test tasks, and the shaded driver jar
+gradle/libs.versions.toml                       # Dependency versions
 gradle/wrapper/                                 # Gradle wrapper (pins the Gradle version)
+compose.yml                                     # Local Qdrant for tests and trying the driver
 ```
+
+Integration tests are tagged `integration`: `./gradlew test` skips them and
+`./gradlew integrationTest` runs only them.
+
+Unit tests that need a server use `support/FakeQdrantServer`, an in-process stand-in for
+Qdrant's gRPC API built on the SDK's generated service classes. It can fail or delay any call,
+require an API key, and records requests and headers, so error handling and edge cases are
+tested without Docker. Use it for anything that depends on how the server answers; use an
+integration test to check behaviour against real Qdrant.
 
 ## Making changes
 
@@ -74,9 +107,13 @@ gradle/wrapper/                                 # Gradle wrapper (pins the Gradl
 Every runtime dependency ends up inside the single driver jar that users drop into
 DataGrip, so keep them few and small.
 
-1. Prefer the JDK (`java.net.http`, `java.sql`) over a library.
+1. Prefer the JDK or what the Qdrant SDK already brings over a new library.
 2. Open an issue before adding a new runtime dependency.
-3. Test-only dependencies (`testImplementation`) are fine.
+3. Declare its version in `gradle/libs.versions.toml` and reference it from
+   `build.gradle.kts` through `libs`.
+4. If other tools commonly ship the same library, relocate it in the `shadowJar` task so
+   the versions can't clash.
+5. Test-only dependencies (`testImplementation`) are fine.
 
 ## Code style
 

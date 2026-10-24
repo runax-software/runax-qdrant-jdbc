@@ -1,0 +1,204 @@
+package com.runaxsoftware.qdrant.jdbc;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import com.runaxsoftware.qdrant.jdbc.client.QdrantGateway;
+import com.runaxsoftware.qdrant.jdbc.support.SampleCollections;
+import com.runaxsoftware.qdrant.jdbc.support.TestQdrant;
+
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.Test;
+
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * Reads the sample collections back through {@link DatabaseMetaData}, the way DataGrip's
+ * database explorer does. Needs Qdrant: {@code docker compose up -d}.
+ */
+@Tag("integration")
+class MetadataIntegrationTest {
+
+    private static final String PREFIX =
+        "jdbc_it_" + UUID.randomUUID().toString().substring(0, 8) + "_";
+
+    private static QdrantGateway gateway;
+    private static Connection connection;
+    private static DatabaseMetaData metaData;
+
+    @BeforeAll
+    static void createCollections() throws SQLException {
+        gateway = TestQdrant.gateway();
+        SampleCollections.create(gateway, PREFIX);
+        connection = DriverManager.getConnection(TestQdrant.jdbcUrl(), TestQdrant.properties());
+        metaData = connection.getMetaData();
+    }
+
+    @AfterAll
+    static void deleteCollections() throws SQLException {
+        if (connection != null) {
+            connection.close();
+        }
+
+        if (gateway != null) {
+            SampleCollections.delete(gateway, PREFIX);
+            gateway.close();
+        }
+    }
+
+    @Test
+    void listsCollectionsAsTables() throws SQLException {
+        List<String> tables = new ArrayList<>();
+
+        try (ResultSet rows = metaData.getTables(null, null, like(PREFIX) + "%", null)) {
+            while (rows.next()) {
+                tables.add(rows.getString("TABLE_NAME"));
+                assertEquals("TABLE", rows.getString("TABLE_TYPE"));
+                assertEquals(null, rows.getString("TABLE_SCHEM"));
+            }
+        }
+
+        assertEquals(List.of(PREFIX + "articles", PREFIX + "events", PREFIX + "products"), tables);
+    }
+
+    @Test
+    void listsNoTablesForOtherTableTypes() throws SQLException {
+        try (ResultSet rows = metaData.getTables(null, null, "%", new String[] {"VIEW"})) {
+            assertFalse(rows.next());
+        }
+    }
+
+    @Test
+    void describesProductColumns() throws SQLException {
+        assertEquals(List.of(
+            "id VARCHAR", "created_at TIMESTAMP WITH TIME ZONE", "in_stock BOOLEAN", "name VARCHAR",
+            "price DOUBLE", "specs JSON", "specs.color VARCHAR", "tags JSON", "payload JSON",
+            "vector VECTOR(4)"), columns("products"));
+    }
+
+    @Test
+    void describesArticleColumns() throws SQLException {
+        assertEquals(List.of(
+            "id VARCHAR", "author JSON", "author.name VARCHAR", "lang VARCHAR", "title VARCHAR",
+            "year BIGINT", "payload JSON", "colbert MULTIVECTOR(2)", "dense VECTOR(4)",
+            "keywords SPARSE_VECTOR"), columns("articles"));
+    }
+
+    @Test
+    void describesEventColumnsFromSampledValues() throws SQLException {
+        assertEquals(List.of(
+            "id VARCHAR", "count DOUBLE", "flag JSON", "kind VARCHAR", "meta JSON", "payload JSON",
+            "vector VECTOR(2)"), columns("events"));
+    }
+
+    @Test
+    void filtersColumnsByName() throws SQLException {
+        List<String> names = new ArrayList<>();
+
+        try (ResultSet rows = metaData.getColumns(null, null, like(PREFIX + "products"), "spec%")) {
+            while (rows.next()) {
+                names.add(rows.getString("COLUMN_NAME"));
+            }
+        }
+
+        assertEquals(List.of("specs", "specs.color"), names);
+    }
+
+    @Test
+    void marksOnlyTheIdAsNotNull() throws SQLException {
+        try (ResultSet rows = metaData.getColumns(null, null, like(PREFIX + "products"), "%")) {
+            while (rows.next()) {
+                boolean id = rows.getString("COLUMN_NAME").equals("id");
+                assertEquals(id ? "NO" : "YES", rows.getString("IS_NULLABLE"));
+                assertEquals(id ? DatabaseMetaData.columnNoNulls : DatabaseMetaData.columnNullable,
+                    rows.getInt("NULLABLE"));
+            }
+        }
+    }
+
+    @Test
+    void reportsTheIdAsPrimaryKey() throws SQLException {
+        String table = PREFIX + "products";
+
+        try (ResultSet rows = metaData.getPrimaryKeys(null, null, table)) {
+            assertTrue(rows.next());
+            assertEquals("id", rows.getString("COLUMN_NAME"));
+            assertEquals(1, rows.getShort("KEY_SEQ"));
+            assertEquals(table + "_pkey", rows.getString("PK_NAME"));
+            assertFalse(rows.next());
+        }
+
+        try (ResultSet rows = metaData.getPrimaryKeys(null, null, PREFIX + "missing")) {
+            assertFalse(rows.next());
+        }
+    }
+
+    @Test
+    void reportsPayloadIndexesAsIndexes() throws SQLException {
+        String table = PREFIX + "products";
+        List<String> indexes = new ArrayList<>();
+
+        try (ResultSet rows = metaData.getIndexInfo(null, null, table, false, true)) {
+            while (rows.next()) {
+                indexes.add(rows.getString("INDEX_NAME") + " " + rows.getString("COLUMN_NAME")
+                    + (rows.getBoolean("NON_UNIQUE") ? "" : " unique"));
+            }
+        }
+
+        assertEquals(List.of(
+            table + "_pkey id unique", "created_at_idx created_at", "name_idx name",
+            "price_idx price", "specs.color_idx specs.color", "tags_idx tags"), indexes);
+    }
+
+    @Test
+    void hasNoCatalogsOrSchemas() throws SQLException {
+        try (ResultSet catalogs = metaData.getCatalogs(); ResultSet schemas = metaData.getSchemas()) {
+            assertFalse(catalogs.next());
+            assertFalse(schemas.next());
+        }
+
+        try (ResultSet rows = metaData.getTables("some_catalog", null, "%", null)) {
+            assertFalse(rows.next());
+        }
+    }
+
+    @Test
+    void reportsTheServer() throws SQLException {
+        assertEquals("Qdrant", metaData.getDatabaseProductName());
+        assertTrue(metaData.getDatabaseProductVersion().matches("\\d+\\.\\d+.*"),
+            metaData.getDatabaseProductVersion());
+        assertEquals(DriverInfo.NAME, metaData.getDriverName());
+    }
+
+    /** Describes a table's columns as "name TYPE" or "name TYPE(size)" for vectors. */
+    private static List<String> columns(String table) throws SQLException {
+        List<String> columns = new ArrayList<>();
+
+        try (ResultSet rows = metaData.getColumns(null, null, like(PREFIX + table), "%")) {
+            while (rows.next()) {
+                String type = rows.getString("TYPE_NAME");
+                int size = rows.getInt("COLUMN_SIZE");
+                boolean vector = type.endsWith("VECTOR") && size > 0;
+                columns.add(rows.getString("COLUMN_NAME") + " " + type + (vector ? "(" + size + ")" : ""));
+            }
+        }
+
+        return columns;
+    }
+
+    /** Escapes the LIKE wildcards in a literal name; the test prefix contains underscores. */
+    private static String like(String literal) throws SQLException {
+        String escape = metaData.getSearchStringEscape();
+        return literal.replace("_", escape + "_").replace("%", escape + "%");
+    }
+}
