@@ -17,6 +17,18 @@ updates:
         patterns:
           - "org.junit*"
 
+  # The Qdrant image in compose.yml.
+  - package-ecosystem: docker-compose
+    directory: "/"
+    schedule:
+      interval: weekly
+    labels:
+      - chore
+    assignees:
+      - Katyara11
+    commit-message:
+      prefix: build
+
   # Actions used by the workflows.
   - package-ecosystem: github-actions
     directory: "/"

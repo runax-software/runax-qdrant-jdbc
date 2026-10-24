@@ -1,0 +1,14 @@
+# Local Qdrant for trying the driver and for integration tests.
+#   docker compose up -d
+#   REST API on http://localhost:6333, web dashboard on http://localhost:6333/dashboard
+#   docker compose down -v   # stop and delete the stored collections
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.20.0
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant-data:/qdrant/storage
+
+volumes:
+  qdrant-data:

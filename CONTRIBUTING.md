@@ -30,8 +30,11 @@ version.
     ```
 5. Start Qdrant locally when you want to try the driver against a real server
     ```bash
-    docker run -p 6333:6333 qdrant/qdrant
+    docker compose up -d
     ```
+    The REST API listens on `localhost:6333`, with a web dashboard at
+    <http://localhost:6333/dashboard>. `docker compose down -v` stops it and deletes the
+    stored collections.
 
 ## Project structure
 
