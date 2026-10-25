@@ -9,7 +9,7 @@ import java.sql.SQLSyntaxErrorException;
 public final class Parser {
 
     public static Statement parse(String sql) throws SQLSyntaxErrorException {
-        var tokenStream = new TokenStream(new Lexer(sql).tokenize());
+        var tokenStream = new TokenStream(sql, new Lexer(sql).tokenize());
 
         Statement statement = parseStatement(tokenStream);
         if (tokenStream.peek().type() != TokenType.EOF) {

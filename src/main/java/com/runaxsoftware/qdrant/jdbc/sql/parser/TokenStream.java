@@ -5,11 +5,17 @@ import java.util.List;
 
 public final class TokenStream {
 
+    private final String sql;
     private final List<Token> tokens;
     private int pos;
     private int parameterCount;
 
-    public TokenStream(List<Token> tokens) {
+    /**
+     * @param sql    the SQL text the tokens come from, for the line and column in errors
+     * @param tokens the tokens, ending with an EOF token
+     */
+    public TokenStream(String sql, List<Token> tokens) {
+        this.sql = sql;
         this.tokens = tokens;
     }
 
@@ -29,6 +35,10 @@ public final class TokenStream {
 
     public int nextParameterIndex() {
         return ++parameterCount;
+    }
+
+    public boolean peekIdentifier() {
+        return peek().type() == TokenType.IDENTIFIER;
     }
 
     public boolean peekKeyword(String keyword) {
@@ -92,6 +102,7 @@ public final class TokenStream {
             ? "the end of the statement"
             : "'" + token.text() + "'";
 
-        return new SQLSyntaxErrorException(message + ", found " + found + " at position " + token.position());
+        return new SQLSyntaxErrorException(
+            message + ", found " + found + " at " + SourceLocation.describe(sql, token.position()));
     }
 }
