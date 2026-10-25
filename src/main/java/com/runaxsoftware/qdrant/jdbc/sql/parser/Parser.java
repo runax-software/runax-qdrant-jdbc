@@ -1,6 +1,9 @@
 package com.runaxsoftware.qdrant.jdbc.sql.parser;
 
-import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.*;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.*;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Statement;
+
 import java.sql.SQLSyntaxErrorException;
 import java.util.ArrayList;
 import java.util.List;

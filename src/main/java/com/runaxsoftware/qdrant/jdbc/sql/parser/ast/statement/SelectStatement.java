@@ -1,4 +1,8 @@
-package com.runaxsoftware.qdrant.jdbc.sql.parser.ast;
+package com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement;
+
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Expression;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.OrderItem;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Statement;
 
 import java.util.List;
 
