@@ -91,11 +91,11 @@ class CallLogTest {
         try (Connection connection = connect(new Properties());
              Statement statement = connection.createStatement()) {
             assertThrows(SQLFeatureNotSupportedException.class,
-                () -> statement.executeQuery("SELECT 1"));
+                () -> statement.executeQuery("SELECT * FROM products"));
         }
 
         assertTrue(text().contains(
-            "Statement.executeQuery(\"SELECT 1\") threw java.sql.SQLFeatureNotSupportedException"),
+            "Statement.executeQuery(\"SELECT * FROM products\") threw java.sql.SQLFeatureNotSupportedException"),
             text());
     }
 

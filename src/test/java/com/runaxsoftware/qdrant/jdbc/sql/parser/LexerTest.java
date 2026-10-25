@@ -115,7 +115,7 @@ class LexerTest {
                 assertThrows(SQLSyntaxErrorException.class, () -> new Lexer("SELECT ;").tokenize());
 
         assertTrue(error.getMessage().contains("';'"), error.getMessage());
-        assertTrue(error.getMessage().contains("position 7"), error.getMessage());
+        assertTrue(error.getMessage().contains("line 1, column 8"), error.getMessage());
     }
 
     @Test
@@ -123,7 +123,15 @@ class LexerTest {
         SQLSyntaxErrorException error =
                 assertThrows(SQLSyntaxErrorException.class, () -> new Lexer("x = 'abc").tokenize());
 
-        assertTrue(error.getMessage().contains("position 4"), error.getMessage());
+        assertTrue(error.getMessage().contains("line 1, column 5"), error.getMessage());
+    }
+
+    @Test
+    void givesTheLineAndColumnOfAnErrorOnALaterLine() {
+        SQLSyntaxErrorException error = assertThrows(SQLSyntaxErrorException.class,
+                () -> new Lexer("SELECT *\nFROM docs\r\nWHERE a = #").tokenize());
+
+        assertEquals("Unexpected character '#' at line 3, column 11", error.getMessage());
     }
 
     @Test

@@ -3,6 +3,7 @@ package com.runaxsoftware.qdrant.jdbc;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -17,9 +18,12 @@ import org.junit.jupiter.api.function.Executable;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
+import java.sql.SQLSyntaxErrorException;
 import java.sql.Statement;
+import java.sql.Types;
 import java.util.List;
 import java.util.Properties;
 
@@ -66,6 +70,129 @@ class QdrantStatementTest {
             SQLFeatureNotSupportedException error =
                 assertThrows(SQLFeatureNotSupportedException.class, call);
             assertTrue(error.getMessage().contains("isn't supported yet"));
+        }
+    }
+
+    @Test
+    void reportsSyntaxErrorsBeforeSayingSqlCantRunYet() {
+        String broken = "SELECT * FROM products WHERE price >";
+        List<Executable> calls = List.of(
+            () -> statement.executeQuery(broken),
+            () -> statement.execute(broken),
+            () -> statement.execute(broken, Statement.RETURN_GENERATED_KEYS),
+            () -> statement.executeUpdate(broken),
+            () -> statement.executeLargeUpdate(broken, new String[] {"id"}));
+
+        for (Executable call : calls) {
+            SQLSyntaxErrorException error = assertThrows(SQLSyntaxErrorException.class, call);
+            assertEquals("Expected a value, found the end of the statement at line 1, column 37",
+                error.getMessage());
+        }
+    }
+
+    @Test
+    void returnsTheRowOfASelectWithoutFrom() throws SQLException {
+        try (ResultSet rows = statement.executeQuery("select 'keep alive'")) {
+            assertEquals(1, rows.getMetaData().getColumnCount());
+            assertEquals("?column?", rows.getMetaData().getColumnLabel(1));
+            assertTrue(rows.next());
+            assertEquals("keep alive", rows.getString(1));
+            assertFalse(rows.next());
+        }
+    }
+
+    @Test
+    void namesAndTypesTheColumnsOfConstants() throws SQLException {
+        try (ResultSet rows = statement.executeQuery("SELECT 1 AS one, 2.5 AS half, true AS yes, 'x'")) {
+            ResultSetMetaData metadata = rows.getMetaData();
+
+            assertEquals(List.of("one", "half", "yes", "?column?"), List.of(metadata.getColumnLabel(1),
+                metadata.getColumnLabel(2), metadata.getColumnLabel(3), metadata.getColumnLabel(4)));
+            assertEquals(List.of(Types.BIGINT, Types.DOUBLE, Types.BOOLEAN, Types.VARCHAR), List.of(
+                metadata.getColumnType(1), metadata.getColumnType(2), metadata.getColumnType(3),
+                metadata.getColumnType(4)));
+
+            assertTrue(rows.next());
+            assertEquals(1, rows.getLong("one"));
+            assertEquals(2.5, rows.getDouble("half"));
+            assertTrue(rows.getBoolean("yes"));
+            assertEquals("x", rows.getString(4));
+        }
+    }
+
+    @Test
+    void returnsNoRowsWhenLimitOrOffsetSkipsTheRow() throws SQLException {
+        try (ResultSet rows = statement.executeQuery("SELECT 1 LIMIT 0")) {
+            assertFalse(rows.next());
+        }
+        try (ResultSet rows = statement.executeQuery("SELECT 1 OFFSET 1")) {
+            assertFalse(rows.next());
+        }
+    }
+
+    @Test
+    void keepsTheResultOfExecuteUntilTheNextResultIsAskedFor() throws SQLException {
+        assertTrue(statement.execute("SELECT 1"));
+
+        ResultSet rows = statement.getResultSet();
+        assertNotNull(rows);
+        assertSame(statement, rows.getStatement());
+        assertEquals(-1, statement.getUpdateCount());
+
+        assertFalse(statement.getMoreResults());
+        assertTrue(rows.isClosed());
+        assertNull(statement.getResultSet());
+    }
+
+    @Test
+    void closesThePreviousResultOnTheNextRun() throws SQLException {
+        ResultSet first = statement.executeQuery("SELECT 1");
+        ResultSet second = statement.executeQuery("SELECT 2");
+
+        assertTrue(first.isClosed());
+        assertFalse(second.isClosed());
+        assertSame(second, statement.getResultSet());
+    }
+
+    @Test
+    void closesItsResultWhenClosed() throws SQLException {
+        ResultSet rows = statement.executeQuery("SELECT 1");
+        statement.close();
+
+        assertTrue(rows.isClosed());
+    }
+
+    @Test
+    void refusesASelectInExecuteUpdate() {
+        SQLException error = assertThrows(SQLException.class, () -> statement.executeUpdate("SELECT 1"));
+
+        assertFalse(error instanceof SQLFeatureNotSupportedException);
+        assertTrue(error.getMessage().contains("executeUpdate can't run a SELECT"), error.getMessage());
+    }
+
+    @Test
+    void reportsUnknownColumnsInASelectWithoutFrom() {
+        SQLSyntaxErrorException error =
+            assertThrows(SQLSyntaxErrorException.class, () -> statement.executeQuery("SELECT name"));
+
+        assertEquals("42S22", error.getSQLState());
+    }
+
+    @Test
+    void reportsEmptySqlAsASyntaxError() {
+        assertThrows(SQLSyntaxErrorException.class, () -> statement.executeQuery(""));
+        assertThrows(SQLSyntaxErrorException.class, () -> statement.executeQuery("   "));
+    }
+
+    @Test
+    void rejectsNullSql() {
+        List<Executable> calls = List.of(
+            () -> statement.executeQuery(null),
+            () -> statement.execute(null),
+            () -> statement.executeUpdate(null));
+
+        for (Executable call : calls) {
+            assertEquals("HY009", assertThrows(SQLException.class, call).getSQLState());
         }
     }
 

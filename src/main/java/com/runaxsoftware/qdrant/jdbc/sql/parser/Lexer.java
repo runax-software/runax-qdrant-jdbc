@@ -7,7 +7,7 @@ final class Lexer {
 
     private static final Set<String> KETWORDS = Set.of(
         "SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "IN", "IS", "NULL",
-        "TRUE", "FALSE", "ORDER", "BY", "ASC", "DESC", "LIMIT", "OFFSET");
+        "TRUE", "FALSE", "ORDER", "BY", "ASC", "DESC", "LIMIT", "OFFSET", "AS");
 
     private static final List<String> TWO_CHAR_SYMBOLS = List.of(
         "<=", ">=", "<>", "!=");
@@ -98,8 +98,8 @@ final class Lexer {
             return new Token(TokenType.SYMBOL, String.valueOf(c), start);
         }
 
-        throw new SQLSyntaxErrorException("Unexpected character '" + c + "' at position " + start);
-
+        throw new SQLSyntaxErrorException("Unexpected character '" + c + "' at "
+            + SourceLocation.describe(sql, start));
     }
 
     private Token quoted(char quote, TokenType type) throws SQLSyntaxErrorException {
@@ -119,7 +119,8 @@ final class Lexer {
             }
         }
 
-        throw new SQLSyntaxErrorException("Unclosed quote starting at position " + start);
+        throw new SQLSyntaxErrorException("Unclosed quote starting at "
+            + SourceLocation.describe(sql, start));
     }
 
     private boolean isDiditAt(int index) {
