@@ -1,9 +1,9 @@
 package com.runaxsoftware.qdrant.jdbc.schema;
 
-import com.runaxsoftware.qdrant.jdbc.client.CollectionInfo;
-import com.runaxsoftware.qdrant.jdbc.client.Point;
-import com.runaxsoftware.qdrant.jdbc.client.QdrantGateway;
-import com.runaxsoftware.qdrant.jdbc.client.ScrollRequest;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantCollection;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.Point;
+import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.ScrollRequest;
 
 import java.sql.SQLException;
 import java.util.List;
@@ -30,12 +30,11 @@ public final class SchemaReader {
      * Reads the schema of one collection.
      */
     public TableSchema read(String collection) throws SQLException {
-        CollectionInfo info = gateway.collectionInfo(collection);
-        List<Point> sample = sampleSize == 0
-            ? List.of()
+        QdrantCollection qdrantCollection = gateway.collection(collection);
+        List<Point> sample = sampleSize == 0 ? List.of()
             : gateway.scroll(new ScrollRequest(collection, sampleSize, null, true, false))
             .points();
 
-        return SchemaInference.infer(info, sample);
+        return SchemaInference.infer(qdrantCollection, sample);
     }
 }

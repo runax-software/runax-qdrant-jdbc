@@ -1,6 +1,6 @@
 package com.runaxsoftware.qdrant.jdbc.schema;
 
-import com.runaxsoftware.qdrant.jdbc.client.CollectionInfo;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantCollection;
 
 import java.util.List;
 import java.util.Optional;
@@ -11,7 +11,7 @@ import java.util.Optional;
  * @param collection the collection's configuration and indexes
  * @param columns    the columns, in order
  */
-public record TableSchema(CollectionInfo collection, List<ColumnDefinition> columns) {
+public record TableSchema(QdrantCollection collection, List<ColumnDefinition> columns) {
 
     /**
      * The table name, which is the collection name.
