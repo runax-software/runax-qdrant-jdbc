@@ -6,6 +6,7 @@ import static com.runaxsoftware.qdrant.jdbc.result.ResultColumn.integer;
 import static com.runaxsoftware.qdrant.jdbc.result.ResultColumn.smallint;
 import static com.runaxsoftware.qdrant.jdbc.result.ResultColumn.text;
 
+import com.runaxsoftware.qdrant.jdbc.connection.QdrantConnection;
 import com.runaxsoftware.qdrant.jdbc.result.ListResultSet;
 import com.runaxsoftware.qdrant.jdbc.result.ResultColumn;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;

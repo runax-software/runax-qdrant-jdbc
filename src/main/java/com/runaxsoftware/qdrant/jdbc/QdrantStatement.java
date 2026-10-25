@@ -1,5 +1,6 @@
 package com.runaxsoftware.qdrant.jdbc;
 
+import com.runaxsoftware.qdrant.jdbc.connection.QdrantConnection;
 import com.runaxsoftware.qdrant.jdbc.sql.executor.ExecutionResult;
 import com.runaxsoftware.qdrant.jdbc.sql.executor.Executor;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.Parser;
@@ -16,6 +17,7 @@ import java.sql.*;
  * their columns through {@link java.sql.DatabaseMetaData}. The statement settings tools apply
  * before running a query (maximum rows, fetch size, timeout) are accepted and kept.
  */
+// TODO: move this
 public final class QdrantStatement implements Statement {
 
     private static final String NOT_YET =
