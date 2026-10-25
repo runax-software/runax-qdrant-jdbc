@@ -14,6 +14,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Not;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Or;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.OrderItem;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Parameter;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.SelectItem;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -38,22 +39,50 @@ class ParserTest {
 
     @Test
     void parsesSelectedColumns() throws SQLSyntaxErrorException {
-        assertEquals(List.of("name", "price", "_id"),
-                select("SELECT name, price, _id FROM docs").columns());
+        assertEquals(List.of(column("name"), column("price"), column("_id")),
+                select("SELECT name, price, _id FROM docs").items());
     }
 
     @Test
     void parsesQuotedNames() throws SQLSyntaxErrorException {
         SelectStatement select = select("SELECT \"specs.color\" FROM \"My Docs\"");
 
-        assertEquals(List.of("specs.color"), select.columns());
+        assertEquals(List.of(column("specs.color")), select.items());
         assertEquals("My Docs", select.table());
     }
 
     @Test
     void readsKeywordsInAnyCaseAndKeepsTheCaseOfNames() throws SQLSyntaxErrorException {
-        assertEquals(new SelectStatement(List.of("Name"), "MyDocs", eq("lang", "en"), List.of(), 5L, null),
+        assertEquals(new SelectStatement(List.of(column("Name")), "MyDocs", eq("lang", "en"), List.of(), 5L, null),
                 Parser.parse("select Name from MyDocs Where lang = 'en' limit 5"));
+    }
+
+    // SELECT without FROM
+
+    @Test
+    void parsesASelectOfConstantsWithoutFrom() throws SQLSyntaxErrorException {
+        assertEquals(new SelectStatement(List.of(new SelectItem(new Literal("keep alive"), null)), null, null,
+                        List.of(), null, null),
+                Parser.parse("select 'keep alive'"));
+        assertEquals(List.of(new SelectItem(new Literal(1L), null), new SelectItem(new Literal(2.5), null),
+                        new SelectItem(new Literal(true), null)),
+                select("SELECT 1, 2.5, TRUE").items());
+    }
+
+    @Test
+    void parsesAliases() throws SQLSyntaxErrorException {
+        assertEquals(List.of(new SelectItem(new Literal(1L), "one"), new SelectItem(new Column("name"), "title")),
+                select("SELECT 1 AS one, name AS title FROM docs").items());
+    }
+
+    @Test
+    void parsesLimitWithoutFrom() throws SQLSyntaxErrorException {
+        assertEquals(0L, select("SELECT 1 LIMIT 0").limit());
+    }
+
+    @Test
+    void rejectsAnAliasWithoutAName() {
+        assertError("Expected a name, found the end of the statement at line 1, column 12", "SELECT 1 AS");
     }
 
     // WHERE values
@@ -145,7 +174,7 @@ class ParserTest {
     @Test
     void parsesEveryClauseTogether() throws SQLSyntaxErrorException {
         assertEquals(
-                new SelectStatement(List.of("name"), "docs", eq("lang", "en"),
+                new SelectStatement(List.of(column("name")), "docs", eq("lang", "en"),
                         List.of(new OrderItem("price", true)), 10L, 5L),
                 Parser.parse("SELECT name FROM docs WHERE lang = 'en' ORDER BY price DESC LIMIT 10 OFFSET 5"));
     }
@@ -154,57 +183,64 @@ class ParserTest {
 
     @Test
     void rejectsStatementsOtherThanSelect() {
-        assertError("Expected SELECT, found 'DELETE' at position 0", "DELETE FROM docs");
+        assertError("Expected SELECT, found 'DELETE' at line 1, column 1", "DELETE FROM docs");
     }
 
     @Test
     void rejectsAnEmptyStatement() {
-        assertError("Expected SELECT, found the end of the statement at position 0", "");
+        assertError("Expected SELECT, found the end of the statement at line 1, column 1", "");
     }
 
     @Test
     void rejectsAMissingFrom() {
-        assertError("Expected FROM, found 'docs' at position 12", "SELECT name docs");
+        assertError("Expected FROM, found 'docs' at line 1, column 13", "SELECT name docs");
     }
 
     @Test
     void rejectsAMissingValueAtTheEnd() {
-        assertError("Expected a value, found the end of the statement at position 32",
+        assertError("Expected a value, found the end of the statement at line 1, column 33",
                 "SELECT * FROM docs WHERE price >");
     }
 
     @Test
     void rejectsAColumnInPlaceOfAValue() {
-        assertError("Expected a value, found 'b' at position 29", "SELECT * FROM docs WHERE a = b");
+        assertError("Expected a value, found 'b' at line 1, column 30", "SELECT * FROM docs WHERE a = b");
     }
 
     @Test
     void rejectsNotWithoutIn() {
-        assertError("Expected IN after NOT, found '=' at position 31", "SELECT * FROM docs WHERE a NOT = 1");
+        assertError("Expected IN after NOT, found '=' at line 1, column 32", "SELECT * FROM docs WHERE a NOT = 1");
     }
 
     @Test
     void rejectsAnUnclosedParenthesis() {
-        assertError("Expected ), found the end of the statement at position 31",
+        assertError("Expected ), found the end of the statement at line 1, column 32",
                 "SELECT * FROM docs WHERE (a = 1");
     }
 
     @Test
     void rejectsAnUnclosedInList() {
-        assertError("Expected ), found the end of the statement at position 32",
+        assertError("Expected ), found the end of the statement at line 1, column 33",
                 "SELECT * FROM docs WHERE a IN (1");
     }
 
     @Test
+    void givesTheLineAndColumnOfAnErrorOnALaterLine() {
+        assertError("Expected a value, found the end of the statement at line 3, column 14",
+                "SELECT name\nFROM docs\nWHERE price >");
+        assertError("Expected FROM, found 'docs' at line 2, column 1", "SELECT name\r\ndocs");
+    }
+
+    @Test
     void rejectsLeftoverText() {
-        assertError("Expected the end of the statement, found 'extra' at position 19",
+        assertError("Expected the end of the statement, found 'extra' at line 1, column 20",
                 "SELECT * FROM docs extra");
     }
 
     @Test
     void rejectsALimitThatIsNotAWholeNumber() {
-        assertError("Expected a whole number, found '1.5' at position 25", "SELECT * FROM docs LIMIT 1.5");
-        assertError("Expected a whole number, found '-1' at position 25", "SELECT * FROM docs LIMIT -1");
+        assertError("Expected a whole number, found '1.5' at line 1, column 26", "SELECT * FROM docs LIMIT 1.5");
+        assertError("Expected a whole number, found '-1' at line 1, column 26", "SELECT * FROM docs LIMIT -1");
     }
 
     // Helpers
@@ -215,6 +251,10 @@ class ParserTest {
 
     private static Expression where(String condition) throws SQLSyntaxErrorException {
         return select("SELECT * FROM docs WHERE " + condition).where();
+    }
+
+    private static SelectItem column(String name) {
+        return new SelectItem(new Column(name), null);
     }
 
     private static Comparison eq(String column, Object value) {
