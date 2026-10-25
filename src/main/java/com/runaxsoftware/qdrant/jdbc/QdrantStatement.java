@@ -1,19 +1,34 @@
 package com.runaxsoftware.qdrant.jdbc;
 
+import com.runaxsoftware.qdrant.jdbc.sql.executor.ExecutionResult;
+import com.runaxsoftware.qdrant.jdbc.sql.executor.Executor;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.Parser;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.Catalog;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.Planner;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
 
 import java.sql.*;
 
 /**
- * A statement. Running SQL isn't supported yet: this version of the driver lists collections
- * and their columns through {@link java.sql.DatabaseMetaData}. The statement settings tools
- * apply before running a query (maximum rows, fetch size, timeout) are accepted and kept.
+ * A statement. SQL is parsed and planned, so syntax errors and unknown names are reported, and
+ * a SELECT without FROM (such as a tool's {@code SELECT 'keep alive'}) returns its row. Reading
+ * collections with SQL isn't supported yet: this version of the driver lists collections and
+ * their columns through {@link java.sql.DatabaseMetaData}. The statement settings tools apply
+ * before running a query (maximum rows, fetch size, timeout) are accepted and kept.
  */
 public final class QdrantStatement implements Statement {
 
     private static final String NOT_YET =
-        "Running SQL isn't supported yet: this version of the driver only lists collections "
-            + "and their columns";
+        "Reading collections with SQL isn't supported yet: this version of the driver lists "
+            + "collections and their columns, and runs SELECT without FROM";
+
+    // Until the executor reads points, a statement that names a collection stops here
+    private static final Catalog NO_COLLECTIONS_YET = name -> {
+        throw new SQLFeatureNotSupportedException(NOT_YET);
+    };
+
+    private final Planner planner = new Planner();
+    private final Executor executor = new Executor();
 
     private final QdrantConnection connection;
     private boolean closed;
@@ -25,6 +40,7 @@ public final class QdrantStatement implements Statement {
     private int fetchDirection = ResultSet.FETCH_FORWARD;
     private int queryTimeout;
     private SQLWarning warnings;
+    private ResultSet resultSet;
 
     QdrantStatement(QdrantConnection connection) {
         this.connection = connection;
@@ -35,15 +51,13 @@ public final class QdrantStatement implements Statement {
     @Override
     public ResultSet executeQuery(String sql) throws SQLException {
         checkOpen();
-        parse(sql);
-        throw new SQLFeatureNotSupportedException(NOT_YET);
+        return run(sql).resultSet();
     }
 
     @Override
     public boolean execute(String sql) throws SQLException {
         checkOpen();
-        parse(sql);
-        throw new SQLFeatureNotSupportedException(NOT_YET);
+        return run(sql).hasResultSet();
     }
 
     @Override
@@ -64,8 +78,11 @@ public final class QdrantStatement implements Statement {
     @Override
     public int executeUpdate(String sql) throws SQLException {
         checkOpen();
-        parse(sql);
-        throw new SQLFeatureNotSupportedException(NOT_YET);
+        plan(sql);
+
+        // Every statement that can be planned today is a SELECT
+        throw new SQLException("executeUpdate can't run a SELECT: use executeQuery or execute",
+            "HY000");
     }
 
     @Override
@@ -106,7 +123,7 @@ public final class QdrantStatement implements Statement {
     @Override
     public ResultSet getResultSet() throws SQLException {
         checkOpen();
-        return null;
+        return resultSet;
     }
 
     @Override
@@ -123,13 +140,20 @@ public final class QdrantStatement implements Statement {
 
     @Override
     public boolean getMoreResults() throws SQLException {
-        checkOpen();
-        return false;
+        return getMoreResults(Statement.CLOSE_CURRENT_RESULT);
     }
 
     @Override
     public boolean getMoreResults(int current) throws SQLException {
         checkOpen();
+
+        // Every statement has a single result, so there's never a next one
+        if (current == Statement.KEEP_CURRENT_RESULT) {
+            resultSet = null;
+        } else {
+            closeResultSet();
+        }
+
         return false;
     }
 
@@ -333,7 +357,11 @@ public final class QdrantStatement implements Statement {
     }
 
     @Override
-    public void close() {
+    public void close() throws SQLException {
+        if (!closed) {
+            closeResultSet();
+        }
+
         closed = true;
     }
 
@@ -358,12 +386,30 @@ public final class QdrantStatement implements Statement {
         return type.isInstance(this);
     }
 
-    private void parse(String sql) throws SQLException {
+    // Runs the SQL; like every JDBC run, it first closes the result of the previous one
+    private ExecutionResult run(String sql) throws SQLException {
+        closeResultSet();
+
+        ExecutionResult result = executor.execute(plan(sql), this);
+        resultSet = result.resultSet();
+        return result;
+    }
+
+    // Reports syntax errors and unknown names before anything is sent to Qdrant
+    private Plan plan(String sql) throws SQLException {
         if (sql == null) {
             throw new SQLException("The SQL is null", "HY009");
         }
 
-        Parser.parse(sql);
+        return planner.plan(Parser.parse(sql), NO_COLLECTIONS_YET);
+    }
+
+    private void closeResultSet() throws SQLException {
+        if (resultSet != null) {
+            ResultSet previous = resultSet;
+            resultSet = null;
+            previous.close();
+        }
     }
 
     private void checkOpen() throws SQLException {
