@@ -1,11 +1,8 @@
 package com.runaxsoftware.qdrant.jdbc;
 
-import java.sql.Connection;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.SQLFeatureNotSupportedException;
-import java.sql.SQLWarning;
-import java.sql.Statement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.Parser;
+
+import java.sql.*;
 
 /**
  * A statement. Running SQL isn't supported yet: this version of the driver lists collections
@@ -38,12 +35,14 @@ public final class QdrantStatement implements Statement {
     @Override
     public ResultSet executeQuery(String sql) throws SQLException {
         checkOpen();
+        parse(sql);
         throw new SQLFeatureNotSupportedException(NOT_YET);
     }
 
     @Override
     public boolean execute(String sql) throws SQLException {
         checkOpen();
+        parse(sql);
         throw new SQLFeatureNotSupportedException(NOT_YET);
     }
 
@@ -65,6 +64,7 @@ public final class QdrantStatement implements Statement {
     @Override
     public int executeUpdate(String sql) throws SQLException {
         checkOpen();
+        parse(sql);
         throw new SQLFeatureNotSupportedException(NOT_YET);
     }
 
@@ -356,6 +356,14 @@ public final class QdrantStatement implements Statement {
     @Override
     public boolean isWrapperFor(Class<?> type) {
         return type.isInstance(this);
+    }
+
+    private void parse(String sql) throws SQLException {
+        if (sql == null) {
+            throw new SQLException("The SQL is null", "HY009");
+        }
+
+        Parser.parse(sql);
     }
 
     private void checkOpen() throws SQLException {
