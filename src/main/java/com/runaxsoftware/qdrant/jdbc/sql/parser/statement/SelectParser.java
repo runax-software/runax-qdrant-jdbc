@@ -21,16 +21,22 @@ public final class SelectParser {
 
     public Statement parse() throws SQLSyntaxErrorException {
         this.tokenStream.expectKeyword("SELECT");
-        var columns = new ArrayList<String>();
+        var items = new ArrayList<SelectItem>();
 
         if (!this.tokenStream.matchSymbol("*")) {
             do {
-                columns.add(this.tokenStream.expectIdentifier());
+                items.add(parseItem());
             } while (this.tokenStream.matchSymbol(","));
         }
 
-        this.tokenStream.expectKeyword("FROM");
-        String table = this.tokenStream.expectIdentifier();
+        // FROM is optional: SELECT 'keep alive' reads no collection
+        String table = null;
+        if (this.tokenStream.matchKeyword("FROM")) {
+            table = this.tokenStream.expectIdentifier();
+        } else if (this.tokenStream.peekIdentifier()) {
+            // "SELECT name docs" is a missing FROM; aliases need AS
+            throw this.tokenStream.error("Expected FROM");
+        }
 
         Expression where = this.tokenStream.matchKeyword("WHERE") ? this.expressionParser.parseOr() : null;
 
@@ -52,6 +58,15 @@ public final class SelectParser {
 
         Long limit = this.tokenStream.matchKeyword("LIMIT") ? this.tokenStream.expectWholeNumber() : null;
         Long offset = this.tokenStream.matchKeyword("OFFSET") ? this.tokenStream.expectWholeNumber() : null;
-        return new SelectStatement(columns, table, where, orderBy, limit, offset);
+        return new SelectStatement(items, table, where, orderBy, limit, offset);
+    }
+
+    private SelectItem parseItem() throws SQLSyntaxErrorException {
+        Expression expression = this.tokenStream.peekIdentifier()
+            ? new Column(this.tokenStream.expectIdentifier())
+            : this.expressionParser.parseValue();
+        String alias = this.tokenStream.matchKeyword("AS") ? this.tokenStream.expectIdentifier() : null;
+
+        return new SelectItem(expression, alias);
     }
 }
