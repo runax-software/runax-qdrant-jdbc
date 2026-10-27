@@ -3,8 +3,8 @@
 Planned work, roughly in the order it will land. The SQL each item accepts is specified in
 [docs/specs/sql-dialect.md](docs/specs/sql-dialect.md).
 
-- [x] **Connection** — `jdbc:qdrant://host:6334` over gRPC through the official Qdrant
-  Java SDK, TLS, and the Qdrant API key taken from the password field.
+- [x] **Connection** — `jdbc:qdrant://host:6333` over Qdrant's REST API, TLS, and the
+  Qdrant API key taken from the password field.
 - [x] **Collections as tables** — `DatabaseMetaData` lists collections, so DataGrip's
   database explorer fills in on its own.
 - [x] **Columns** — one column per payload field under its own name (found from the
@@ -45,8 +45,8 @@ Planned work, roughly in the order it will land. The SQL each item accepts is sp
   returns. Probably opt-in and capped, since it can read far more points than it returns.
 - [ ] **System tables (later)** — read-only tables for server and collection state, browsable
   in DataGrip: collections (status, optimizer, point and segment counts), aliases,
-  snapshots, shard keys, and cluster info from the SDK; telemetry, metrics, issues, and
-  cluster peers from Qdrant's REST API. Probably in a `system` schema, so they can't clash
+  snapshots, shard keys, cluster info and peers, telemetry, metrics, and issues, all from
+  Qdrant's REST API. Probably in a `system` schema, so they can't clash
   with collection names; that means giving collections a default schema too. Read-only
   lists then move from `CALL` procedures to these tables.
 - [ ] **Buffered writes (later, opt-in)** — not real transactions, since Qdrant has none.

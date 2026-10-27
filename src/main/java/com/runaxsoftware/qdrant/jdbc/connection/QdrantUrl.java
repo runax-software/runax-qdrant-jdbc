@@ -23,7 +23,7 @@ import static com.runaxsoftware.qdrant.jdbc.connection.ConnectionErrors.invalid;
  * be logged.
  *
  * @param host       the host name or address, without the brackets of an IPv6 address
- * @param port       Qdrant's gRPC port, {@link #DEFAULT_PORT} when the URL has none
+ * @param port       Qdrant's REST port, {@link #DEFAULT_PORT} when the URL has none
  * @param parameters the decoded {@code ?name=value} pairs, exactly as written; a parameter
  *                   without a value maps to an empty string
  */
@@ -75,7 +75,7 @@ public record QdrantUrl(
      * Splits a URL into its parts. Error messages show the URL only up to its {@code ?}, so no
      * parameter value ends up in them.
      *
-     * @param url the JDBC URL, such as {@code jdbc:qdrant://localhost:6334?tls=true}
+     * @param url the JDBC URL, such as {@code jdbc:qdrant://localhost:6333?tls=true}
      * @return the URL's host, port, and parameters
      * @throws SQLException an {@link SQLNonTransientConnectionException} with SQLState
      *                      {@code 08001} when the URL is missing, isn't a Qdrant URL, isn't a
@@ -102,7 +102,7 @@ public record QdrantUrl(
 
         String path = uri.getRawPath();
         if (path != null && !path.isEmpty() && !path.equals("/")) {
-            throw invalid("Qdrant's gRPC API has no URL path; remove " + path + " from "
+            throw invalid("A Qdrant URL has no path; remove " + path + " from "
                 + withoutQuery(url));
         }
 
@@ -153,7 +153,8 @@ public record QdrantUrl(
     }
 
     /**
-     * {@link URI} keeps the brackets around an IPv6 address; gRPC wants it without them.
+     * {@link URI} keeps the brackets around an IPv6 address; the host is stored without them,
+     * and the gateway adds them back when it builds the server's URL.
      */
     private static String unbracket(String host) {
         return host.startsWith("[") && host.endsWith("]")

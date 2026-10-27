@@ -10,7 +10,7 @@ import java.util.Properties;
  * properties: where Qdrant is, the API key, and the driver's own settings.
  *
  * @param host       the server's host name or address
- * @param port       the server's gRPC port
+ * @param port       the server's REST port
  * @param tls        whether to connect over TLS
  * @param apiKey     the API key, or {@code null} for none
  * @param timeout    how long to wait for each call to Qdrant
