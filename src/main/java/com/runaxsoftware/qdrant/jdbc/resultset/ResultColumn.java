@@ -1,4 +1,4 @@
-package com.runaxsoftware.qdrant.jdbc.result;
+package com.runaxsoftware.qdrant.jdbc.resultset;
 
 import java.sql.JDBCType;
 import java.sql.ResultSetMetaData;

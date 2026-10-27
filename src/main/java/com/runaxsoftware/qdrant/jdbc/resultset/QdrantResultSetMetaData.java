@@ -1,4 +1,4 @@
-package com.runaxsoftware.qdrant.jdbc.result;
+package com.runaxsoftware.qdrant.jdbc.resultset;
 
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
@@ -8,14 +8,14 @@ import java.util.List;
 /**
  * {@link ResultSetMetaData} for a fixed list of {@link ResultColumn}s.
  */
-public final class ResultColumnsMetaData implements ResultSetMetaData {
+final class QdrantResultSetMetaData implements ResultSetMetaData {
 
     private final List<ResultColumn> columns;
 
     /**
      * Describes the given columns, in order.
      */
-    public ResultColumnsMetaData(List<ResultColumn> columns) {
+    QdrantResultSetMetaData(List<ResultColumn> columns) {
         this.columns = List.copyOf(columns);
     }
 

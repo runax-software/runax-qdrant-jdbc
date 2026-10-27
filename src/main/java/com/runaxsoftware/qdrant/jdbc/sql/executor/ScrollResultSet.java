@@ -5,8 +5,8 @@
 //import com.runaxsoftware.qdrant.jdbc.client.QdrantGateway;
 //import com.runaxsoftware.qdrant.jdbc.client.ScrollPage;
 //import com.runaxsoftware.qdrant.jdbc.client.ScrollRequest;
-//import com.runaxsoftware.qdrant.jdbc.result.AbstractResultSet;
-//import com.runaxsoftware.qdrant.jdbc.result.ResultColumn;
+//import com.runaxsoftware.qdrant.jdbc.resultset.AbstractResultSet;
+//import com.runaxsoftware.qdrant.jdbc.resultset.ResultColumn;
 //import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
 //import com.runaxsoftware.qdrant.jdbc.schema.PayloadPaths;
 //import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
@@ -140,8 +140,8 @@
 //                plan.collection(),
 //                x.size(),
 //                x.nullable()
-//                    ? ResultColumnsMetaData.columnNullable
-//                    : ResultColumnsMetaData.columnNoNulls))
+//                    ? ResultSetMetaData.columnNullable
+//                    : ResultSetMetaData.columnNoNulls))
 //            .toList();
 //    }
 //}

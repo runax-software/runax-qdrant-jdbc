@@ -1,6 +1,6 @@
 package com.runaxsoftware.qdrant.jdbc.sql.executor;
 
-import com.runaxsoftware.qdrant.jdbc.result.ListResultSet;
+import com.runaxsoftware.qdrant.jdbc.resultset.ListResultSet;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConstantPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
 
