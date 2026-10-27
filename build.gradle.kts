@@ -15,7 +15,6 @@ repositories {
 }
 
 dependencies {
-    implementation(libs.qdrant.client)
     implementation(libs.jackson.databind)
 
     testImplementation(platform(libs.junit.bom))
@@ -53,21 +52,12 @@ tasks.jar {
     }
 }
 
-// The jar for DataGrip and other JDBC clients: the driver plus its dependencies. Libraries
-// that tools often bring in other versions of (Jackson, Guava, protobuf, SLF4J) are relocated
-// so they can't clash. gRPC and the Qdrant SDK keep their packages: gRPC's bundled Netty
-// finds its native transport by package name.
+// The jar for DataGrip and other JDBC clients: the driver plus Jackson, its only dependency.
+// Tools often bring in another Jackson version, so it's relocated to keep them from clashing,
+// and its service files are renamed to match.
 tasks.shadowJar {
     val shaded = "com.runaxsoftware.qdrant.jdbc.shaded"
     relocate("com.fasterxml.jackson", "$shaded.jackson")
-    relocate("com.google", "$shaded.google")
-    relocate("io.perfmark", "$shaded.perfmark")
-    relocate("org.slf4j", "$shaded.slf4j")
-    // Shadow drops duplicate files by default, which would keep only one jar's gRPC service
-    // file (losing the DNS name resolver). Let service files through so they get merged.
-    filesMatching("META-INF/services/**") {
-        duplicatesStrategy = DuplicatesStrategy.INCLUDE
-    }
     mergeServiceFiles()
     exclude("**/module-info.class")
 }

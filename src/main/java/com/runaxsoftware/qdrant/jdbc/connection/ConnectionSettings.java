@@ -10,7 +10,7 @@ import java.util.Properties;
  * properties: where Qdrant is, the API key, and the driver's own settings.
  *
  * @param host       the server's host name or address
- * @param port       the server's gRPC port
+ * @param port       the server's REST port
  * @param tls        whether to connect over TLS
  * @param apiKey     the API key, or {@code null} for none
  * @param timeout    how long to wait for each call to Qdrant
@@ -39,5 +39,15 @@ public record ConnectionSettings(
             values.wholeNumber(Setting.SAMPLE_SIZE, 0, 10_000),
             values.path(Setting.LOG_FILE)
         );
+    }
+
+    /**
+     * The settings for logs and error messages, saying only whether an API key is set.
+     */
+    @Override
+    public String toString() {
+        return "ConnectionSettings[host=" + host + ", port=" + port + ", tls=" + tls
+            + ", apiKey=" + (apiKey == null ? "none" : "set") + ", timeout=" + timeout.toSeconds() + "s"
+            + ", sampleSize=" + sampleSize + ", logFile=" + logFile + "]";
     }
 }

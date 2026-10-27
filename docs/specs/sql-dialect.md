@@ -339,9 +339,9 @@ These are errors, not emulated:
   transactions. An opt-in write buffer that holds writes until `commit()` may come later
   (see the roadmap); it still wouldn't make commits atomic.
 - Server internals: telemetry (`/telemetry`), Prometheus metrics (`/metrics`), cluster and
-  Raft consensus state (`/cluster`), and Qdrant's performance hints (`/issues`). They're only
-  in Qdrant's REST API, not the gRPC API the driver uses; read them there or with a
-  monitoring tool such as Prometheus. They may later become read-only system tables (see
+  Raft consensus state (`/cluster`), and Qdrant's performance hints (`/issues`). The driver
+  doesn't read them yet; use Qdrant's REST API directly or a monitoring tool such as
+  Prometheus. They may later become read-only system tables (see
   the roadmap).
 
 ## Open questions

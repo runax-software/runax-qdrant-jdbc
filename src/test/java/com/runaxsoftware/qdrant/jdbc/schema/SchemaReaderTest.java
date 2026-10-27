@@ -1,17 +1,14 @@
 package com.runaxsoftware.qdrant.jdbc.schema;
 
-import static io.qdrant.client.PointIdFactory.id;
-import static io.qdrant.client.ValueFactory.value;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.runaxsoftware.qdrant.jdbc.client.QdrantGateway;
+import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadIndexType;
 import com.runaxsoftware.qdrant.jdbc.support.FakeQdrantServer;
-import io.qdrant.client.grpc.Collections.Distance;
-import io.qdrant.client.grpc.Collections.PayloadSchemaType;
-import io.qdrant.client.grpc.Points.ScrollPoints;
+import com.runaxsoftware.qdrant.jdbc.support.FakeQdrantServer.Endpoint;
+import com.runaxsoftware.qdrant.jdbc.support.Json;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,16 +28,17 @@ class SchemaReaderTest {
     @BeforeEach
     void start() throws Exception {
         server = FakeQdrantServer.start()
-            .collection("products", FakeQdrantServer.unnamedVector(4, Distance.Cosine,
-                Map.of("name", PayloadSchemaType.Keyword)), List.of(
-                FakeQdrantServer.point(id(1), Map.of("name", value("Lamp"), "price", value(19.5))),
-                FakeQdrantServer.point(id(2), Map.of("name", value("Desk"), "stock", value(3)))));
+            .collection("products", FakeQdrantServer.unnamedVector(4, "Cosine",
+                Map.of("name", "keyword")), List.of(
+                FakeQdrantServer.point(1, Json.object("name", "Lamp", "price", 19.5),
+                    Json.array(0.1, 0.2, 0.3, 0.4)),
+                FakeQdrantServer.point(2, Json.object("name", "Desk", "stock", 3))));
         gateway = QdrantGateway.open("localhost", server.port(), false, null, Duration.ofSeconds(5),
             "test");
     }
 
     @AfterEach
-    void stop() throws Exception {
+    void stop() {
         gateway.close();
         server.close();
     }
@@ -51,12 +49,19 @@ class SchemaReaderTest {
 
         assertEquals("products", schema.name());
         assertEquals("_id name price stock _payload _vector", names(schema));
+        assertEquals(42, schema.collection().pointsCount());
+        assertEquals(PayloadIndexType.KEYWORD, schema.collection().payloadIndexes().get("name"));
+        assertEquals("Payload field (keyword index)",
+            schema.column("name").orElseThrow().remarks());
+    }
 
-        ScrollPoints scroll = server.scrollRequests().get(0);
-        assertEquals("products", scroll.getCollectionName());
-        assertEquals(50, scroll.getLimit());
-        assertTrue(scroll.getWithPayload().getEnable());
-        assertFalse(scroll.getWithVectors().getEnable());
+    @Test
+    void asksForPayloadsButNotVectors() throws SQLException {
+        new SchemaReader(gateway, 50).read("products");
+
+        assertEquals(Json.object("limit", 50, "with_payload", true, "with_vector", false),
+            server.scrollRequests().get(0));
+        assertEquals("/collections/products/points/scroll", server.requests().get(1).path());
     }
 
     @Test
@@ -73,6 +78,7 @@ class SchemaReaderTest {
 
         assertEquals("_id name _payload _vector", names(schema));
         assertTrue(server.scrollRequests().isEmpty());
+        assertEquals(0, server.calls(Endpoint.SCROLL));
     }
 
     @Test
@@ -82,14 +88,25 @@ class SchemaReaderTest {
         reader.read("products");
         reader.read("products");
 
-        assertEquals(2, server.calls("Get"));
-        assertEquals(2, server.calls("Scroll"));
+        assertEquals(2, server.calls(Endpoint.COLLECTION));
+        assertEquals(2, server.calls(Endpoint.SCROLL));
     }
 
     @Test
     void reportsAMissingCollection() {
         SQLException error = assertThrows(SQLException.class,
             () -> new SchemaReader(gateway, 10).read("missing"));
+
+        assertEquals("42S02", error.getSQLState());
+        assertEquals(0, server.calls(Endpoint.SCROLL));
+    }
+
+    @Test
+    void reportsACollectionDeletedBetweenTheTwoCalls() {
+        server.fail(Endpoint.SCROLL, 404, "Not found: Collection `products` doesn't exist!");
+
+        SQLException error = assertThrows(SQLException.class,
+            () -> new SchemaReader(gateway, 10).read("products"));
 
         assertEquals("42S02", error.getSQLState());
     }

@@ -7,12 +7,16 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import com.runaxsoftware.qdrant.jdbc.connection.Setting;
 import com.runaxsoftware.qdrant.jdbc.support.TestQdrant;
 
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -40,7 +44,7 @@ import java.util.concurrent.TimeUnit;
 @Tag("integration")
 class ConnectionIntegrationTest {
 
-    private static final String COMPOSE_URL = "jdbc:qdrant://localhost:6334";
+    private static final String COMPOSE_URL = "jdbc:qdrant://localhost:6333";
 
     @Test
     void acceptsTheSettingsToolsApplyOnConnect() throws SQLException {
@@ -73,13 +77,24 @@ class ConnectionIntegrationTest {
     }
 
     @Test
-    void refusesToRunSqlForNow() throws SQLException {
+    void refusesToReadCollectionsWithSqlForNow() throws SQLException {
         try (Connection connection = connect(TestQdrant.properties());
              Statement statement = connection.createStatement()) {
             assertThrows(SQLFeatureNotSupportedException.class,
                 () -> statement.executeQuery("SELECT * FROM products"));
             assertThrows(SQLFeatureNotSupportedException.class,
                 () -> connection.prepareStatement("SELECT 1"));
+        }
+    }
+
+    @Test
+    void answersTheKeepAliveQueryToolsSend() throws SQLException {
+        try (Connection connection = connect(TestQdrant.properties());
+             Statement statement = connection.createStatement();
+             ResultSet rows = statement.executeQuery("SELECT 1")) {
+            assertTrue(rows.next());
+            assertEquals(1, rows.getInt(1));
+            assertFalse(rows.next());
         }
     }
 
@@ -105,6 +120,7 @@ class ConnectionIntegrationTest {
             assertTrue(version.matches("\\d+\\.\\d+\\.\\d+.*"), version);
             assertEquals(Integer.parseInt(version.split("\\.")[0]), metaData.getDatabaseMajorVersion());
             assertEquals(Integer.parseInt(version.split("\\.")[1]), metaData.getDatabaseMinorVersion());
+            assertTrue(connection.toString().contains("Qdrant " + version), connection.toString());
         }
     }
 
@@ -118,16 +134,41 @@ class ConnectionIntegrationTest {
     }
 
     @Test
-    void pointsToTheGrpcPortWhenGivenTheRestPort() {
+    void usesTheRestPortWhenTheUrlHasNone() throws SQLException {
+        assumeTrue(TestQdrant.jdbcUrl().equals(COMPOSE_URL), "needs the compose.yml server");
+
+        try (Connection connection = DriverManager.getConnection("jdbc:qdrant://localhost",
+            new Properties())) {
+            assertTrue(connection.isValid(5));
+            assertEquals("jdbc:qdrant://localhost", connection.getMetaData().getURL());
+        }
+    }
+
+    @Test
+    void connectsToAnIpv6Address() throws SQLException {
+        assumeTrue(TestQdrant.jdbcUrl().equals(COMPOSE_URL), "needs the compose.yml server");
+        assumeTrue(reachable("::1", 6333), "Qdrant isn't reachable over IPv6 here");
+
+        try (Connection connection = DriverManager.getConnection("jdbc:qdrant://[::1]:6333",
+            new Properties())) {
+            assertTrue(connection.isValid(5));
+            assertTrue(connection.toString().contains("http://[::1]:6333"), connection.toString());
+        }
+    }
+
+    @Test
+    void pointsToTheRestPortWhenGivenTheGrpcPort() {
         assumeTrue(TestQdrant.jdbcUrl().equals(COMPOSE_URL), "needs the compose.yml server");
 
         SQLNonTransientConnectionException error = assertThrows(
             SQLNonTransientConnectionException.class,
-            () -> DriverManager.getConnection("jdbc:qdrant://localhost:6333", new Properties()));
+            () -> DriverManager.getConnection("jdbc:qdrant://localhost:6334?timeout=10",
+                new Properties()));
 
         assertEquals("08001", error.getSQLState());
-        assertTrue(error.getMessage().contains("gRPC port, 6334 by default, not the REST port"),
+        assertTrue(error.getMessage().contains("REST API didn't answer at http://localhost:6334"),
             error.getMessage());
+        assertTrue(error.getMessage().contains("not the gRPC port, 6334"), error.getMessage());
     }
 
     @Test
@@ -139,18 +180,30 @@ class ConnectionIntegrationTest {
             () -> DriverManager.getConnection(COMPOSE_URL + "?tls=true&timeout=10", new Properties()));
 
         assertEquals("08001", error.getSQLState());
+        assertTrue(error.getMessage().contains("https://localhost:6333"), error.getMessage());
         assertFalse(error.getMessage().contains("\n"), error.getMessage());
-        assertFalse(error.getMessage().contains("Channel Pipeline"), error.getMessage());
     }
 
     @Test
     void reportsAnUnknownHost() {
         SQLNonTransientConnectionException error = assertThrows(
             SQLNonTransientConnectionException.class,
-            () -> DriverManager.getConnection("jdbc:qdrant://no-such-host.invalid:6334?timeout=10",
+            () -> DriverManager.getConnection("jdbc:qdrant://no-such-host.invalid:6333?timeout=10",
                 new Properties()));
 
+        assertEquals("08001", error.getSQLState());
         assertTrue(error.getMessage().contains("no-such-host.invalid"), error.getMessage());
+    }
+
+    @Test
+    void reportsAClosedPort() {
+        SQLNonTransientConnectionException error = assertThrows(
+            SQLNonTransientConnectionException.class,
+            () -> DriverManager.getConnection("jdbc:qdrant://localhost:1?timeout=10",
+                new Properties()));
+
+        assertEquals("08001", error.getSQLState());
+        assertTrue(error.getMessage().contains("REST port (6333 by default)"), error.getMessage());
     }
 
     @Test
@@ -225,9 +278,9 @@ class ConnectionIntegrationTest {
     void logsCallsWithoutTheApiKey(@TempDir Path directory) throws Exception {
         Path log = directory.resolve("calls.log");
         Properties properties = TestQdrant.properties();
-        properties.putIfAbsent(ConnectionSettings.PASSWORD, "key-the-local-server-ignores");
-        String apiKey = properties.getProperty(ConnectionSettings.PASSWORD);
-        properties.setProperty(ConnectionSettings.LOG_FILE, log.toString());
+        properties.putIfAbsent(Setting.PASSWORD.key(), "key-the-local-server-ignores");
+        String apiKey = properties.getProperty(Setting.PASSWORD.key());
+        properties.setProperty(Setting.LOG_FILE.key(), log.toString());
 
         try (Connection connection = connect(properties);
              ResultSet tables = connection.getMetaData().getTables(null, null, "%", null)) {
@@ -245,6 +298,15 @@ class ConnectionIntegrationTest {
 
     private static Connection connect(Properties properties) throws SQLException {
         return DriverManager.getConnection(TestQdrant.jdbcUrl(), properties);
+    }
+
+    private static boolean reachable(String host, int port) {
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress(host, port), 1000);
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     private static <T> List<Future<T>> runAll(List<Callable<T>> tasks) throws InterruptedException {

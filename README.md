@@ -17,17 +17,18 @@ first target; any JDBC client (DBeaver, BI tools) should work the same way.
   the fly, with the score as a `_score` column.
 - **Honest errors** — SQL that Qdrant can't run (joins, arbitrary aggregates) fails with
   a clear error instead of scanning a whole collection on the client.
-- **Official Qdrant SDK** — talks to Qdrant over gRPC through Qdrant's own Java client; a
-  single jar to drop into DataGrip.
+- **One small jar** — talks to Qdrant's REST API with the JDK's own HTTP client, so the
+  only library inside is Jackson, relocated so it can't clash with the tool's own copy.
 
 ## Connection
 
 ```
-jdbc:qdrant://localhost:6334
+jdbc:qdrant://localhost:6333
 ```
 
-The driver talks to Qdrant's gRPC API (port `6334` by default) through the official
-Qdrant Java SDK. Put the Qdrant API key in the password field, so DataGrip keeps it in its
+The driver talks to Qdrant's REST API, on port `6333` by default, the same port as the web
+dashboard. Qdrant's gRPC port, `6334`, doesn't work; if you point the driver at it, the
+error says so. Put the Qdrant API key in the password field, so DataGrip keeps it in its
 credential store rather than in the project's data source files.
 
 Other settings go in the URL (`?tls=true&timeout=60`) or in the connection properties
@@ -47,7 +48,7 @@ Other settings go in the URL (`?tls=true&timeout=60`) or in the connection prope
 2. In DataGrip, open **Database Explorer → + → Driver**, name it `Qdrant (Runax)`, and
    under **Driver Files** add the jar as a custom JAR.
 3. Set **Class** to `com.runaxsoftware.qdrant.jdbc.QdrantDriver` and add the URL template
-   `jdbc:qdrant://{host::localhost}[:{port::6334}]`.
+   `jdbc:qdrant://{host::localhost}[:{port::6333}]`.
 4. Create a data source from that driver. Choose **No auth**, or **User & Password** with
    the API key as the password and the user left empty.
 5. **Test Connection**, then open the data source: collections show up as tables, with

@@ -5,10 +5,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.runaxsoftware.qdrant.jdbc.client.CollectionInfo;
-import com.runaxsoftware.qdrant.jdbc.client.VectorField;
-import com.runaxsoftware.qdrant.jdbc.client.VectorKind;
-import com.runaxsoftware.qdrant.jdbc.result.ResultColumn;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantCollection;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.VectorField;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.VectorKind;
+import com.runaxsoftware.qdrant.jdbc.resultset.ResultColumn;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnKind;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnType;
@@ -32,7 +32,7 @@ import java.util.Map;
 class PlannerTest {
 
     private static final TableSchema DOCS = new TableSchema(
-            new CollectionInfo("docs", 3, List.of(new VectorField("", VectorKind.DENSE, 4, "Cosine")), Map.of()),
+            new QdrantCollection("docs", 3, List.of(new VectorField("", VectorKind.DENSE, 4, "Cosine")), Map.of()),
             List.of(
                     new ColumnDefinition("_id", ColumnKind.ID, ColumnType.TEXT, 0, null, ""),
                     new ColumnDefinition("_payload", ColumnKind.PAYLOAD, ColumnType.JSON, 0, null, ""),

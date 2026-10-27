@@ -35,10 +35,13 @@ version.
     ```
     `compose.yml` starts two servers:
 
-    | Server | gRPC (what the driver uses) | REST and dashboard | API key |
+    | Server | REST (what the driver uses) and dashboard | gRPC | API key |
     | --- | --- | --- | --- |
-    | `qdrant` | `localhost:6334` | <http://localhost:6333/dashboard> | none |
-    | `qdrant-secured` | `localhost:6336` | `localhost:6335` | `integration-test-key` |
+    | `qdrant` | <http://localhost:6333/dashboard> | `localhost:6334` | none |
+    | `qdrant-secured` | `localhost:6335` | `localhost:6336` | `integration-test-key` |
+
+    The gRPC ports are open only so the tests can check the error the driver gives when
+    pointed at the wrong port.
 
     The integration tests create and delete their own collections. `integrationTest` also
     builds the shaded jar and checks it on its own, in a separate class loader, the way
@@ -57,11 +60,17 @@ version.
 
 ```
 src/main/java/com/runaxsoftware/qdrant/jdbc/
-  QdrantDriver, QdrantConnection, ...          # The JDBC classes
-  client/                                      # Calls to Qdrant through the official Java SDK
+  QdrantDriver, DriverInfo                     # The driver's entry point and version
+  connection/                                  # URL, settings, the connection, call log
+  gateway/                                     # Calls to Qdrant's REST API, and its models
   schema/                                      # How a collection maps to columns
-  result/                                      # Read-only result sets
-src/test/java/com/runaxsoftware/qdrant/jdbc/   # Unit tests and *IntegrationTest classes
+  metadata/                                    # DatabaseMetaData: tables, columns, indexes
+  statement/                                   # Statements: plan and run SQL
+  resultset/                                   # Read-only result sets
+  sql/                                         # SQL parser, planner, and executor
+  embedding/                                   # Text embedding providers
+src/test/java/com/runaxsoftware/qdrant/jdbc/   # Unit tests, in the package of the class
+                                               # they test, and *IntegrationTest classes
   support/                                     # Fake Qdrant server, sample collections,
                                                # and test server settings
 build.gradle.kts                                # Build, test tasks, and the shaded driver jar
@@ -74,9 +83,9 @@ Integration tests are tagged `integration`: `./gradlew test` skips them and
 `./gradlew integrationTest` runs only them.
 
 Unit tests that need a server use `support/FakeQdrantServer`, an in-process stand-in for
-Qdrant's gRPC API built on the SDK's generated service classes. It can fail or delay any call,
-require an API key, and records requests and headers, so error handling and edge cases are
-tested without Docker. Use it for anything that depends on how the server answers; use an
+Qdrant's REST API built on the JDK's HTTP server. It answers with Qdrant's own response
+shapes, can fail or delay any call, require an API key, and records requests and headers,
+so error handling and edge cases are tested without Docker. Use it for anything that depends on how the server answers; use an
 integration test to check behaviour against real Qdrant.
 
 ## Making changes
@@ -107,7 +116,7 @@ integration test to check behaviour against real Qdrant.
 Every runtime dependency ends up inside the single driver jar that users drop into
 DataGrip, so keep them few and small.
 
-1. Prefer the JDK or what the Qdrant SDK already brings over a new library.
+1. Prefer the JDK or Jackson, which the driver already uses, over a new library.
 2. Open an issue before adding a new runtime dependency.
 3. Declare its version in `gradle/libs.versions.toml` and reference it from
    `build.gradle.kts` through `libs`.

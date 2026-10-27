@@ -1,6 +1,6 @@
 package com.runaxsoftware.qdrant.jdbc.connection;
 
-import com.runaxsoftware.qdrant.jdbc.client.QdrantGateway;
+import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
 
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -23,7 +23,7 @@ import static com.runaxsoftware.qdrant.jdbc.connection.ConnectionErrors.invalid;
  * be logged.
  *
  * @param host       the host name or address, without the brackets of an IPv6 address
- * @param port       Qdrant's gRPC port, {@link #DEFAULT_PORT} when the URL has none
+ * @param port       Qdrant's REST port, {@link #DEFAULT_PORT} when the URL has none
  * @param parameters the decoded {@code ?name=value} pairs, exactly as written; a parameter
  *                   without a value maps to an empty string
  */
@@ -38,14 +38,14 @@ public record QdrantUrl(
     public static final String PREFIX = "jdbc:qdrant:";
 
     /**
-     * Qdrant's default gRPC port, used when the URL has none.
+     * Qdrant's default REST port, used when the URL has none.
      */
     public static final int DEFAULT_PORT = QdrantGateway.DEFAULT_PORT;
 
     /**
      * A working URL, quoted in error messages.
      */
-    public static final String EXAMPLE = "jdbc:qdrant://localhost:6334";
+    public static final String EXAMPLE = PREFIX + "//localhost:" + DEFAULT_PORT;
 
     private static final Charset DEFAULT_CHARSET = StandardCharsets.UTF_8;
 
@@ -53,7 +53,7 @@ public record QdrantUrl(
      * Copies {@code parameters}, so the record can't change after it's made.
      *
      * @param host       the host name or address, without IPv6 brackets
-     * @param port       Qdrant's gRPC port
+     * @param port       Qdrant's REST port
      * @param parameters the decoded URL parameters
      */
     public QdrantUrl {
@@ -66,7 +66,8 @@ public record QdrantUrl(
      * @param url the JDBC URL; must not be {@code null}
      * @return {@code true} for a Qdrant URL
      */
-    public static boolean accepts(String url) {
+    public static boolean accepts(String url) throws SQLException {
+        if (url == null) throw new SQLException("The URL is null", "08001");
         return url.regionMatches(true, 0, PREFIX, 0, PREFIX.length());
     }
 
@@ -74,7 +75,7 @@ public record QdrantUrl(
      * Splits a URL into its parts. Error messages show the URL only up to its {@code ?}, so no
      * parameter value ends up in them.
      *
-     * @param url the JDBC URL, such as {@code jdbc:qdrant://localhost:6334?tls=true}
+     * @param url the JDBC URL, such as {@code jdbc:qdrant://localhost:6333?tls=true}
      * @return the URL's host, port, and parameters
      * @throws SQLException an {@link SQLNonTransientConnectionException} with SQLState
      *                      {@code 08001} when the URL is missing, isn't a Qdrant URL, isn't a
@@ -101,7 +102,7 @@ public record QdrantUrl(
 
         String path = uri.getRawPath();
         if (path != null && !path.isEmpty() && !path.equals("/")) {
-            throw invalid("Qdrant's gRPC API has no URL path; remove " + path + " from "
+            throw invalid("A Qdrant URL has no path; remove " + path + " from "
                 + withoutQuery(url));
         }
 
@@ -152,7 +153,8 @@ public record QdrantUrl(
     }
 
     /**
-     * {@link URI} keeps the brackets around an IPv6 address; gRPC wants it without them.
+     * {@link URI} keeps the brackets around an IPv6 address; the host is stored without them,
+     * and the gateway adds them back when it builds the server's URL.
      */
     private static String unbracket(String host) {
         return host.startsWith("[") && host.endsWith("]")

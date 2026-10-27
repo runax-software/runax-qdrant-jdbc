@@ -4,7 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.runaxsoftware.qdrant.jdbc.client.QdrantGateway;
+import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
 import com.runaxsoftware.qdrant.jdbc.support.SampleCollections;
 import com.runaxsoftware.qdrant.jdbc.support.TestQdrant;
 
@@ -158,6 +158,15 @@ class MetadataIntegrationTest {
         assertEquals(List.of(
             table + "_pkey _id unique", "created_at_idx created_at", "name_idx name",
             "price_idx price", "specs.color_idx specs.color", "tags_idx tags"), indexes);
+    }
+
+    @Test
+    void reportsThePointCountAsThePrimaryKeysCardinality() throws SQLException {
+        try (ResultSet rows = metaData.getIndexInfo(null, null, PREFIX + "products", true, true)) {
+            assertTrue(rows.next());
+            assertEquals(5, rows.getLong("CARDINALITY"));
+            assertFalse(rows.next());
+        }
     }
 
     @Test

@@ -8,11 +8,16 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.runaxsoftware.qdrant.jdbc.connection.QdrantConnection;
+import com.runaxsoftware.qdrant.jdbc.connection.Setting;
 import com.runaxsoftware.qdrant.jdbc.support.FakeQdrantServer;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.net.InetAddress;
+import java.net.ServerSocket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -21,9 +26,7 @@ import java.sql.Driver;
 import java.sql.DriverManager;
 import java.sql.DriverPropertyInfo;
 import java.sql.SQLException;
-import java.sql.SQLInvalidAuthorizationSpecException;
 import java.sql.SQLNonTransientConnectionException;
-import java.sql.SQLTimeoutException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
@@ -33,9 +36,11 @@ class QdrantDriverTest {
 
     private final QdrantDriver driver = new QdrantDriver();
 
+    // URLs
+
     @Test
     void acceptsOnlyQdrantUrls() throws SQLException {
-        assertTrue(driver.acceptsURL("jdbc:qdrant://localhost:6334"));
+        assertTrue(driver.acceptsURL("jdbc:qdrant://localhost:6333"));
         assertTrue(driver.acceptsURL("JDBC:QDRANT://localhost"));
         assertFalse(driver.acceptsURL("jdbc:postgresql://localhost/db"));
         assertThrows(SQLException.class, () -> driver.acceptsURL(null));
@@ -44,12 +49,29 @@ class QdrantDriverTest {
     @Test
     void returnsNullForOtherUrls() throws SQLException {
         assertNull(driver.connect("jdbc:postgresql://localhost/db", new Properties()));
+        assertNull(driver.connect("jdbc:postgresql://localhost/db", null));
     }
 
     @Test
     void rejectsAMalformedQdrantUrl() {
-        assertThrows(SQLException.class, () -> driver.connect("jdbc:qdrant:nohost", null));
+        SQLNonTransientConnectionException error = assertThrows(
+            SQLNonTransientConnectionException.class,
+            () -> driver.connect("jdbc:qdrant:nohost", null));
+
+        assertEquals("08001", error.getSQLState());
     }
+
+    @Test
+    void rejectsInvalidSettingsBeforeConnecting() {
+        SQLException error = assertThrows(SQLException.class,
+            () -> driver.connect("jdbc:qdrant://localhost:1?timeout=never", new Properties()));
+
+        assertEquals("08001", error.getSQLState());
+        assertTrue(error.getMessage().startsWith("timeout must be a whole number"),
+            error.getMessage());
+    }
+
+    // Registration
 
     @Test
     void isRegisteredWithDriverManager() throws SQLException {
@@ -65,6 +87,8 @@ class QdrantDriverTest {
         assertTrue(drivers.contains(QdrantDriver.class.getName()), drivers.toString());
     }
 
+    // Connecting
+
     @Test
     void connectsAndReturnsAQdrantConnection() throws Exception {
         try (FakeQdrantServer server = FakeQdrantServer.start();
@@ -78,6 +102,7 @@ class QdrantDriverTest {
         try (FakeQdrantServer server = FakeQdrantServer.start();
              Connection connection = DriverManager.getConnection(server.jdbcUrl(), "", "")) {
             assertFalse(connection.isClosed());
+            assertTrue(server.apiKeys().stream().allMatch(String::isEmpty), "no API key sent");
         }
     }
 
@@ -85,80 +110,27 @@ class QdrantDriverTest {
     void sendsThePasswordAsTheApiKey() throws Exception {
         try (FakeQdrantServer server = FakeQdrantServer.start()) {
             server.requireApiKey("secret");
-            Properties properties = new Properties();
-            properties.setProperty("password", "secret");
 
-            try (Connection connection = driver.connect(server.jdbcUrl(), properties)) {
+            try (Connection connection =
+                     DriverManager.getConnection(server.jdbcUrl(), "ignored-user", "secret")) {
                 assertTrue(connection.isValid(5));
             }
 
-            assertTrue(server.apiKeys().stream().allMatch("secret"::equals));
+            assertTrue(server.apiKeys().stream().allMatch("secret"::equals),
+                server.apiKeys().toString());
         }
     }
 
     @Test
-    void reportsAWrongApiKeyOnConnect() throws Exception {
-        try (FakeQdrantServer server = FakeQdrantServer.start()) {
-            server.requireApiKey("secret");
-            Properties properties = new Properties();
-            properties.setProperty("password", "wrong");
-
-            SQLInvalidAuthorizationSpecException error = assertThrows(
-                SQLInvalidAuthorizationSpecException.class,
-                () -> driver.connect(server.jdbcUrl(), properties));
-
-            assertEquals("28000", error.getSQLState());
+    void readsSettingsFromTheUrl() throws Exception {
+        try (FakeQdrantServer server = FakeQdrantServer.start();
+             Connection connection = driver.connect(server.jdbcUrl("timeout=5&sampleSize=0"),
+                 new Properties())) {
+            assertTrue(connection.isValid(1));
         }
     }
 
-    @Test
-    void reportsAMissingApiKeyOnConnect() throws Exception {
-        try (FakeQdrantServer server = FakeQdrantServer.start()) {
-            server.requireApiKey("secret");
-
-            assertThrows(SQLInvalidAuthorizationSpecException.class,
-                () -> driver.connect(server.jdbcUrl(), new Properties()));
-        }
-    }
-
-    @Test
-    void reportsAConnectionErrorWhenNothingListens() {
-        Properties properties = new Properties();
-        properties.setProperty("timeout", "5");
-
-        SQLNonTransientConnectionException error = assertThrows(
-            SQLNonTransientConnectionException.class,
-            () -> driver.connect("jdbc:qdrant://localhost:1", properties));
-
-        assertEquals("08001", error.getSQLState());
-        assertTrue(error.getMessage().contains("localhost:1"));
-    }
-
-    @Test
-    void pointsToTheGrpcPortWhenSomethingElseAnswers() throws Exception {
-        try (FakeQdrantServer server = FakeQdrantServer.start()) {
-            server.fail("HealthCheck", io.grpc.Status.INTERNAL.withDescription("http2 exception"));
-
-            SQLNonTransientConnectionException error = assertThrows(
-                SQLNonTransientConnectionException.class,
-                () -> driver.connect(server.jdbcUrl(), new Properties()));
-
-            assertEquals("08001", error.getSQLState());
-            assertTrue(error.getMessage().contains("http2 exception"), error.getMessage());
-            assertTrue(error.getMessage().contains("gRPC port, 6334 by default"), error.getMessage());
-            assertEquals("HY000", ((SQLException) error.getCause()).getSQLState());
-        }
-    }
-
-    @Test
-    void reportsASlowServerOnConnectAsATimeout() throws Exception {
-        try (FakeQdrantServer server = FakeQdrantServer.start()) {
-            server.delay("HealthCheck", java.time.Duration.ofSeconds(3));
-
-            assertThrows(SQLTimeoutException.class,
-                () -> driver.connect(server.jdbcUrl("timeout=1"), new Properties()));
-        }
-    }
+    // Properties
 
     @Test
     void describesItsProperties() {
@@ -180,6 +152,21 @@ class QdrantDriverTest {
     }
 
     @Test
+    void describesEverySettingWithItsKeyDescriptionAndChoices() {
+        DriverPropertyInfo[] properties = driver.getPropertyInfo(null, new Properties());
+
+        assertEquals(Setting.values().length, properties.length);
+
+        for (int i = 0; i < properties.length; i++) {
+            Setting setting = Setting.values()[i];
+
+            assertEquals(setting.key(), properties[i].name);
+            assertEquals(setting.description(), properties[i].description);
+            assertArrayEquals(setting.choices().toArray(String[]::new), properties[i].choices);
+        }
+    }
+
+    @Test
     void showsTheCurrentValuesButNeverThePassword() {
         Properties current = new Properties();
         current.setProperty("password", "secret");
@@ -195,7 +182,13 @@ class QdrantDriverTest {
         assertEquals("7", properties[2].value);
         assertEquals("5", properties[3].value);
         assertEquals("/tmp/calls.log", properties[4].value);
+
+        for (DriverPropertyInfo property : properties) {
+            assertFalse("secret".equals(property.value), property.name);
+        }
     }
+
+    // About the driver
 
     @Test
     void isNotJdbcCompliantAndNamesItsLogger() {
@@ -210,6 +203,7 @@ class QdrantDriverTest {
         assertEquals(DriverInfo.MAJOR_VERSION, driver.getMajorVersion());
         assertEquals(DriverInfo.MINOR_VERSION, driver.getMinorVersion());
         assertEquals("runax-qdrant-jdbc/" + DriverInfo.VERSION, DriverInfo.USER_AGENT);
+        assertEquals("Runax JDBC Driver for Qdrant", DriverInfo.NAME);
     }
 
     @Test
@@ -221,6 +215,8 @@ class QdrantDriverTest {
         assertEquals(0, DriverInfo.versionPart("1", 1));
     }
 
+    // The call log
+
     @Test
     void failsWhenTheCallLogCantBeWritten(@TempDir Path directory) {
         Properties properties = new Properties();
@@ -230,20 +226,43 @@ class QdrantDriverTest {
             () -> driver.connect("jdbc:qdrant://localhost:1", properties));
 
         assertTrue(error.getMessage().contains("Can't write the JDBC call log"), error.getMessage());
+        assertTrue(error.getMessage().contains("its folder doesn't exist"), error.getMessage());
     }
 
     @Test
     void logsAFailedConnect(@TempDir Path directory) throws Exception {
         Path log = directory.resolve("calls.log");
+        String url = "jdbc:qdrant://localhost:" + freePort();
         Properties properties = new Properties();
         properties.setProperty("logFile", log.toString());
         properties.setProperty("timeout", "5");
 
-        assertThrows(SQLNonTransientConnectionException.class,
-            () -> driver.connect("jdbc:qdrant://localhost:1", properties));
+        assertThrows(SQLNonTransientConnectionException.class, () -> driver.connect(url, properties));
 
         String text = Files.readString(log, StandardCharsets.UTF_8);
-        assertTrue(text.contains("connect jdbc:qdrant://localhost:1"), text);
+        assertTrue(text.contains("connect " + url), text);
         assertTrue(text.contains("connect failed: java.sql.SQLNonTransientConnectionException"), text);
+    }
+
+    @Test
+    void keepsTheApiKeyOutOfTheLogOfAFailedConnect(@TempDir Path directory) throws Exception {
+        Path log = directory.resolve("calls.log");
+        Properties properties = new Properties();
+        properties.setProperty("logFile", log.toString());
+        properties.setProperty("timeout", "5");
+        properties.setProperty("password", "super-secret-key");
+
+        assertThrows(SQLException.class,
+            () -> driver.connect("jdbc:qdrant://localhost:" + freePort(), properties));
+
+        String text = Files.readString(log, StandardCharsets.UTF_8);
+        assertFalse(text.contains("super-secret-key"), text);
+        assertTrue(text.contains("apiKey=set"), text);
+    }
+
+    private static int freePort() throws IOException {
+        try (ServerSocket socket = new ServerSocket(0, 50, InetAddress.getLoopbackAddress())) {
+            return socket.getLocalPort();
+        }
     }
 }

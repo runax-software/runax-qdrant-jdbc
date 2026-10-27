@@ -8,7 +8,6 @@ import java.util.Properties;
  * The driver's name and version. The version comes from the build.
  */
 public final class DriverInfo {
-
     /**
      * The driver's name.
      */

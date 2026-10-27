@@ -1,6 +1,6 @@
 package com.runaxsoftware.qdrant.jdbc.sql.planner.plan;
 
-import com.runaxsoftware.qdrant.jdbc.result.ResultColumn;
+import com.runaxsoftware.qdrant.jdbc.resultset.ResultColumn;
 
 import java.util.List;
 

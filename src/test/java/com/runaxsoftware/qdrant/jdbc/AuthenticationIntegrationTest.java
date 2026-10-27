@@ -5,7 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.runaxsoftware.qdrant.jdbc.client.QdrantGateway;
+import com.runaxsoftware.qdrant.jdbc.connection.ConnectionSettings;
+import com.runaxsoftware.qdrant.jdbc.connection.Setting;
+import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
 import com.runaxsoftware.qdrant.jdbc.support.SampleCollections;
 import com.runaxsoftware.qdrant.jdbc.support.TestQdrant;
 
@@ -56,6 +58,7 @@ class AuthenticationIntegrationTest {
             SQLInvalidAuthorizationSpecException.class, () -> connect("wrong-key-1234"));
 
         assertEquals("28000", error.getSQLState());
+        assertEquals(401, error.getErrorCode());
         assertTrue(error.getMessage().contains("password field"), error.getMessage());
         assertFalse(error.getMessage().contains("wrong-key-1234"));
     }
@@ -65,7 +68,16 @@ class AuthenticationIntegrationTest {
         SQLInvalidAuthorizationSpecException error = assertThrows(
             SQLInvalidAuthorizationSpecException.class, () -> connect(null));
 
+        assertEquals("28000", error.getSQLState());
         assertTrue(error.getMessage().contains("API key"), error.getMessage());
+    }
+
+    @Test
+    void treatsAnEmptyPasswordAsNoApiKey() {
+        SQLInvalidAuthorizationSpecException error = assertThrows(
+            SQLInvalidAuthorizationSpecException.class, () -> connect(""));
+
+        assertTrue(error.getMessage().contains("Must provide an API key"), error.getMessage());
     }
 
     @Test
@@ -97,8 +109,8 @@ class AuthenticationIntegrationTest {
     void keepsTheApiKeyOutOfTheCallLog(@TempDir Path directory) throws Exception {
         Path log = directory.resolve("calls.log");
         Properties properties = new Properties();
-        properties.setProperty("password", TestQdrant.securedApiKey());
-        properties.setProperty("logFile", log.toString());
+        properties.setProperty(Setting.PASSWORD.key(), TestQdrant.securedApiKey());
+        properties.setProperty(Setting.LOG_FILE.key(), log.toString());
 
         try (Connection connection = DriverManager.getConnection(TestQdrant.securedJdbcUrl(),
             properties)) {
@@ -107,14 +119,30 @@ class AuthenticationIntegrationTest {
 
         String text = Files.readString(log, StandardCharsets.UTF_8);
         assertTrue(text.contains("DatabaseMetaData.getTables"), text);
-        assertFalse(text.contains(TestQdrant.securedApiKey()));
+        assertTrue(text.contains("apiKey=set"), text);
+        assertFalse(text.contains(TestQdrant.securedApiKey()), text);
+    }
+
+    @Test
+    void keepsTheApiKeyOutOfFailedConnectionLogs(@TempDir Path directory) throws Exception {
+        Path log = directory.resolve("calls.log");
+        Properties properties = new Properties();
+        properties.setProperty(Setting.PASSWORD.key(), "wrong-key-5678");
+        properties.setProperty(Setting.LOG_FILE.key(), log.toString());
+
+        assertThrows(SQLInvalidAuthorizationSpecException.class,
+            () -> DriverManager.getConnection(TestQdrant.securedJdbcUrl(), properties));
+
+        String text = Files.readString(log, StandardCharsets.UTF_8);
+        assertTrue(text.contains("connect failed"), text);
+        assertFalse(text.contains("wrong-key-5678"), text);
     }
 
     private static Connection connect(String apiKey) throws SQLException {
         Properties properties = new Properties();
 
         if (apiKey != null) {
-            properties.setProperty("password", apiKey);
+            properties.setProperty(Setting.PASSWORD.key(), apiKey);
         }
 
         return DriverManager.getConnection(TestQdrant.securedJdbcUrl(), properties);

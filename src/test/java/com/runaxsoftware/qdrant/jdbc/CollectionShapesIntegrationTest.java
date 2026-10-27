@@ -1,23 +1,21 @@
 package com.runaxsoftware.qdrant.jdbc;
 
+import static com.runaxsoftware.qdrant.jdbc.support.Json.object;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.runaxsoftware.qdrant.jdbc.client.QdrantGateway;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.runaxsoftware.qdrant.jdbc.gateway.HttpMethod;
+import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
 import com.runaxsoftware.qdrant.jdbc.support.SampleCollections;
 import com.runaxsoftware.qdrant.jdbc.support.TestQdrant;
-import io.qdrant.client.grpc.Collections.CreateCollection;
-import io.qdrant.client.grpc.Collections.Distance;
-import io.qdrant.client.grpc.Collections.PayloadSchemaType;
-import io.qdrant.client.grpc.Collections.SparseVectorConfig;
-import io.qdrant.client.grpc.Collections.SparseVectorParams;
-import io.qdrant.client.grpc.Collections.VectorParams;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
@@ -37,8 +35,10 @@ class CollectionShapesIntegrationTest {
     private static final String PREFIX =
         "jdbc_shapes_" + UUID.randomUUID().toString().substring(0, 8) + "_";
     private static final String MIXED_CASE = PREFIX + "Mixed-Case.v2";
+    private static final String WITH_SPACE = PREFIX + "with space";
     private static final String EMPTY = PREFIX + "empty";
     private static final String SPARSE_ONLY = PREFIX + "sparse_only";
+    private static final List<String> EXTRA = List.of(MIXED_CASE, WITH_SPACE, EMPTY, SPARSE_ONLY);
 
     private static QdrantGateway gateway;
 
@@ -47,27 +47,22 @@ class CollectionShapesIntegrationTest {
         gateway = TestQdrant.gateway();
         SampleCollections.create(gateway, PREFIX);
 
-        gateway.await(gateway.sdk().createCollectionAsync(MIXED_CASE,
-            VectorParams.newBuilder().setSize(2).setDistance(Distance.Dot).build()));
-        gateway.await(gateway.sdk().createCollectionAsync(EMPTY,
-            VectorParams.newBuilder().setSize(8).setDistance(Distance.Cosine).build()));
-        gateway.await(gateway.sdk().createPayloadIndexAsync(EMPTY, "lang", PayloadSchemaType.Keyword,
-            null, true, null, null));
-        gateway.await(gateway.sdk().createPayloadIndexAsync(EMPTY, "year", PayloadSchemaType.Integer,
-            null, true, null, null));
-        gateway.await(gateway.sdk().createCollectionAsync(CreateCollection.newBuilder()
-            .setCollectionName(SPARSE_ONLY)
-            .setSparseVectorsConfig(SparseVectorConfig.newBuilder()
-                .putMap("bm25", SparseVectorParams.getDefaultInstance()))
-            .build()));
+        create(MIXED_CASE, object("vectors", object("size", 2, "distance", "Dot")));
+        create(WITH_SPACE, object("vectors", object("size", 2, "distance", "Dot")));
+        create(EMPTY, object("vectors", object("size", 8, "distance", "Cosine")));
+        index(EMPTY, "lang", "keyword");
+        index(EMPTY, "year", "integer");
+        create(SPARSE_ONLY, object("sparse_vectors", object("bm25", object())));
     }
 
     @AfterAll
     static void deleteCollections() throws SQLException {
         if (gateway != null) {
-            for (String name : List.of(MIXED_CASE, EMPTY, SPARSE_ONLY)) {
-                if (gateway.await(gateway.sdk().collectionExistsAsync(name))) {
-                    gateway.await(gateway.sdk().deleteCollectionAsync(name));
+            List<String> existing = gateway.listCollections();
+
+            for (String name : EXTRA) {
+                if (existing.contains(name)) {
+                    gateway.request(HttpMethod.DELETE, "/collections/" + segment(name), null);
                 }
             }
 
@@ -84,6 +79,16 @@ class CollectionShapesIntegrationTest {
             assertEquals(List.of(MIXED_CASE), tables(metaData, like(MIXED_CASE)));
             assertEquals(List.of(), tables(metaData, like(PREFIX + "mixed-case.v2")));
             assertEquals(List.of("_id", "_payload", "_vector"), columns(metaData, MIXED_CASE));
+        }
+    }
+
+    @Test
+    void readsCollectionsWhoseNamesNeedEncodingInAUrl() throws SQLException {
+        try (Connection connection = connect("")) {
+            DatabaseMetaData metaData = connection.getMetaData();
+
+            assertEquals(List.of(WITH_SPACE), tables(metaData, like(WITH_SPACE)));
+            assertEquals(List.of("_id", "_payload", "_vector"), columns(metaData, WITH_SPACE));
         }
     }
 
@@ -142,8 +147,21 @@ class CollectionShapesIntegrationTest {
             }
 
             assertEquals(List.of("Mixed-Case.v2", "articles", "empty", "events", "products",
-                "sparse_only"), tables);
+                "sparse_only", "with space"), tables);
         }
+    }
+
+    private static void create(String name, ObjectNode body) throws SQLException {
+        gateway.request(HttpMethod.PUT, "/collections/" + segment(name), body);
+    }
+
+    private static void index(String collection, String field, String type) throws SQLException {
+        gateway.request(HttpMethod.PUT, "/collections/" + segment(collection) + "/index?wait=true",
+            object("field_name", field, "field_schema", type));
+    }
+
+    private static String segment(String name) {
+        return URLEncoder.encode(name, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
     private static Connection connect(String parameters) throws SQLException {
