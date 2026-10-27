@@ -103,7 +103,7 @@ public final class SchemaInference {
         PayloadIndexType index = field.indexType();
         ColumnType type = ColumnType.forPayloadField(ColumnType.forIndex(index), field.kinds());
         String remarks = (isNested(path) ? "Nested payload field" : "Payload field")
-            + (index == null ? "(not indexed)" : " (" + index.qdrantName() + " index)");
+            + (index == null ? " (not indexed)" : " (" + index.qdrantName() + " index)");
 
         return ColumnDefinition.payloadField(path, type, remarks);
     }

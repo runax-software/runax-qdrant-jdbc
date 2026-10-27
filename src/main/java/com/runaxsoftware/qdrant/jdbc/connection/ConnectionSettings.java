@@ -40,4 +40,14 @@ public record ConnectionSettings(
             values.path(Setting.LOG_FILE)
         );
     }
+
+    /**
+     * The settings for logs and error messages, saying only whether an API key is set.
+     */
+    @Override
+    public String toString() {
+        return "ConnectionSettings[host=" + host + ", port=" + port + ", tls=" + tls
+            + ", apiKey=" + (apiKey == null ? "none" : "set") + ", timeout=" + timeout.toSeconds() + "s"
+            + ", sampleSize=" + sampleSize + ", logFile=" + logFile + "]";
+    }
 }

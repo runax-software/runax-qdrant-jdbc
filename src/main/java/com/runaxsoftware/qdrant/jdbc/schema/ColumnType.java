@@ -17,27 +17,27 @@ public enum ColumnType {
     /**
      * Strings, including keyword, full-text, and UUID payload fields, and point IDs.
      */
-    TEXT(Types.VARCHAR, "VARCHAR"),
+    TEXT(Types.VARCHAR, "VARCHAR", ValueKind.STRING),
 
     /**
      * Whole numbers.
      */
-    INTEGER(Types.BIGINT, "BIGINT"),
+    INTEGER(Types.BIGINT, "BIGINT", ValueKind.INTEGER),
 
     /**
-     * Floating-point numbers.
+     * Floating-point numbers, which whole numbers fit too.
      */
-    FLOAT(Types.DOUBLE, "DOUBLE"),
+    FLOAT(Types.DOUBLE, "DOUBLE", ValueKind.INTEGER, ValueKind.FLOAT),
 
     /**
      * Booleans.
      */
-    BOOLEAN(Types.BOOLEAN, "BOOLEAN"),
+    BOOLEAN(Types.BOOLEAN, "BOOLEAN", ValueKind.BOOLEAN),
 
     /**
-     * Date-times, from datetime payload indexes.
+     * Date-times, from datetime payload indexes. Qdrant stores them as strings.
      */
-    DATETIME(Types.TIMESTAMP_WITH_TIMEZONE, "TIMESTAMP WITH TIME ZONE"),
+    DATETIME(Types.TIMESTAMP_WITH_TIMEZONE, "TIMESTAMP WITH TIME ZONE", ValueKind.STRING),
 
     /**
      * Objects, arrays, and fields whose values have mixed types, as JSON text.

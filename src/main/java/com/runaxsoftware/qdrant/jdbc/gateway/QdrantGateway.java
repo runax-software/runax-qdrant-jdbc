@@ -57,7 +57,7 @@ public class QdrantGateway implements AutoCloseable {
     }
 
     public ServerVersion serverVersion() throws SQLException {
-        JsonNode body = send(HttpMethod.POST, "/", null);  // GET / has no "result" wrapper and needs no key
+        JsonNode body = send(HttpMethod.GET, "/", null);  // GET / has no "result" wrapper and needs no key
         return ServerVersion.parse(body.path("version").asText(""), body.path("commit")
             .asText(null));
     }
