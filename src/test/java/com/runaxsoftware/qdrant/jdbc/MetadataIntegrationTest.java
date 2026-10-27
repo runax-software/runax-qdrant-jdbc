@@ -64,7 +64,8 @@ class MetadataIntegrationTest {
             while (rows.next()) {
                 tables.add(rows.getString("TABLE_NAME"));
                 assertEquals("TABLE", rows.getString("TABLE_TYPE"));
-                assertEquals(null, rows.getString("TABLE_SCHEM"));
+                assertEquals("qdrant", rows.getString("TABLE_CAT"));
+                assertEquals("collections", rows.getString("TABLE_SCHEM"));
             }
         }
 
@@ -170,11 +171,20 @@ class MetadataIntegrationTest {
     }
 
     @Test
-    void hasNoCatalogsOrSchemas() throws SQLException {
+    void putsTheCollectionsInOneCatalogAndSchema() throws SQLException {
         try (ResultSet catalogs = metaData.getCatalogs(); ResultSet schemas = metaData.getSchemas()) {
+            assertTrue(catalogs.next());
+            assertEquals("qdrant", catalogs.getString("TABLE_CAT"));
             assertFalse(catalogs.next());
+
+            assertTrue(schemas.next());
+            assertEquals("collections", schemas.getString("TABLE_SCHEM"));
+            assertEquals("qdrant", schemas.getString("TABLE_CATALOG"));
             assertFalse(schemas.next());
         }
+
+        assertEquals("qdrant", connection.getCatalog());
+        assertEquals("collections", connection.getSchema());
 
         try (ResultSet rows = metaData.getTables("some_catalog", null, "%", null)) {
             assertFalse(rows.next());

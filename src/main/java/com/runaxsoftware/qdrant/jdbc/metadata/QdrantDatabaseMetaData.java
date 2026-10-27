@@ -20,12 +20,24 @@ import java.util.List;
 /**
  * Describes a Qdrant server to JDBC tools.
  *
- * <p>Each collection is a table. There are no catalogs or schemas, so tables are reported with
- * {@code null} for both, and catalog and schema filters other than empty or {@code %} match
- * nothing. Columns come from {@link SchemaInference}: every table has an {@code _id} primary
- * key, and payload indexes show up as table indexes. Everything is read live from Qdrant.
+ * <p>Each collection is a table. Qdrant has no catalogs or schemas, but tools such as DataGrip
+ * show both levels anyway, as unnamed placeholders when a driver reports none. So every table
+ * sits in one catalog, {@value #CATALOG}, and one schema, {@value #SCHEMA}. Catalog and schema
+ * filters that name anything else match nothing. Columns come from {@link SchemaInference}:
+ * every table has an {@code _id} primary key, and payload indexes show up as table indexes.
+ * Everything is read live from Qdrant.
  */
 public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
+    /**
+     * The one catalog, which every collection is in.
+     */
+    public static final String CATALOG = "qdrant";
+
+    /**
+     * The one schema, which every collection is in.
+     */
+    public static final String SCHEMA = "collections";
+
     private static final String TABLE_TYPE = "TABLE";
     private static final String PRIMARY_KEY_SUFFIX = "_pkey";
     private static final String INDEX_SUFFIX = "_idx";
@@ -42,13 +54,40 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
     }
 
     @Override
+    public ResultSet getCatalogs() throws SQLException {
+        checkOpen();
+
+        List<Object[]> rows = new ArrayList<>();
+        rows.add(new Object[]{CATALOG});
+
+        return MetadataColumns.CATALOGS.rows(rows);
+    }
+
+    @Override
+    public ResultSet getSchemas() throws SQLException {
+        return getSchemas(null, null);
+    }
+
+    @Override
+    public ResultSet getSchemas(String catalog, String schemaPattern) throws SQLException {
+        checkOpen();
+        List<Object[]> rows = new ArrayList<>();
+
+        if (inScope(catalog, schemaPattern)) {
+            rows.add(new Object[]{SCHEMA, CATALOG});
+        }
+
+        return MetadataColumns.SCHEMAS.rows(rows);
+    }
+
+    @Override
     public ResultSet getTables(String catalog, String schemaPattern, String tableNamePattern, String[] types) throws SQLException {
         checkOpen();
         List<Object[]> rows = new ArrayList<>();
 
         if (inScope(catalog, schemaPattern) && includesTables(types)) {
             for (String name : sortedCollections(tableNamePattern)) {
-                rows.add(new Object[]{null, null, name, TABLE_TYPE, null, null, null, null, null, null});
+                rows.add(new Object[]{CATALOG, SCHEMA, name, TABLE_TYPE, null, null, null, null, null, null});
             }
         }
 
@@ -96,7 +135,7 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
         List<Object[]> rows = new ArrayList<>();
 
         if (inScope(catalog, schema) && connection.gateway().listCollections().contains(table)) {
-            rows.add(new Object[]{null, null, table, DriverColumns.ID.columnName(), (short) 1, table + PRIMARY_KEY_SUFFIX});
+            rows.add(new Object[]{CATALOG, SCHEMA, table, DriverColumns.ID.columnName(), (short) 1, table + PRIMARY_KEY_SUFFIX});
         }
 
         return MetadataColumns.PRIMARY_KEYS.rows(rows);
@@ -122,7 +161,7 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
         TableSchema tableSchema = inScope(catalog, schema) ? readSchema(table) : null;
 
         if (tableSchema != null) {
-            rows.add(new Object[]{null, null, table, false, null, table + PRIMARY_KEY_SUFFIX, tableIndexOther, (short) 1, DriverColumns.ID.columnName(), null, tableSchema.collection().pointsCount(), null, null});
+            rows.add(new Object[]{CATALOG, SCHEMA, table, false, null, table + PRIMARY_KEY_SUFFIX, tableIndexOther, (short) 1, DriverColumns.ID.columnName(), null, tableSchema.collection().pointsCount(), null, null});
 
             if (!unique) {
                 List<String> indexed = new ArrayList<>(tableSchema.collection().payloadIndexes().keySet());
@@ -130,7 +169,7 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
 
                 for (String path : indexed) {
                     if (tableSchema.column(path).isPresent()) {
-                        rows.add(new Object[]{null, null, table, true, null, path + INDEX_SUFFIX, tableIndexOther, (short) 1, path, null, null, null, null});
+                        rows.add(new Object[]{CATALOG, SCHEMA, table, true, null, path + INDEX_SUFFIX, tableIndexOther, (short) 1, path, null, null, null, null});
                     }
                 }
             }
@@ -190,11 +229,13 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
     }
 
     /**
-     * There are no catalogs or schemas: accept only filters that don't ask for one.
+     * Whether the filters take in the one catalog and schema. {@code null} doesn't filter, and
+     * neither does an empty string, which tools also pass to mean "any".
      */
     private static boolean inScope(String catalog, String schemaPattern) {
-        return (catalog == null || catalog.isEmpty()) && (schemaPattern == null || schemaPattern.isEmpty()
-            || schemaPattern.equals("%"));
+        return (catalog == null || catalog.isEmpty() || catalog.equals(CATALOG))
+            && (schemaPattern == null || schemaPattern.isEmpty()
+            || LikePattern.matches(schemaPattern, SCHEMA));
     }
 
     private static boolean includesTables(String[] types) {
@@ -240,7 +281,7 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
             : numericPrecision(type);
         Integer radix = numericPrecision(type) == null ? null : 10;
 
-        return new Object[]{null, null, table, column.name(), type.sqlType(), type.typeName(), size, null, null, radix, column.nullable() ? columnNullable : columnNoNulls, column.remarks(), null, null, null, null, position, column.nullable() ? "YES" : "NO", null, null, null, null, "NO", "NO",};
+        return new Object[]{CATALOG, SCHEMA, table, column.name(), type.sqlType(), type.typeName(), size, null, null, radix, column.nullable() ? columnNullable : columnNoNulls, column.remarks(), null, null, null, null, position, column.nullable() ? "YES" : "NO", null, null, null, null, "NO", "NO",};
     }
 
     private static Object[] typeInfoRow(ColumnType type) {

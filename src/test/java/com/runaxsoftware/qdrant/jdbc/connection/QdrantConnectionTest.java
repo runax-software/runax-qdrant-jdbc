@@ -419,8 +419,8 @@ class QdrantConnectionTest {
         connection.setSchema("anything");
 
         assertTrue(connection.isReadOnly());
-        assertNull(connection.getCatalog());
-        assertNull(connection.getSchema());
+        assertEquals("qdrant", connection.getCatalog());
+        assertEquals("collections", connection.getSchema());
     }
 
     @Test

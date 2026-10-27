@@ -4,32 +4,17 @@ import java.sql.*;
 
 /**
  * The parts of {@link DatabaseMetaData} that don't depend on the server: what the driver's SQL
- * supports, its limits, and an empty result for everything Qdrant doesn't have (catalogs,
- * schemas, foreign keys, procedures, functions, privileges, user-defined types).
+ * supports, its limits, and an empty result for everything Qdrant doesn't have (foreign keys,
+ * procedures, functions, privileges, user-defined types).
  *
- * <p>{@link QdrantDatabaseMetaData} adds what it reads from Qdrant: tables, columns, keys,
- * indexes and versions.
+ * <p>{@link QdrantDatabaseMetaData} adds the catalog and schema the collections sit in, and
+ * what it reads from Qdrant: tables, columns, keys, indexes and versions.
  */
 abstract class AbstractDatabaseMetaData implements DatabaseMetaData {
     /**
      * Throws if the connection is closed. Every result calls it first.
      */
     abstract void checkOpen() throws SQLException;
-
-    @Override
-    public ResultSet getCatalogs() throws SQLException {
-        return empty(MetadataColumns.CATALOGS);
-    }
-
-    @Override
-    public ResultSet getSchemas() throws SQLException {
-        return empty(MetadataColumns.SCHEMAS);
-    }
-
-    @Override
-    public ResultSet getSchemas(String catalog, String schemaPattern) throws SQLException {
-        return getSchemas();
-    }
 
     @Override
     public ResultSet getImportedKeys(String catalog, String schema, String table) throws SQLException {
