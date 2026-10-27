@@ -84,8 +84,8 @@ class QdrantDatabaseMetaDataTest {
                 "TYPE_CAT", "TYPE_SCHEM", "TYPE_NAME", "SELF_REFERENCING_COL_NAME", "REF_GENERATION"),
                 labels(tables));
             assertTrue(tables.next());
-            assertNull(tables.getString("TABLE_CAT"));
-            assertNull(tables.getString("TABLE_SCHEM"));
+            assertEquals("qdrant", tables.getString("TABLE_CAT"));
+            assertEquals("collections", tables.getString("TABLE_SCHEM"));
             assertEquals("products", tables.getString("TABLE_NAME"));
             assertEquals("TABLE", tables.getString("TABLE_TYPE"));
             assertFalse(tables.next());
@@ -109,11 +109,35 @@ class QdrantDatabaseMetaDataTest {
     }
 
     @Test
-    void matchesOnlyFiltersWithoutCatalogOrSchema() throws SQLException {
+    void matchesFiltersForItsCatalogAndSchema() throws SQLException {
         assertEquals(4, column(metaData.getTables("", "", "%", null), "TABLE_NAME").size());
         assertEquals(4, column(metaData.getTables(null, "%", "%", null), "TABLE_NAME").size());
-        assertEquals(List.of(), column(metaData.getTables("qdrant", null, "%", null), "TABLE_NAME"));
+        assertEquals(4, column(metaData.getTables("qdrant", "collections", "%", null),
+            "TABLE_NAME").size());
+        assertEquals(4, column(metaData.getTables(null, "coll%", "%", null), "TABLE_NAME").size());
+        assertEquals(List.of(), column(metaData.getTables("other", null, "%", null), "TABLE_NAME"));
+        assertEquals(List.of(), column(metaData.getTables("QDRANT", null, "%", null), "TABLE_NAME"));
         assertEquals(List.of(), column(metaData.getTables(null, "public", "%", null), "TABLE_NAME"));
+    }
+
+    @Test
+    void putsEveryRowInTheOneCatalogAndSchema() throws SQLException {
+        List<ResultSet> results = List.of(
+            metaData.getTables(null, null, "%", null),
+            metaData.getColumns(null, null, "%", "%"),
+            metaData.getPrimaryKeys(null, null, "products"),
+            metaData.getIndexInfo(null, null, "products", false, true));
+
+        for (ResultSet rows : results) {
+            try (rows) {
+                assertTrue(rows.next());
+
+                do {
+                    assertEquals("qdrant", rows.getString("TABLE_CAT"));
+                    assertEquals("collections", rows.getString("TABLE_SCHEM"));
+                } while (rows.next());
+            }
+        }
     }
 
     @Test
@@ -207,7 +231,7 @@ class QdrantDatabaseMetaDataTest {
             "COLUMN_NAME"));
         assertEquals(List.of("Mixed-Case", "articles", "products"),
             column(metaData.getColumns(null, null, "%", "\\_id"), "TABLE_NAME"));
-        assertEquals(List.of(), column(metaData.getColumns("qdrant", null, "%", "%"),
+        assertEquals(List.of(), column(metaData.getColumns("other", null, "%", "%"),
             "COLUMN_NAME"));
     }
 
@@ -281,7 +305,7 @@ class QdrantDatabaseMetaDataTest {
         }
 
         assertEquals(List.of(), column(metaData.getPrimaryKeys(null, null, "missing"), "PK_NAME"));
-        assertEquals(List.of(), column(metaData.getPrimaryKeys("qdrant", null, "products"),
+        assertEquals(List.of(), column(metaData.getPrimaryKeys("other", null, "products"),
             "PK_NAME"));
     }
 
@@ -353,17 +377,31 @@ class QdrantDatabaseMetaDataTest {
     // Schemas, catalogs, types
 
     @Test
-    void hasNoCatalogsOrSchemas() throws SQLException {
+    void hasOneCatalogAndSchema() throws SQLException {
         try (ResultSet schemas = metaData.getSchemas();
-             ResultSet filtered = metaData.getSchemas(null, "%");
              ResultSet catalogs = metaData.getCatalogs()) {
             assertEquals(List.of("TABLE_SCHEM", "TABLE_CATALOG"), labels(schemas));
-            assertEquals(List.of("TABLE_SCHEM", "TABLE_CATALOG"), labels(filtered));
             assertEquals(List.of("TABLE_CAT"), labels(catalogs));
+
+            assertTrue(schemas.next());
+            assertEquals("collections", schemas.getString("TABLE_SCHEM"));
+            assertEquals("qdrant", schemas.getString("TABLE_CATALOG"));
             assertFalse(schemas.next());
-            assertFalse(filtered.next());
+
+            assertTrue(catalogs.next());
+            assertEquals("qdrant", catalogs.getString("TABLE_CAT"));
             assertFalse(catalogs.next());
         }
+    }
+
+    @Test
+    void filtersSchemasByCatalogAndPattern() throws SQLException {
+        assertEquals(List.of("collections"), column(metaData.getSchemas(null, "%"), "TABLE_SCHEM"));
+        assertEquals(List.of("collections"), column(metaData.getSchemas("qdrant", "coll%"),
+            "TABLE_SCHEM"));
+        assertEquals(List.of("collections"), column(metaData.getSchemas("", ""), "TABLE_SCHEM"));
+        assertEquals(List.of(), column(metaData.getSchemas("other", null), "TABLE_SCHEM"));
+        assertEquals(List.of(), column(metaData.getSchemas(null, "public"), "TABLE_SCHEM"));
     }
 
     @Test

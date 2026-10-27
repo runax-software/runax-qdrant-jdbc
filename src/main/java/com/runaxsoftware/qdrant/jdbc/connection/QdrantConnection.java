@@ -170,7 +170,7 @@ public class QdrantConnection implements Connection {
     @Override
     public String getCatalog() throws SQLException {
         checkOpen();
-        return null;
+        return QdrantDatabaseMetaData.CATALOG;
     }
 
     @Override
@@ -378,7 +378,7 @@ public class QdrantConnection implements Connection {
     @Override
     public String getSchema() throws SQLException {
         checkOpen();
-        return null;
+        return QdrantDatabaseMetaData.SCHEMA;
     }
 
     @Override
