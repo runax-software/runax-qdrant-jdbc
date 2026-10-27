@@ -1,23 +1,31 @@
 package com.runaxsoftware.qdrant.jdbc.statement;
 
 import com.runaxsoftware.qdrant.jdbc.connection.QdrantConnection;
+import com.runaxsoftware.qdrant.jdbc.schema.SchemaReader;
 import com.runaxsoftware.qdrant.jdbc.sql.executor.ExecutionResult;
 import com.runaxsoftware.qdrant.jdbc.sql.executor.Executor;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.Parser;
-import com.runaxsoftware.qdrant.jdbc.sql.planner.Catalog;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.Planner;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 
 /**
- * A statement. SQL is parsed and planned, so syntax errors and unknown names are reported, and
- * a SELECT without FROM (such as a tool's {@code SELECT 'keep alive'}) returns its row. Reading
- * collections with SQL isn't supported yet: this version of the driver lists collections and
- * their columns through {@link java.sql.DatabaseMetaData}. The statement settings tools apply
- * before running a query (maximum rows, fetch size, timeout) are accepted and kept.
+ * A statement. SQL is parsed and planned against the collections' columns, so syntax errors,
+ * unknown collections and unknown columns are reported, and a SELECT without FROM (such as a
+ * tool's {@code SELECT 'keep alive'}) returns its row. Reading collections with SQL isn't
+ * supported yet: this version of the driver lists collections and their columns through
+ * {@link java.sql.DatabaseMetaData}. The statement settings tools apply before running a query
+ * (maximum rows, fetch size, timeout) are accepted and kept.
+ *
+ * <p>The columns come from the connection's {@link SchemaReader}, which keeps them for a while,
+ * so they can be older than the collection. When the SQL names a column the kept columns don't
+ * have, the statement reads the collection's columns again and plans once more before it
+ * reports the column as unknown, so a field added to the collection since is found.
  */
 public final class QdrantStatement extends AbstractStatement {
 
@@ -25,16 +33,15 @@ public final class QdrantStatement extends AbstractStatement {
         "Reading collections with SQL isn't supported yet: this version of the driver lists "
             + "collections and their columns, and runs SELECT without FROM";
 
-    // Until the executor reads points, a statement that names a collection stops here
-    private static final Catalog NO_COLLECTIONS_YET = name -> {
-        throw new SQLFeatureNotSupportedException(NOT_YET);
-    };
+    private static final String UNKNOWN_COLUMN = "42S22";
 
     private final Planner planner = new Planner();
     private final Executor executor = new Executor();
+    private final SchemaReader schemaReader;
 
     public QdrantStatement(QdrantConnection connection) {
         super(connection);
+        this.schemaReader = connection.schemaReader();
     }
 
     // Running SQL
@@ -120,12 +127,34 @@ public final class QdrantStatement extends AbstractStatement {
         return result;
     }
 
-    // Reports syntax errors and unknown names before anything is sent to Qdrant
+    // Reports syntax errors, unknown names, and SQL that can't run yet before anything runs
     private Plan plan(String sql) throws SQLException {
         if (sql == null) {
             throw new SQLException("The SQL is null", "HY009");
         }
 
-        return planner.plan(Parser.parse(sql), NO_COLLECTIONS_YET);
+        var statement = Parser.parse(sql);
+        Plan plan;
+
+        try {
+            plan = planner.plan(statement, schemaReader::read);
+        } catch (SQLException e) {
+            String table = statement instanceof SelectStatement select ? select.table() : null;
+
+            if (table == null || !UNKNOWN_COLUMN.equals(e.getSQLState())) {
+                throw e;
+            }
+
+            // The kept columns may be older than the collection: read them again, once
+            schemaReader.forget(table::equals);
+            plan = planner.plan(statement, schemaReader::read);
+        }
+
+        // Until the executor reads points, a statement that reads a collection stops here
+        if (plan instanceof ScrollPlan) {
+            throw new SQLFeatureNotSupportedException(NOT_YET);
+        }
+
+        return plan;
     }
 }
