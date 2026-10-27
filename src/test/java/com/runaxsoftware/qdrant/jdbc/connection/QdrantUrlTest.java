@@ -180,12 +180,15 @@ class QdrantUrlTest {
     @Test
     void pointsToWhereTheUrlCantBeRead() {
         SQLException error = invalid("jdbc:qdrant://local host:6333");
+        java.net.URISyntaxException cause =
+            assertInstanceOf(java.net.URISyntaxException.class, error.getCause());
 
         assertTrue(error.getMessage().startsWith("Can't read the URL jdbc:qdrant://local host:6333"),
             error.getMessage());
-        // The space is character 19 of the whole URL, counting from 0
-        assertTrue(error.getMessage().contains("at position 19"), error.getMessage());
-        assertInstanceOf(java.net.URISyntaxException.class, error.getCause());
+        // The position counts from the start of the whole URL, 5 characters ("jdbc:") past the
+        // index java.net.URI reports; which character URI blames differs between JDKs
+        assertTrue(error.getMessage().contains("at position " + (cause.getIndex() + 5)),
+            error.getMessage());
     }
 
     @ParameterizedTest
