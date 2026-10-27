@@ -1,5 +1,6 @@
 package com.runaxsoftware.qdrant.jdbc;
 
+import com.runaxsoftware.qdrant.jdbc.connection.CallLog;
 import com.runaxsoftware.qdrant.jdbc.connection.ConnectionSettings;
 import com.runaxsoftware.qdrant.jdbc.connection.QdrantConnection;
 import com.runaxsoftware.qdrant.jdbc.connection.QdrantUrl;
@@ -29,7 +30,6 @@ import java.util.logging.Logger;
  * name, so it stays in the root package.
  */
 public final class QdrantDriver implements Driver {
-
     static {
         try {
             DriverManager.registerDriver(new QdrantDriver());
@@ -64,7 +64,6 @@ public final class QdrantDriver implements Driver {
 
     @Override
     public boolean acceptsURL(String url) throws SQLException {
-        if (url == null) throw new SQLException("The URL is null", "08001");
         return QdrantUrl.accepts(url);
     }
 

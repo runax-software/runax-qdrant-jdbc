@@ -1,6 +1,6 @@
 package com.runaxsoftware.qdrant.jdbc.connection;
 
-import com.runaxsoftware.qdrant.jdbc.client.QdrantGateway;
+import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
 
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -38,14 +38,14 @@ public record QdrantUrl(
     public static final String PREFIX = "jdbc:qdrant:";
 
     /**
-     * Qdrant's default gRPC port, used when the URL has none.
+     * Qdrant's default REST port, used when the URL has none.
      */
     public static final int DEFAULT_PORT = QdrantGateway.DEFAULT_PORT;
 
     /**
      * A working URL, quoted in error messages.
      */
-    public static final String EXAMPLE = "jdbc:qdrant://localhost:6334";
+    public static final String EXAMPLE = PREFIX + "//localhost:" + DEFAULT_PORT;
 
     private static final Charset DEFAULT_CHARSET = StandardCharsets.UTF_8;
 
@@ -53,7 +53,7 @@ public record QdrantUrl(
      * Copies {@code parameters}, so the record can't change after it's made.
      *
      * @param host       the host name or address, without IPv6 brackets
-     * @param port       Qdrant's gRPC port
+     * @param port       Qdrant's REST port
      * @param parameters the decoded URL parameters
      */
     public QdrantUrl {
@@ -66,7 +66,8 @@ public record QdrantUrl(
      * @param url the JDBC URL; must not be {@code null}
      * @return {@code true} for a Qdrant URL
      */
-    public static boolean accepts(String url) {
+    public static boolean accepts(String url) throws SQLException {
+        if (url == null) throw new SQLException("The URL is null", "08001");
         return url.regionMatches(true, 0, PREFIX, 0, PREFIX.length());
     }
 

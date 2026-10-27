@@ -1,8 +1,8 @@
 package com.runaxsoftware.qdrant.jdbc.connection;
 
 import com.runaxsoftware.qdrant.jdbc.DriverInfo;
-import com.runaxsoftware.qdrant.jdbc.QdrantDatabaseMetaData;
-import com.runaxsoftware.qdrant.jdbc.QdrantStatement;
+import com.runaxsoftware.qdrant.jdbc.metadata.QdrantDatabaseMetaData;
+import com.runaxsoftware.qdrant.jdbc.statement.QdrantStatement;
 import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ServerVersion;
 import com.runaxsoftware.qdrant.jdbc.schema.SchemaReader;
@@ -66,23 +66,23 @@ public class QdrantConnection implements Connection {
         }
     }
 
-    String url() {
+    public String url() {
         return url;
     }
 
-    QdrantGateway getGateway() {
+    public QdrantGateway gateway() {
         return gateway;
     }
 
-    ServerVersion serverVersion() {
+    public ServerVersion serverVersion() {
         return serverVersion;
     }
 
-    SchemaReader schemaReader() {
+    public SchemaReader schemaReader() {
         return schemaReader;
     }
 
-    void checkOpen() throws SQLException {
+    public void checkOpen() throws SQLException {
         if (closed) throw new SQLNonTransientConnectionException("The connection is closed", "08003");
     }
 

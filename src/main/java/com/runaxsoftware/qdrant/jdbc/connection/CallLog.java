@@ -36,7 +36,7 @@ public class CallLog {
     /**
      * Opens the log file for appending, creating it if needed.
      */
-    static CallLog open(Path file) throws SQLException {
+    public static CallLog open(Path file) throws SQLException {
         try {
             return new CallLog(file, Files.newBufferedWriter(
                 file, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND
@@ -56,11 +56,11 @@ public class CallLog {
     /**
      * Returns a connection that logs every call, and closes the log when it closes.
      */
-    Connection wrap(Connection connection) {
+    public Connection wrap(Connection connection) {
         return (Connection) proxy(Connection.class, connection);
     }
 
-    synchronized void write(String message) {
+    public synchronized void write(String message) {
         if (closed) return;
 
         try {
@@ -72,7 +72,7 @@ public class CallLog {
         }
     }
 
-    synchronized void close() {
+    public synchronized void close() {
         if (closed) return;
         closed = true;
 
