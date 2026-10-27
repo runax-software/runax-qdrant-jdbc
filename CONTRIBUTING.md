@@ -111,6 +111,21 @@ integration test to check behaviour against real Qdrant.
     - `docs:` documentation only
 6. Open a pull request against `main`
 
+## Continuous integration
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on every pull request to `main` and every
+push to `main`:
+
+- `build-and-test-matrix` runs `./gradlew build` on JDK 17, 21, and 25, and
+  `build-and-test` reports their combined result.
+- `integration-tests` starts both Qdrant servers with `docker compose up -d` and runs
+  `./gradlew integrationTest` on JDK 17. When tests fail, the test reports are attached to
+  the run.
+
+`build-and-test` and `integration-tests` are the checks to require on `main`. The per-JDK
+`build-and-test-matrix (…)` checks aren't, so changing the JDK list never leaves a pull
+request waiting for a check that no longer runs.
+
 ## Adding a dependency
 
 Every runtime dependency ends up inside the single driver jar that users drop into
