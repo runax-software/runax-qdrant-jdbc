@@ -1,6 +1,8 @@
 package com.runaxsoftware.qdrant.jdbc.schema;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -21,6 +23,8 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 class SchemaReaderTest {
+
+    private static final Duration AN_HOUR = Duration.ofHours(1);
 
     private FakeQdrantServer server;
     private QdrantGateway gateway;
@@ -43,9 +47,11 @@ class SchemaReaderTest {
         server.close();
     }
 
+    // Reading
+
     @Test
     void readsTheCollectionAndASampleOfPoints() throws SQLException {
-        TableSchema schema = new SchemaReader(gateway, 50).read("products");
+        TableSchema schema = reader(50).read("products");
 
         assertEquals("products", schema.name());
         assertEquals("_id name price stock _payload _vector", names(schema));
@@ -57,7 +63,7 @@ class SchemaReaderTest {
 
     @Test
     void asksForPayloadsButNotVectors() throws SQLException {
-        new SchemaReader(gateway, 50).read("products");
+        reader(50).read("products");
 
         assertEquals(Json.object("limit", 50, "with_payload", true, "with_vector", false),
             server.scrollRequests().get(0));
@@ -66,7 +72,7 @@ class SchemaReaderTest {
 
     @Test
     void readsOnlyOnePage() throws SQLException {
-        TableSchema schema = new SchemaReader(gateway, 1).read("products");
+        TableSchema schema = reader(1).read("products");
 
         assertEquals("_id name price _payload _vector", names(schema));
         assertEquals(1, server.scrollRequests().size());
@@ -74,7 +80,7 @@ class SchemaReaderTest {
 
     @Test
     void usesPayloadIndexesAloneWithoutASample() throws SQLException {
-        TableSchema schema = new SchemaReader(gateway, 0).read("products");
+        TableSchema schema = reader(0).read("products");
 
         assertEquals("_id name _payload _vector", names(schema));
         assertTrue(server.scrollRequests().isEmpty());
@@ -82,20 +88,8 @@ class SchemaReaderTest {
     }
 
     @Test
-    void asksQdrantAgainEveryTime() throws SQLException {
-        SchemaReader reader = new SchemaReader(gateway, 10);
-
-        reader.read("products");
-        reader.read("products");
-
-        assertEquals(2, server.calls(Endpoint.COLLECTION));
-        assertEquals(2, server.calls(Endpoint.SCROLL));
-    }
-
-    @Test
     void reportsAMissingCollection() {
-        SQLException error = assertThrows(SQLException.class,
-            () -> new SchemaReader(gateway, 10).read("missing"));
+        SQLException error = assertThrows(SQLException.class, () -> reader(10).read("missing"));
 
         assertEquals("42S02", error.getSQLState());
         assertEquals(0, server.calls(Endpoint.SCROLL));
@@ -105,10 +99,73 @@ class SchemaReaderTest {
     void reportsACollectionDeletedBetweenTheTwoCalls() {
         server.fail(Endpoint.SCROLL, 404, "Not found: Collection `products` doesn't exist!");
 
-        SQLException error = assertThrows(SQLException.class,
-            () -> new SchemaReader(gateway, 10).read("products"));
+        SQLException error = assertThrows(SQLException.class, () -> reader(10).read("products"));
 
         assertEquals("42S02", error.getSQLState());
+    }
+
+    // Keeping schemas
+
+    @Test
+    void keepsTheSchemaItRead() throws SQLException {
+        SchemaReader reader = reader(10);
+
+        TableSchema first = reader.read("products");
+
+        assertSame(first, reader.read("products"));
+        assertEquals(1, server.calls(Endpoint.COLLECTION));
+        assertEquals(1, server.calls(Endpoint.SCROLL));
+    }
+
+    @Test
+    void asksQdrantAgainForAForgottenCollection() throws SQLException {
+        SchemaReader reader = reader(10);
+        TableSchema first = reader.read("products");
+
+        reader.forget("other"::equals);
+        assertSame(first, reader.read("products"));
+
+        reader.forget("products"::equals);
+        assertNotSame(first, reader.read("products"));
+        assertEquals(2, server.calls(Endpoint.COLLECTION));
+    }
+
+    @Test
+    void asksQdrantAgainEveryTimeWithoutACache() throws SQLException {
+        SchemaReader reader = new SchemaReader(gateway, 10, Duration.ZERO);
+
+        reader.read("products");
+        reader.read("products");
+
+        assertEquals(2, server.calls(Endpoint.COLLECTION));
+        assertEquals(2, server.calls(Endpoint.SCROLL));
+    }
+
+    @Test
+    void keepsNothingForAMissingCollection() throws SQLException {
+        SchemaReader reader = reader(10);
+        assertThrows(SQLException.class, () -> reader.read("later"));
+
+        server.collection("later", FakeQdrantServer.unnamedVector(2, "Dot", Map.of()), List.of());
+
+        assertEquals("later", reader.read("later").name());
+        assertEquals(2, server.calls(Endpoint.COLLECTION));
+    }
+
+    @Test
+    void keepsNothingWhenAReadFails() throws SQLException {
+        SchemaReader reader = reader(10);
+        server.fail(Endpoint.SCROLL, 500, "disk full");
+        assertThrows(SQLException.class, () -> reader.read("products"));
+
+        server.recover(Endpoint.SCROLL);
+
+        assertEquals("products", reader.read("products").name());
+        assertEquals(2, server.calls(Endpoint.SCROLL));
+    }
+
+    private SchemaReader reader(int sampleSize) {
+        return new SchemaReader(gateway, sampleSize, AN_HOUR);
     }
 
     private static String names(TableSchema schema) {

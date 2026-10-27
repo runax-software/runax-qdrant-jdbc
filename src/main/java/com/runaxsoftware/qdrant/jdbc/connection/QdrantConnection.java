@@ -29,7 +29,7 @@ public class QdrantConnection implements Connection {
         this.url = url;
         this.gateway = gateway;
         this.serverVersion = serverVersion;
-        this.schemaReader = new SchemaReader(gateway, settings.sampleSize());
+        this.schemaReader = new SchemaReader(gateway, settings.sampleSize(), settings.schemaCache());
     }
 
     public static QdrantConnection open(String url, ConnectionSettings settings) throws SQLException {

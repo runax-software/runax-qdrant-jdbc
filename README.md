@@ -39,6 +39,7 @@ Other settings go in the URL (`?tls=true&timeout=60`) or in the connection prope
 | `tls` | `false` | Connect over TLS, as Qdrant Cloud needs |
 | `timeout` | `30` | Seconds to wait for each call to Qdrant |
 | `sampleSize` | `100` | Points read to work out a collection's columns |
+| `schemaCache` | `3600` | Seconds to keep a collection's columns before reading them again; listing tables, as DataGrip's Refresh does, reads them again sooner, and `0` reads them every time |
 | `logFile` | — | File to log every JDBC call to, for troubleshooting; the API key is never logged |
 
 ## Try it in DataGrip

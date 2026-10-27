@@ -9,13 +9,15 @@ import java.util.Properties;
  * What the driver needs to open a connection, read from the URL and the connection
  * properties: where Qdrant is, the API key, and the driver's own settings.
  *
- * @param host       the server's host name or address
- * @param port       the server's REST port
- * @param tls        whether to connect over TLS
- * @param apiKey     the API key, or {@code null} for none
- * @param timeout    how long to wait for each call to Qdrant
- * @param sampleSize how many points to read when working out a collection's columns
- * @param logFile    the file to log JDBC calls to, or {@code null} for no log
+ * @param host        the server's host name or address
+ * @param port        the server's REST port
+ * @param tls         whether to connect over TLS
+ * @param apiKey      the API key, or {@code null} for none
+ * @param timeout     how long to wait for each call to Qdrant
+ * @param sampleSize  how many points to read when working out a collection's columns
+ * @param schemaCache how long to keep a collection's columns before reading them again;
+ *                    zero reads them every time
+ * @param logFile     the file to log JDBC calls to, or {@code null} for no log
  */
 public record ConnectionSettings(
     String host,
@@ -24,6 +26,7 @@ public record ConnectionSettings(
     String apiKey,
     Duration timeout,
     int sampleSize,
+    Duration schemaCache,
     Path logFile
 ) {
     public static ConnectionSettings parse(String url, Properties properties) throws SQLException {
@@ -37,6 +40,7 @@ public record ConnectionSettings(
             values.secret(Setting.PASSWORD),
             Duration.ofSeconds(values.wholeNumber(Setting.TIMEOUT, 1, Integer.MAX_VALUE)),
             values.wholeNumber(Setting.SAMPLE_SIZE, 0, 10_000),
+            Duration.ofSeconds(values.wholeNumber(Setting.SCHEMA_CACHE, 0, Integer.MAX_VALUE)),
             values.path(Setting.LOG_FILE)
         );
     }
@@ -48,6 +52,7 @@ public record ConnectionSettings(
     public String toString() {
         return "ConnectionSettings[host=" + host + ", port=" + port + ", tls=" + tls
             + ", apiKey=" + (apiKey == null ? "none" : "set") + ", timeout=" + timeout.toSeconds() + "s"
-            + ", sampleSize=" + sampleSize + ", logFile=" + logFile + "]";
+            + ", sampleSize=" + sampleSize + ", schemaCache=" + schemaCache.toSeconds() + "s"
+            + ", logFile=" + logFile + "]";
     }
 }

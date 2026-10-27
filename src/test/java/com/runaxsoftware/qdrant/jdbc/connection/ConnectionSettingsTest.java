@@ -28,13 +28,15 @@ class ConnectionSettingsTest {
         assertNull(settings.apiKey());
         assertEquals(Duration.ofSeconds(30), settings.timeout());
         assertEquals(100, settings.sampleSize());
+        assertEquals(Duration.ofHours(1), settings.schemaCache());
         assertNull(settings.logFile());
     }
 
     @Test
     void readsPortAndUrlParameters() throws SQLException {
         ConnectionSettings settings = parse(
-            "jdbc:qdrant://db.example.com:7000?tls=true&timeout=5&sampleSize=10&logFile=/tmp/q.log",
+            "jdbc:qdrant://db.example.com:7000?tls=true&timeout=5&sampleSize=10&schemaCache=60"
+                + "&logFile=/tmp/q.log",
             new Properties());
 
         assertEquals("db.example.com", settings.host());
@@ -42,6 +44,7 @@ class ConnectionSettingsTest {
         assertTrue(settings.tls());
         assertEquals(Duration.ofSeconds(5), settings.timeout());
         assertEquals(10, settings.sampleSize());
+        assertEquals(Duration.ofSeconds(60), settings.schemaCache());
         assertEquals(Path.of("/tmp/q.log"), settings.logFile());
     }
 
@@ -52,6 +55,7 @@ class ConnectionSettingsTest {
         properties.setProperty(Setting.TLS.key(), "true");
         properties.setProperty(Setting.TIMEOUT.key(), "12");
         properties.setProperty(Setting.SAMPLE_SIZE.key(), "0");
+        properties.setProperty(Setting.SCHEMA_CACHE.key(), "0");
         properties.setProperty(Setting.LOG_FILE.key(), "/tmp/calls.log");
 
         ConnectionSettings settings = parse("jdbc:qdrant://localhost", properties);
@@ -60,6 +64,7 @@ class ConnectionSettingsTest {
         assertTrue(settings.tls());
         assertEquals(Duration.ofSeconds(12), settings.timeout());
         assertEquals(0, settings.sampleSize());
+        assertEquals(Duration.ZERO, settings.schemaCache());
         assertEquals(Path.of("/tmp/calls.log"), settings.logFile());
     }
 
@@ -128,6 +133,8 @@ class ConnectionSettingsTest {
         "jdbc:qdrant://localhost?timeout=soon",
         "jdbc:qdrant://localhost?sampleSize=-1",
         "jdbc:qdrant://localhost?sampleSize=10001",
+        "jdbc:qdrant://localhost?schemaCache=-1",
+        "jdbc:qdrant://localhost?schemaCache=true",
         "jdbc:qdrant:localhost",
         "jdbc:postgresql://localhost/db",
     })
@@ -246,6 +253,7 @@ class ConnectionSettingsTest {
         assertTrue(text.contains("apiKey=none"), text);
         assertTrue(text.contains("host=localhost"), text);
         assertTrue(text.contains("port=6333"), text);
+        assertTrue(text.contains("schemaCache=3600s"), text);
     }
 
     private static ConnectionSettings parse(String url, Properties properties)

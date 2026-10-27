@@ -77,11 +77,12 @@ class ConnectionIntegrationTest {
     }
 
     @Test
-    void refusesToReadCollectionsWithSqlForNow() throws SQLException {
+    void reportsAMissingCollectionAndRefusesPreparedStatementsForNow() throws SQLException {
         try (Connection connection = connect(TestQdrant.properties());
              Statement statement = connection.createStatement()) {
-            assertThrows(SQLFeatureNotSupportedException.class,
-                () -> statement.executeQuery("SELECT * FROM products"));
+            SQLException missing = assertThrows(SQLException.class,
+                () -> statement.executeQuery("SELECT * FROM jdbc_no_such_collection"));
+            assertEquals("42S02", missing.getSQLState());
             assertThrows(SQLFeatureNotSupportedException.class,
                 () -> connection.prepareStatement("SELECT 1"));
         }

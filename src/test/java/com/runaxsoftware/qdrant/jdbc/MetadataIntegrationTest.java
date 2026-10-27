@@ -1,9 +1,14 @@
 package com.runaxsoftware.qdrant.jdbc;
 
+import static com.runaxsoftware.qdrant.jdbc.support.Json.array;
+import static com.runaxsoftware.qdrant.jdbc.support.Json.object;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.runaxsoftware.qdrant.jdbc.gateway.HttpMethod;
 import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
 import com.runaxsoftware.qdrant.jdbc.support.SampleCollections;
 import com.runaxsoftware.qdrant.jdbc.support.TestQdrant;
@@ -18,6 +23,8 @@ import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -197,6 +204,74 @@ class MetadataIntegrationTest {
         assertTrue(metaData.getDatabaseProductVersion().matches("\\d+\\.\\d+.*"),
             metaData.getDatabaseProductVersion());
         assertEquals(DriverInfo.NAME, metaData.getDriverName());
+    }
+
+    @Test
+    void showsChangesToACollectionAfterARefresh() throws SQLException {
+        String table = PREFIX + "changing";
+        gateway.request(HttpMethod.PUT, "/collections/" + table,
+            object("vectors", object("size", 2, "distance", "Dot")));
+
+        try {
+            upsert(table, 1, object("kind", "signup"));
+            List<String> before =
+                List.of("_id VARCHAR", "kind VARCHAR", "_payload JSON", "_vector VECTOR(2)");
+            assertEquals(before, columns("changing"));
+
+            upsert(table, 2, object("color", "red"));
+            assertEquals(before, columns("changing"), "kept until a refresh");
+
+            assertEquals(List.of(table), tables(table));
+            assertEquals(List.of("_id VARCHAR", "color VARCHAR", "kind VARCHAR", "_payload JSON",
+                "_vector VECTOR(2)"), columns("changing"));
+        } finally {
+            gateway.request(HttpMethod.DELETE, "/collections/" + table, null);
+        }
+
+        assertEquals(List.of(), tables(table));
+        assertEquals(List.of(), columns("changing"));
+    }
+
+    @Test
+    void findsAFieldAddedSinceTheColumnsWereKept() throws SQLException {
+        String table = PREFIX + "growing";
+        gateway.request(HttpMethod.PUT, "/collections/" + table,
+            object("vectors", object("size", 2, "distance", "Dot")));
+
+        try (Statement statement = connection.createStatement()) {
+            upsert(table, 1, object("kind", "signup"));
+            assertThrows(SQLFeatureNotSupportedException.class,
+                () -> statement.executeQuery("SELECT kind FROM " + table));
+
+            // Planned against the columns read again, not reported as an unknown column
+            upsert(table, 2, object("color", "red"));
+            assertThrows(SQLFeatureNotSupportedException.class,
+                () -> statement.executeQuery("SELECT color FROM " + table));
+
+            SQLException unknown = assertThrows(SQLException.class,
+                () -> statement.executeQuery("SELECT nope FROM " + table));
+            assertEquals("42S22", unknown.getSQLState());
+        } finally {
+            gateway.request(HttpMethod.DELETE, "/collections/" + table, null);
+        }
+    }
+
+    private static void upsert(String collection, int id, ObjectNode payload) throws SQLException {
+        gateway.request(HttpMethod.PUT, "/collections/" + collection + "/points?wait=true",
+            object("points", array(object("id", id, "vector", array(0.1, 0.2), "payload", payload))));
+    }
+
+    /** Lists the tables matching a literal name, as a tool's Refresh does. */
+    private static List<String> tables(String name) throws SQLException {
+        List<String> tables = new ArrayList<>();
+
+        try (ResultSet rows = metaData.getTables(null, null, like(name), null)) {
+            while (rows.next()) {
+                tables.add(rows.getString("TABLE_NAME"));
+            }
+        }
+
+        return tables;
     }
 
     /** Describes a table's columns as "name TYPE" or "name TYPE(size)" for vectors. */

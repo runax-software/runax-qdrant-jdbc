@@ -9,8 +9,12 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import static com.runaxsoftware.qdrant.jdbc.support.FakeQdrantServer.point;
+import static com.runaxsoftware.qdrant.jdbc.support.FakeQdrantServer.unnamedVector;
+
 import com.runaxsoftware.qdrant.jdbc.QdrantDriver;
 import com.runaxsoftware.qdrant.jdbc.support.FakeQdrantServer;
+import com.runaxsoftware.qdrant.jdbc.support.Json;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -26,6 +30,7 @@ import java.sql.SQLSyntaxErrorException;
 import java.sql.Statement;
 import java.sql.Types;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 
 class QdrantStatementTest {
@@ -39,6 +44,8 @@ class QdrantStatementTest {
     @BeforeEach
     void open() throws Exception {
         server = FakeQdrantServer.start();
+        server.collection("products", unnamedVector(4, "Cosine", Map.of()),
+            List.of(point(1, Json.object("name", "Lamp", "price", 39.9))));
         connection = new QdrantDriver().connect(server.jdbcUrl(), new Properties());
         statement = connection.createStatement();
     }
@@ -72,6 +79,47 @@ class QdrantStatementTest {
                 assertThrows(SQLFeatureNotSupportedException.class, call);
             assertTrue(error.getMessage().contains("isn't supported yet"));
         }
+    }
+
+    @Test
+    void reportsACollectionThatDoesNotExist() {
+        SQLException error = assertThrows(SQLException.class,
+            () -> statement.executeQuery("SELECT * FROM missing"));
+
+        assertEquals("42S02", error.getSQLState());
+    }
+
+    @Test
+    void readsKeptColumnsOnlyOnce() {
+        assertThrows(SQLFeatureNotSupportedException.class,
+            () -> statement.executeQuery("SELECT name FROM products"));
+        assertThrows(SQLFeatureNotSupportedException.class,
+            () -> statement.executeQuery("SELECT price FROM products"));
+
+        assertEquals(1, reads("products"));
+    }
+
+    @Test
+    void findsAFieldAddedSinceTheColumnsWereKept() {
+        assertThrows(SQLFeatureNotSupportedException.class,
+            () -> statement.executeQuery("SELECT name FROM products"));
+        server.collection("products", unnamedVector(4, "Cosine", Map.of()),
+            List.of(point(1, Json.object("name", "Lamp", "price", 39.9, "color", "red"))));
+
+        // Planned, not "unknown column": the kept columns are read again when color isn't there
+        assertThrows(SQLFeatureNotSupportedException.class,
+            () -> statement.executeQuery("SELECT color FROM products"));
+        assertEquals(2, reads("products"));
+    }
+
+    @Test
+    void reportsAnUnknownColumnAfterReadingTheColumnsOnceMore() {
+        SQLSyntaxErrorException error = assertThrows(SQLSyntaxErrorException.class,
+            () -> statement.executeQuery("SELECT nope FROM products"));
+
+        assertEquals("42S22", error.getSQLState());
+        assertEquals("Unknown column 'nope' in products", error.getMessage());
+        assertEquals(2, reads("products"));
     }
 
     @Test
@@ -308,5 +356,13 @@ class QdrantStatementTest {
         assertFalse(statement.isWrapperFor(Connection.class));
         assertSame(statement, statement.unwrap(Statement.class));
         assertThrows(SQLException.class, () -> statement.unwrap(Connection.class));
+    }
+
+    // How many times the collection's configuration was read, once per schema read
+    private long reads(String collection) {
+        return server.requests().stream()
+            .filter(request -> request.method().equals("GET")
+                && request.path().equals("/collections/" + collection))
+            .count();
     }
 }

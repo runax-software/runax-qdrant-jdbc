@@ -7,6 +7,7 @@ import com.runaxsoftware.qdrant.jdbc.schema.ColumnKind;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnType;
 import com.runaxsoftware.qdrant.jdbc.schema.DriverColumns;
 import com.runaxsoftware.qdrant.jdbc.schema.SchemaInference;
+import com.runaxsoftware.qdrant.jdbc.schema.SchemaReader;
 import com.runaxsoftware.qdrant.jdbc.schema.TableSchema;
 
 import java.sql.Connection;
@@ -25,7 +26,12 @@ import java.util.List;
  * sits in one catalog, {@value #CATALOG}, and one schema, {@value #SCHEMA}. Catalog and schema
  * filters that name anything else match nothing. Columns come from {@link SchemaInference}:
  * every table has an {@code _id} primary key, and payload indexes show up as table indexes.
- * Everything is read live from Qdrant.
+ *
+ * <p>The collection list is read from Qdrant on every call. Each collection's columns and
+ * indexes come from the connection's {@link SchemaReader}, which keeps them for a while, and
+ * {@link #getTables} makes it forget the collections it lists. Tools list the tables first
+ * when they refresh, then ask for each table's columns and indexes, so a refresh reads each
+ * collection from Qdrant once and shows its current columns.
  */
 public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
     /**
@@ -80,12 +86,19 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
         return MetadataColumns.SCHEMAS.rows(rows);
     }
 
+    /**
+     * Lists the collections as tables, and makes the {@link SchemaReader} forget every
+     * collection the pattern matches, including ones deleted since it read them, so the columns
+     * and indexes asked for next are read again.
+     */
     @Override
     public ResultSet getTables(String catalog, String schemaPattern, String tableNamePattern, String[] types) throws SQLException {
         checkOpen();
         List<Object[]> rows = new ArrayList<>();
 
         if (inScope(catalog, schemaPattern) && includesTables(types)) {
+            connection.schemaReader().forget(name -> LikePattern.matches(tableNamePattern, name));
+
             for (String name : sortedCollections(tableNamePattern)) {
                 rows.add(new Object[]{CATALOG, SCHEMA, name, TABLE_TYPE, null, null, null, null, null, null});
             }
