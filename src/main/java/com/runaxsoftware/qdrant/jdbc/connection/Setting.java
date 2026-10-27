@@ -11,6 +11,8 @@ public enum Setting {
     TLS("tls", "false", "Connect over TLS: true or false.", "false", "true"),
     TIMEOUT("timeout", "30", "Seconds to wait for Qdrant to connect and to answer each request."),
     SAMPLE_SIZE("sampleSize", "100", "How many points to read when working out a collection's columns."),
+    SCHEMA_CACHE("schemaCache", "3600", "Seconds to keep a collection's columns before reading them again. "
+        + "Listing tables, as a Refresh does, reads them again sooner; 0 reads them every time."),
     LOG_FILE("logFile", null, "File to log every JDBC call to, for troubleshooting. The API key is never logged.");
 
     private final String key;

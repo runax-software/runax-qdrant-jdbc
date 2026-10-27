@@ -138,6 +138,15 @@ public final class FakeQdrantServer implements AutoCloseable {
     }
 
     /**
+     * Deletes a collection, as if someone deleted it in Qdrant.
+     */
+    public synchronized FakeQdrantServer deleteCollection(String name) {
+        collections.remove(name);
+        points.remove(name);
+        return this;
+    }
+
+    /**
      * Lists a collection that can't be read, as if it was deleted after listing.
      */
     public FakeQdrantServer listedButMissing(String name) {

@@ -374,6 +374,80 @@ class QdrantDatabaseMetaDataTest {
             "INDEX_NAME"));
     }
 
+    // Keeping schemas between calls
+
+    @Test
+    void readsEachCollectionOnceForEachRefresh() throws SQLException {
+        // The order DataGrip introspects in: list the tables, then ask about each one
+        for (int refresh = 1; refresh <= 2; refresh++) {
+            for (String table : tables("%", null)) {
+                metaData.getColumns(null, null, table, "%").close();
+                metaData.getPrimaryKeys(null, null, table).close();
+                metaData.getIndexInfo(null, null, table, false, true).close();
+            }
+
+            assertEquals(refresh, reads("products"));
+            assertEquals(refresh, reads("articles"));
+            assertEquals(2 * refresh, reads("ghost"), "a missing collection isn't kept");
+        }
+    }
+
+    @Test
+    void showsNewFieldsAfterARefresh() throws SQLException {
+        assertFalse(columns("products").contains("color"));
+        server.collection("products", unnamedVector(4, "Cosine", Map.of()),
+            List.of(point(1, Json.object("name", "Lamp", "color", "red"))));
+
+        assertFalse(columns("products").contains("color"), "kept until a refresh");
+        tables("%", null);
+
+        assertTrue(columns("products").contains("color"));
+    }
+
+    @Test
+    void refreshesOnlyTheTablesItLists() throws SQLException {
+        metaData.getColumns(null, null, "%", "%").close();
+
+        tables("prod%", null);
+        metaData.getColumns(null, null, "%", "%").close();
+
+        assertEquals(2, reads("products"));
+        assertEquals(1, reads("articles"));
+    }
+
+    @Test
+    void dropsADeletedCollectionOnRefresh() throws SQLException {
+        assertEquals(3, indexes("products").size());
+        server.deleteCollection("products");
+
+        assertEquals(3, indexes("products").size(), "kept until a refresh");
+        tables("%", null);
+
+        assertEquals(List.of(), indexes("products"));
+        assertEquals(List.of(), columns("products"));
+    }
+
+    @Test
+    void keepsSchemasForTheWholeConnection() throws SQLException {
+        metaData.getColumns(null, null, "products", "%").close();
+        connection.getMetaData().getIndexInfo(null, null, "products", false, true).close();
+
+        assertEquals(1, reads("products"));
+    }
+
+    @Test
+    void readsEveryTimeWithTheCacheOff() throws Exception {
+        try (Connection uncached = new QdrantDriver().connect(server.jdbcUrl("schemaCache=0"),
+            new Properties())) {
+            DatabaseMetaData uncachedMetaData = uncached.getMetaData();
+
+            uncachedMetaData.getColumns(null, null, "products", "%").close();
+            uncachedMetaData.getIndexInfo(null, null, "products", false, true).close();
+        }
+
+        assertEquals(2, reads("products"));
+    }
+
     // Schemas, catalogs, types
 
     @Test
@@ -639,6 +713,24 @@ class QdrantDatabaseMetaDataTest {
 
     private List<String> tables(String pattern, String[] types) throws SQLException {
         return column(metaData.getTables(null, null, pattern, types), "TABLE_NAME");
+    }
+
+    private List<String> columns(String table) throws SQLException {
+        return column(metaData.getColumns(null, null, table, "%"), "COLUMN_NAME");
+    }
+
+    private List<String> indexes(String table) throws SQLException {
+        return column(metaData.getIndexInfo(null, null, table, false, true), "INDEX_NAME");
+    }
+
+    /**
+     * How many times the driver asked Qdrant for a collection's configuration.
+     */
+    private long reads(String collection) {
+        return server.requests().stream()
+            .filter(request -> request.method().equals("GET")
+                && request.path().equals("/collections/" + collection))
+            .count();
     }
 
     private static List<String> column(ResultSet rows, String label) throws SQLException {

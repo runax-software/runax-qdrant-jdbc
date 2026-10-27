@@ -137,13 +137,15 @@ class QdrantDriverTest {
         DriverPropertyInfo[] properties = driver.getPropertyInfo("jdbc:qdrant://localhost", null);
 
         List<String> names = Arrays.stream(properties).map(property -> property.name).toList();
-        assertEquals(List.of("password", "tls", "timeout", "sampleSize", "logFile"), names);
+        assertEquals(List.of("password", "tls", "timeout", "sampleSize", "schemaCache", "logFile"),
+            names);
         assertNull(properties[0].value);
         assertEquals("false", properties[1].value);
         assertArrayEquals(new String[] {"false", "true"}, properties[1].choices);
         assertEquals("30", properties[2].value);
         assertEquals("100", properties[3].value);
-        assertNull(properties[4].value);
+        assertEquals("3600", properties[4].value);
+        assertNull(properties[5].value);
 
         for (DriverPropertyInfo property : properties) {
             assertFalse(property.required);
@@ -173,6 +175,7 @@ class QdrantDriverTest {
         current.setProperty("tls", "true");
         current.setProperty("timeout", "7");
         current.setProperty("sampleSize", "5");
+        current.setProperty("schemaCache", "60");
         current.setProperty("logFile", "/tmp/calls.log");
 
         DriverPropertyInfo[] properties = driver.getPropertyInfo("jdbc:qdrant://localhost", current);
@@ -181,7 +184,8 @@ class QdrantDriverTest {
         assertEquals("true", properties[1].value);
         assertEquals("7", properties[2].value);
         assertEquals("5", properties[3].value);
-        assertEquals("/tmp/calls.log", properties[4].value);
+        assertEquals("60", properties[4].value);
+        assertEquals("/tmp/calls.log", properties[5].value);
 
         for (DriverPropertyInfo property : properties) {
             assertFalse("secret".equals(property.value), property.name);

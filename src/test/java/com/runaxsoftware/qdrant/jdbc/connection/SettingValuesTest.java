@@ -139,7 +139,7 @@ class SettingValuesTest {
 
     @Test
     void listsTheSettingsInTheOrderToolsShowThem() {
-        assertEquals(List.of("password", "tls", "timeout", "sampleSize", "logFile"),
+        assertEquals(List.of("password", "tls", "timeout", "sampleSize", "schemaCache", "logFile"),
             List.of(Setting.values()).stream().map(Setting::key).toList());
     }
 
@@ -149,6 +149,7 @@ class SettingValuesTest {
         assertEquals("false", Setting.TLS.defaultValue());
         assertEquals("30", Setting.TIMEOUT.defaultValue());
         assertEquals("100", Setting.SAMPLE_SIZE.defaultValue());
+        assertEquals("3600", Setting.SCHEMA_CACHE.defaultValue());
         assertNull(Setting.LOG_FILE.defaultValue());
     }
 
