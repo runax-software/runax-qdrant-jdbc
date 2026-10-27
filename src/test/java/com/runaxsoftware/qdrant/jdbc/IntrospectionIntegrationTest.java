@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.runaxsoftware.qdrant.jdbc.client.QdrantGateway;
+import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
 import com.runaxsoftware.qdrant.jdbc.support.SampleCollections;
 import com.runaxsoftware.qdrant.jdbc.support.TestQdrant;
 

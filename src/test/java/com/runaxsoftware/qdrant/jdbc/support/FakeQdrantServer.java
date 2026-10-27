@@ -1,36 +1,17 @@
 package com.runaxsoftware.qdrant.jdbc.support;
 
-import io.grpc.Metadata;
-import io.grpc.Server;
-import io.grpc.ServerBuilder;
-import io.grpc.ServerCall;
-import io.grpc.ServerCallHandler;
-import io.grpc.ServerInterceptor;
-import io.grpc.Status;
-import io.grpc.StatusRuntimeException;
-import io.grpc.stub.StreamObserver;
-import io.qdrant.client.grpc.Collections;
-import io.qdrant.client.grpc.Collections.CollectionDescription;
-import io.qdrant.client.grpc.Collections.Distance;
-import io.qdrant.client.grpc.Collections.GetCollectionInfoRequest;
-import io.qdrant.client.grpc.Collections.GetCollectionInfoResponse;
-import io.qdrant.client.grpc.Collections.ListCollectionsRequest;
-import io.qdrant.client.grpc.Collections.ListCollectionsResponse;
-import io.qdrant.client.grpc.Collections.PayloadSchemaInfo;
-import io.qdrant.client.grpc.Collections.PayloadSchemaType;
-import io.qdrant.client.grpc.Collections.VectorParams;
-import io.qdrant.client.grpc.CollectionsGrpc;
-import io.qdrant.client.grpc.Common.PointId;
-import io.qdrant.client.grpc.JsonWithInt.Value;
-import io.qdrant.client.grpc.Points.RetrievedPoint;
-import io.qdrant.client.grpc.Points.ScrollPoints;
-import io.qdrant.client.grpc.Points.ScrollResponse;
-import io.qdrant.client.grpc.PointsGrpc;
-import io.qdrant.client.grpc.QdrantGrpc;
-import io.qdrant.client.grpc.QdrantOuterClass.HealthCheckReply;
-import io.qdrant.client.grpc.QdrantOuterClass.HealthCheckRequest;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -38,293 +19,484 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.TimeUnit;
-import java.util.function.Supplier;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
- * A stand-in for Qdrant's gRPC API, for unit tests: health check, listing and reading
- * collections, and scrolling points. Collections, failures, delays, and a required API key
- * are set per test; requests and headers are recorded for assertions. Like Qdrant, it answers
- * health checks without an API key.
+ * A stand-in for Qdrant's REST API, for unit tests: the version at {@code GET /}, listing and
+ * reading collections, and scrolling points. Answers have the shapes Qdrant 1.20 sends.
+ * Collections, failures, delays, and a required API key are set per test; requests are recorded
+ * for assertions. Like Qdrant, it answers {@code GET /} without an API key, answers a missing
+ * or wrong key with plain text, and answers routes it doesn't have (such as {@code POST /})
+ * with an empty 404.
  */
 public final class FakeQdrantServer implements AutoCloseable {
 
-    /** The version the server reports. */
+    /**
+     * The version the server reports.
+     */
     public static final String VERSION = "1.20.0";
 
-    private static final Metadata.Key<String> API_KEY =
-        Metadata.Key.of("api-key", Metadata.ASCII_STRING_MARSHALLER);
-    private static final Metadata.Key<String> USER_AGENT =
-        Metadata.Key.of("user-agent", Metadata.ASCII_STRING_MARSHALLER);
+    /**
+     * The git commit the server reports.
+     */
+    public static final String COMMIT = "222b2e44ab1c3f17e8246396ead6558e45041df7";
 
-    private final Map<String, Collections.CollectionInfo> collections = new LinkedHashMap<>();
-    private final Map<String, List<RetrievedPoint>> points = new ConcurrentHashMap<>();
+    /**
+     * The endpoints the fake serves, for failing, delaying, and counting calls.
+     */
+    public enum Endpoint {
+        /**
+         * {@code GET /}: the version, which needs no API key.
+         */
+        VERSION,
+
+        /**
+         * {@code GET /collections}.
+         */
+        COLLECTIONS,
+
+        /**
+         * {@code GET /collections/{name}}.
+         */
+        COLLECTION,
+
+        /**
+         * {@code POST /collections/{name}/points/scroll}.
+         */
+        SCROLL
+    }
+
+    /**
+     * One request the server received.
+     *
+     * @param method    the HTTP method
+     * @param path      the decoded path, such as {@code /collections/my docs}
+     * @param apiKey    the {@code api-key} header, or {@code null} when there was none
+     * @param userAgent the {@code User-Agent} header
+     * @param body      the JSON body, or {@code null} when there was none
+     */
+    public record Request(String method, String path, String apiKey, String userAgent,
+                          JsonNode body) {
+    }
+
+    private record Failure(int status, String contentType, String body) {
+    }
+
+    private final Map<String, ObjectNode> collections = new LinkedHashMap<>();
+    private final Map<String, List<ObjectNode>> points = new ConcurrentHashMap<>();
     private final List<String> listedOnly = new CopyOnWriteArrayList<>();
-    private final Map<String, Status> failures = new ConcurrentHashMap<>();
-    private final Map<String, Duration> delays = new ConcurrentHashMap<>();
-    private final Map<String, Integer> calls = new ConcurrentHashMap<>();
-    private final List<ScrollPoints> scrollRequests = new CopyOnWriteArrayList<>();
-    private final List<String> apiKeys = new CopyOnWriteArrayList<>();
-    private final List<String> userAgents = new CopyOnWriteArrayList<>();
-    private final Server server;
+    private final Map<Endpoint, Failure> failures = new ConcurrentHashMap<>();
+    private final Map<Endpoint, Duration> delays = new ConcurrentHashMap<>();
+    private final Map<Endpoint, Integer> calls = new ConcurrentHashMap<>();
+    private final List<Request> requests = new CopyOnWriteArrayList<>();
+    private final ExecutorService threads = Executors.newCachedThreadPool();
+    private final HttpServer server;
     private volatile String requiredApiKey;
 
     private FakeQdrantServer() throws IOException {
-        server = ServerBuilder.forPort(0)
-            .addService(new Health())
-            .addService(new CollectionsService())
-            .addService(new PointsService())
-            .intercept(new Recorder())
-            .build()
-            .start();
+        server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        server.createContext("/", this::handle);
+        server.setExecutor(threads);
+        server.start();
     }
 
-    /** Starts a server on a free port. */
+    /**
+     * Starts a server on a free port.
+     */
     public static FakeQdrantServer start() throws IOException {
         return new FakeQdrantServer();
     }
 
-    /** The port the server listens on. */
+    /**
+     * The port the server listens on.
+     */
     public int port() {
-        return server.getPort();
+        return server.getAddress().getPort();
     }
 
-    /** A JDBC URL for this server, with optional {@code ?...} parameters appended. */
+    /**
+     * A JDBC URL for this server, with optional {@code ?...} parameters appended.
+     */
     public String jdbcUrl(String... parameters) {
         return "jdbc:qdrant://localhost:" + port()
             + (parameters.length == 0 ? "" : "?" + String.join("&", parameters));
     }
 
-    /** Adds a collection with its points; listed in the order added. */
-    public synchronized FakeQdrantServer collection(String name, Collections.CollectionInfo info,
-                                                    List<RetrievedPoint> collectionPoints) {
+    /**
+     * Adds a collection with its points; collections are listed in the order added.
+     *
+     * @param info   the collection as {@code GET /collections/{name}} returns it in
+     *               {@code result}; see {@link #collectionInfo}
+     * @param points the points, in scroll order; see {@link #point}
+     */
+    public synchronized FakeQdrantServer collection(String name, ObjectNode info,
+                                                    List<ObjectNode> points) {
         collections.put(name, info);
-        points.put(name, List.copyOf(collectionPoints));
+        this.points.put(name, List.copyOf(points));
         return this;
     }
 
-    /** Lists a collection that can't be read, as if it was deleted after listing. */
+    /**
+     * Lists a collection that can't be read, as if it was deleted after listing.
+     */
     public FakeQdrantServer listedButMissing(String name) {
         listedOnly.add(name);
         return this;
     }
 
-    /** Rejects calls (other than health checks) without this API key. */
+    /**
+     * Rejects requests (other than {@code GET /}) without this API key.
+     */
     public FakeQdrantServer requireApiKey(String apiKey) {
         requiredApiKey = apiKey;
         return this;
     }
 
-    /** Fails every call to a method ({@code HealthCheck}, {@code List}, {@code Get}, {@code Scroll}). */
-    public FakeQdrantServer fail(String method, Status status) {
-        failures.put(method, status);
+    /**
+     * Answers every request to an endpoint with an error in Qdrant's JSON shape,
+     * {@code {"status": {"error": message}}}.
+     */
+    public FakeQdrantServer fail(Endpoint endpoint, int status, String message) {
+        failures.put(endpoint, new Failure(status, "application/json",
+            Json.object("status", Json.object("error", message), "time", 0.0).toString()));
         return this;
     }
 
-    /** Stops failing a method. */
-    public FakeQdrantServer recover(String method) {
-        failures.remove(method);
+    /**
+     * Answers every request to an endpoint with this status and body, sent as they are.
+     */
+    public FakeQdrantServer failWithBody(Endpoint endpoint, int status, String contentType,
+                                         String body) {
+        failures.put(endpoint, new Failure(status, contentType, body));
         return this;
     }
 
-    /** Delays every answer from a method. */
-    public FakeQdrantServer delay(String method, Duration delay) {
-        delays.put(method, delay);
+    /**
+     * Stops failing an endpoint.
+     */
+    public FakeQdrantServer recover(Endpoint endpoint) {
+        failures.remove(endpoint);
         return this;
     }
 
-    /** How many times a method was called. */
-    public int calls(String method) {
-        return calls.getOrDefault(method, 0);
+    /**
+     * Delays every answer from an endpoint.
+     */
+    public FakeQdrantServer delay(Endpoint endpoint, Duration delay) {
+        delays.put(endpoint, delay);
+        return this;
     }
 
-    /** The scroll requests received, in order. */
-    public List<ScrollPoints> scrollRequests() {
-        return List.copyOf(scrollRequests);
+    /**
+     * How many requests reached an endpoint, including rejected ones.
+     */
+    public int calls(Endpoint endpoint) {
+        return calls.getOrDefault(endpoint, 0);
     }
 
-    /** The {@code api-key} header of each call, or an empty string when there was none. */
+    /**
+     * Every request received, in order.
+     */
+    public List<Request> requests() {
+        return List.copyOf(requests);
+    }
+
+    /**
+     * The bodies of the scroll requests received, in order.
+     */
+    public List<JsonNode> scrollRequests() {
+        return requests.stream()
+            .filter(request -> request.path().endsWith("/points/scroll"))
+            .map(Request::body)
+            .toList();
+    }
+
+    /**
+     * The {@code api-key} header of each request, or an empty string when there was none.
+     */
     public List<String> apiKeys() {
-        return List.copyOf(apiKeys);
+        return requests.stream()
+            .map(request -> request.apiKey() == null ? "" : request.apiKey())
+            .toList();
     }
 
-    /** The {@code user-agent} header of each call. */
+    /**
+     * The {@code User-Agent} header of each request.
+     */
     public List<String> userAgents() {
-        return List.copyOf(userAgents);
+        return requests.stream().map(Request::userAgent).toList();
     }
 
     @Override
-    public void close() throws InterruptedException {
-        server.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
+    public void close() {
+        server.stop(0);
+        threads.shutdownNow();
     }
 
     // Builders for test data
 
-    /** A collection with one unnamed dense vector and the given payload indexes. */
-    public static Collections.CollectionInfo unnamedVector(int size, Distance distance,
-                                                           Map<String, PayloadSchemaType> indexes) {
-        return collectionInfo(Collections.VectorsConfig.newBuilder()
-            .setParams(VectorParams.newBuilder().setSize(size).setDistance(distance))
-            .build(), Collections.SparseVectorConfig.getDefaultInstance(), indexes);
+    /**
+     * A collection with one unnamed dense vector and the given payload indexes.
+     *
+     * @param indexes payload path to Qdrant's index type name, such as {@code "keyword"}
+     */
+    public static ObjectNode unnamedVector(int size, String distance, Map<String, String> indexes) {
+        return collectionInfo(dense(size, distance), null, indexes);
     }
 
-    /** A collection with the given vectors configuration, sparse vectors, and payload indexes. */
-    public static Collections.CollectionInfo collectionInfo(Collections.VectorsConfig vectors,
-                                                            Collections.SparseVectorConfig sparse,
-                                                            Map<String, PayloadSchemaType> indexes) {
-        Collections.CollectionInfo.Builder info = Collections.CollectionInfo.newBuilder()
-            .setPointsCount(42)
-            .setConfig(Collections.CollectionConfig.newBuilder()
-                .setParams(Collections.CollectionParams.newBuilder()
-                    .setVectorsConfig(vectors)
-                    .setSparseVectorsConfig(sparse)));
+    /**
+     * A collection as {@code GET /collections/{name}} describes it, with 42 points.
+     *
+     * @param vectors       one vector's parameters ({@link #dense}) or named vectors' parameters
+     * @param sparseVectors the sparse vectors by name, or {@code null} for none
+     * @param indexes       payload path to Qdrant's index type name, such as {@code "keyword"}
+     */
+    public static ObjectNode collectionInfo(ObjectNode vectors, ObjectNode sparseVectors,
+                                            Map<String, String> indexes) {
+        ObjectNode params = Json.object("vectors", vectors, "shard_number", 1,
+            "replication_factor", 1, "on_disk_payload", true);
 
-        for (Map.Entry<String, PayloadSchemaType> index : indexes.entrySet()) {
-            info.putPayloadSchema(index.getKey(),
-                PayloadSchemaInfo.newBuilder().setDataType(index.getValue()).build());
+        if (sparseVectors != null) {
+            params.set("sparse_vectors", sparseVectors);
         }
 
-        return info.build();
+        ObjectNode schema = Json.object();
+        for (Map.Entry<String, String> index : indexes.entrySet()) {
+            schema.set(index.getKey(), Json.object("data_type", index.getValue(), "points", 42));
+        }
+
+        return Json.object("status", "green", "optimizer_status", "ok", "points_count", 42,
+            "segments_count", 1, "config", Json.object("params", params), "payload_schema", schema);
     }
 
-    /** A point with a payload and no vectors. */
-    public static RetrievedPoint point(PointId id, Map<String, Value> payload) {
-        return RetrievedPoint.newBuilder().setId(id).putAllPayload(payload).build();
+    /**
+     * A dense vector's parameters.
+     */
+    public static ObjectNode dense(int size, String distance) {
+        return Json.object("size", size, "distance", distance);
     }
 
-    // Services
+    /**
+     * A multivector's parameters.
+     */
+    public static ObjectNode multivector(int size, String distance) {
+        return dense(size, distance).set("multivector_config",
+            Json.object("comparator", "max_sim"));
+    }
 
-    private <T> void respond(String method, StreamObserver<T> observer, Supplier<T> response) {
-        calls.merge(method, 1, Integer::sum);
-        Duration delay = delays.get(method);
+    /**
+     * A point with a payload and no vectors.
+     *
+     * @param id a number or a UUID string
+     */
+    public static ObjectNode point(Object id, ObjectNode payload) {
+        return Json.object("id", id, "payload", payload);
+    }
 
-        if (delay != null) {
-            try {
-                Thread.sleep(delay.toMillis());
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }
+    /**
+     * A point with a payload and vectors.
+     *
+     * @param id     a number or a UUID string
+     * @param vector the unnamed vector, or an object of named vectors
+     */
+    public static ObjectNode point(Object id, ObjectNode payload, JsonNode vector) {
+        return point(id, payload).set("vector", vector);
+    }
 
-        Status failure = failures.get(method);
+    // Serving
 
-        if (failure != null) {
-            observer.onError(failure.asRuntimeException());
-            return;
-        }
-
+    private void handle(HttpExchange exchange) throws IOException {
         try {
-            observer.onNext(response.get());
-            observer.onCompleted();
-        } catch (StatusRuntimeException e) {
-            observer.onError(e);
+            String method = exchange.getRequestMethod();
+            String path = URLDecoder.decode(exchange.getRequestURI().getRawPath(),
+                StandardCharsets.UTF_8);
+            String apiKey = exchange.getRequestHeaders().getFirst("api-key");
+            JsonNode body = readBody(exchange.getRequestBody());
+            requests.add(new Request(method, path, apiKey,
+                exchange.getRequestHeaders().getFirst("User-Agent"), body));
+
+            String[] segments = path.split("/", -1);
+            Endpoint endpoint = route(method, segments);
+
+            if (endpoint == null) {
+                send(exchange, 404, "text/plain", "");
+                return;
+            }
+
+            calls.merge(endpoint, 1, Integer::sum);
+            pause(endpoint);
+
+            String required = requiredApiKey;
+            if (endpoint != Endpoint.VERSION && required != null && !required.equals(apiKey)) {
+                send(exchange, 401, "text/plain", apiKey == null
+                    ? "Must provide an API key or an Authorization bearer token"
+                    : "Invalid API key or JWT");
+                return;
+            }
+
+            Failure failure = failures.get(endpoint);
+            if (failure != null) {
+                send(exchange, failure.status(), failure.contentType(), failure.body());
+                return;
+            }
+
+            switch (endpoint) {
+                case VERSION -> send(exchange, 200, "application/json", Json.object(
+                    "title", "qdrant - vector search engine", "version", VERSION,
+                    "commit", COMMIT).toString());
+                case COLLECTIONS -> ok(exchange, Json.object("collections", names()));
+                case COLLECTION -> collectionInfo(exchange, segments[2]);
+                case SCROLL -> scroll(exchange, segments[2], body);
+            }
+        } finally {
+            exchange.close();
         }
     }
 
-    private synchronized Collections.CollectionInfo find(String name) {
-        Collections.CollectionInfo info = collections.get(name);
-
-        if (info == null) {
-            throw Status.NOT_FOUND
-                .withDescription("Not found: Collection `" + name + "` doesn't exist!")
-                .asRuntimeException();
+    private static Endpoint route(String method, String[] segments) {
+        // "/collections/x/points/scroll".split("/") is ["", "collections", "x", "points", "scroll"]
+        if (method.equals("GET") && segments.length == 2 && segments[1].isEmpty()) {
+            return Endpoint.VERSION;
         }
 
-        return info;
+        if (segments.length < 2 || !segments[1].equals("collections")) {
+            return null;
+        }
+
+        if (method.equals("GET") && segments.length == 2) {
+            return Endpoint.COLLECTIONS;
+        }
+
+        if (method.equals("GET") && segments.length == 3) {
+            return Endpoint.COLLECTION;
+        }
+
+        if (method.equals("POST") && segments.length == 5 && segments[3].equals("points")
+            && segments[4].equals("scroll")) {
+            return Endpoint.SCROLL;
+        }
+
+        return null;
     }
 
-    private synchronized List<String> names() {
-        List<String> names = new ArrayList<>(collections.keySet());
-        names.addAll(listedOnly);
+    private synchronized List<JsonNode> names() {
+        List<JsonNode> names = new ArrayList<>();
+
+        for (String name : collections.keySet()) {
+            names.add(Json.object("name", name));
+        }
+
+        for (String name : listedOnly) {
+            names.add(Json.object("name", name));
+        }
+
         return names;
     }
 
-    private ScrollResponse scroll(ScrollPoints request) {
-        find(request.getCollectionName());
-        List<RetrievedPoint> all = points.get(request.getCollectionName());
+    private synchronized ObjectNode find(String name) {
+        return collections.get(name);
+    }
+
+    private void collectionInfo(HttpExchange exchange, String name) throws IOException {
+        ObjectNode info = find(name);
+
+        if (info == null) {
+            notFound(exchange, name);
+            return;
+        }
+
+        ok(exchange, info);
+    }
+
+    private void scroll(HttpExchange exchange, String name, JsonNode request) throws IOException {
+        if (find(name) == null) {
+            notFound(exchange, name);
+            return;
+        }
+
+        List<ObjectNode> all = points.get(name);
+        JsonNode offset = request == null ? null : request.get("offset");
         int start = 0;
 
-        if (request.hasOffset()) {
-            while (start < all.size() && !all.get(start).getId().equals(request.getOffset())) {
+        if (offset != null && !offset.isNull()) {
+            while (start < all.size() && !sameId(all.get(start).get("id"), offset)) {
                 start++;
             }
         }
 
-        int limit = request.getLimit() == 0 ? 10 : request.getLimit();
+        int limit = request == null ? 10 : request.path("limit").asInt(10);
+        boolean withPayload = request != null && request.path("with_payload").asBoolean(false);
+        boolean withVector = request != null && request.path("with_vector").asBoolean(false);
         int end = Math.min(all.size(), start + limit);
-        ScrollResponse.Builder response = ScrollResponse.newBuilder()
-            .addAllResult(all.subList(start, end));
+        List<JsonNode> page = new ArrayList<>();
 
-        if (end < all.size()) {
-            response.setNextPageOffset(all.get(end).getId());
-        }
+        for (ObjectNode point : all.subList(start, end)) {
+            ObjectNode returned = Json.object("id", point.get("id"));
 
-        return response.build();
-    }
-
-    private final class Health extends QdrantGrpc.QdrantImplBase {
-        @Override
-        public void healthCheck(HealthCheckRequest request,
-                                StreamObserver<HealthCheckReply> observer) {
-            respond("HealthCheck", observer, () -> HealthCheckReply.newBuilder()
-                .setTitle("qdrant - vector search engine")
-                .setVersion(VERSION)
-                .build());
-        }
-    }
-
-    private final class CollectionsService extends CollectionsGrpc.CollectionsImplBase {
-        @Override
-        public void list(ListCollectionsRequest request,
-                         StreamObserver<ListCollectionsResponse> observer) {
-            respond("List", observer, () -> {
-                ListCollectionsResponse.Builder response = ListCollectionsResponse.newBuilder();
-
-                for (String name : names()) {
-                    response.addCollections(CollectionDescription.newBuilder().setName(name));
-                }
-
-                return response.build();
-            });
-        }
-
-        @Override
-        public void get(GetCollectionInfoRequest request,
-                        StreamObserver<GetCollectionInfoResponse> observer) {
-            respond("Get", observer, () -> GetCollectionInfoResponse.newBuilder()
-                .setResult(find(request.getCollectionName()))
-                .build());
-        }
-    }
-
-    private final class PointsService extends PointsGrpc.PointsImplBase {
-        @Override
-        public void scroll(ScrollPoints request, StreamObserver<ScrollResponse> observer) {
-            scrollRequests.add(request);
-            respond("Scroll", observer, () -> FakeQdrantServer.this.scroll(request));
-        }
-    }
-
-    /** Records headers and enforces the API key, except for health checks. */
-    private final class Recorder implements ServerInterceptor {
-        @Override
-        public <Q, R> ServerCall.Listener<Q> interceptCall(ServerCall<Q, R> call, Metadata headers,
-                                                         ServerCallHandler<Q, R> next) {
-            String apiKey = headers.get(API_KEY);
-            apiKeys.add(apiKey == null ? "" : apiKey);
-            userAgents.add(String.valueOf(headers.get(USER_AGENT)));
-            String required = requiredApiKey;
-            boolean healthCheck = call.getMethodDescriptor().getBareMethodName().equals("HealthCheck");
-
-            if (required != null && !healthCheck && !required.equals(apiKey)) {
-                call.close(Status.UNAUTHENTICATED.withDescription(apiKey == null
-                    ? "Must provide an API key or an Authorization bearer token"
-                    : "Invalid API key or JWT"), new Metadata());
-                return new ServerCall.Listener<>() {
-                };
+            if (withPayload && point.has("payload")) {
+                returned.set("payload", point.get("payload"));
             }
 
-            return next.startCall(call, headers);
+            if (withVector && point.has("vector")) {
+                returned.set("vector", point.get("vector"));
+            }
+
+            page.add(returned);
         }
+
+        ok(exchange, Json.object("points", page,
+            "next_page_offset", end < all.size() ? all.get(end).get("id") : null));
+    }
+
+    // 1, 1.0 and a BigInteger 1 are the same point ID
+    private static boolean sameId(JsonNode id, JsonNode offset) {
+        if (id.isNumber() && offset.isNumber()) {
+            return id.bigIntegerValue().equals(offset.bigIntegerValue());
+        }
+
+        return id.asText().equals(offset.asText());
+    }
+
+    private static void notFound(HttpExchange exchange, String name) throws IOException {
+        send(exchange, 404, "application/json", Json.object("status",
+            Json.object("error", "Not found: Collection `" + name + "` doesn't exist!"),
+            "time", 0.0).toString());
+    }
+
+    private static void ok(HttpExchange exchange, JsonNode result) throws IOException {
+        send(exchange, 200, "application/json",
+            Json.object("result", result, "status", "ok", "time", 0.0).toString());
+    }
+
+    private static void send(HttpExchange exchange, int status, String contentType, String body)
+        throws IOException {
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", contentType);
+        exchange.sendResponseHeaders(status, bytes.length == 0 ? -1 : bytes.length);
+
+        if (bytes.length > 0) {
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(bytes);
+            }
+        }
+    }
+
+    private void pause(Endpoint endpoint) {
+        Duration delay = delays.get(endpoint);
+        if (delay == null) {
+            return;
+        }
+
+        try {
+            Thread.sleep(delay.toMillis());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static JsonNode readBody(InputStream in) throws IOException {
+        String text = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        return text.isBlank() ? null : Json.parse(text);
     }
 }

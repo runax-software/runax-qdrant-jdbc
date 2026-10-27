@@ -1,4 +1,4 @@
-package com.runaxsoftware.qdrant.jdbc.result;
+package com.runaxsoftware.qdrant.jdbc.resultset;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;

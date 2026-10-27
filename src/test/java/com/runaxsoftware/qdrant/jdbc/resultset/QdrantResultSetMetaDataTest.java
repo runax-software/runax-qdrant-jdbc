@@ -1,4 +1,4 @@
-package com.runaxsoftware.qdrant.jdbc.result;
+package com.runaxsoftware.qdrant.jdbc.resultset;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -20,7 +20,7 @@ import java.sql.Types;
 import java.util.ArrayList;
 import java.util.List;
 
-class ResultColumnsMetaDataTest {
+class QdrantResultSetMetaDataTest {
 
     @ParameterizedTest
     @CsvSource({
@@ -36,7 +36,7 @@ class ResultColumnsMetaDataTest {
     })
     void describesEachType(JDBCType type, boolean signed, int displaySize, String className,
                            boolean caseSensitive) throws SQLException {
-        ResultSetMetaData metaData = new ResultColumnsMetaData(
+        ResultSetMetaData metaData = new QdrantResultSetMetaData(
             List.of(ResultColumn.of("C", type.getVendorTypeNumber())));
 
         assertEquals(signed, metaData.isSigned(1));
@@ -49,7 +49,7 @@ class ResultColumnsMetaDataTest {
 
     @Test
     void usesThePrecisionAsTheDisplaySize() throws SQLException {
-        ResultSetMetaData metaData = new ResultColumnsMetaData(List.of(new ResultColumn(
+        ResultSetMetaData metaData = new QdrantResultSetMetaData(List.of(new ResultColumn(
             "vector", Types.VARCHAR, "VECTOR", "products", 1536, ResultSetMetaData.columnNullable)));
 
         assertEquals(1536, metaData.getColumnDisplaySize(1));
@@ -60,7 +60,7 @@ class ResultColumnsMetaDataTest {
 
     @Test
     void describesReadOnlyColumnsWithoutCatalogOrSchema() throws SQLException {
-        ResultSetMetaData metaData = new ResultColumnsMetaData(List.of(new ResultColumn(
+        ResultSetMetaData metaData = new QdrantResultSetMetaData(List.of(new ResultColumn(
             "id", Types.VARCHAR, "VARCHAR", "", 0, ResultSetMetaData.columnNoNulls)));
 
         assertEquals(1, metaData.getColumnCount());
@@ -80,7 +80,7 @@ class ResultColumnsMetaDataTest {
 
     @Test
     void rejectsColumnIndexesOutOfRange() throws Exception {
-        ResultSetMetaData metaData = new ResultColumnsMetaData(List.of(ResultColumn.text("A")));
+        ResultSetMetaData metaData = new QdrantResultSetMetaData(List.of(ResultColumn.text("A")));
         int checked = 0;
 
         for (Method method : ResultSetMetaData.class.getMethods()) {
@@ -102,7 +102,7 @@ class ResultColumnsMetaDataTest {
     @Test
     void keepsItsOwnCopyOfTheColumns() throws SQLException {
         List<ResultColumn> columns = new ArrayList<>(List.of(ResultColumn.text("A")));
-        ResultSetMetaData metaData = new ResultColumnsMetaData(columns);
+        ResultSetMetaData metaData = new QdrantResultSetMetaData(columns);
 
         columns.add(ResultColumn.text("B"));
 
@@ -111,7 +111,7 @@ class ResultColumnsMetaDataTest {
 
     @Test
     void unwrapsToItself() throws SQLException {
-        ResultSetMetaData metaData = new ResultColumnsMetaData(List.of());
+        ResultSetMetaData metaData = new QdrantResultSetMetaData(List.of());
 
         assertTrue(metaData.isWrapperFor(ResultSetMetaData.class));
         assertFalse(metaData.isWrapperFor(String.class));

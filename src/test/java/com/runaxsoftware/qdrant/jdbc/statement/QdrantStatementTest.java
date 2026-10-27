@@ -1,4 +1,4 @@
-package com.runaxsoftware.qdrant.jdbc;
+package com.runaxsoftware.qdrant.jdbc.statement;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.runaxsoftware.qdrant.jdbc.QdrantDriver;
 import com.runaxsoftware.qdrant.jdbc.support.FakeQdrantServer;
 
 import org.junit.jupiter.api.AfterEach;

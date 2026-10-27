@@ -6,7 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
-import com.runaxsoftware.qdrant.jdbc.client.QdrantGateway;
+import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
 import com.runaxsoftware.qdrant.jdbc.support.SampleCollections;
 import com.runaxsoftware.qdrant.jdbc.support.TestQdrant;
 
@@ -46,14 +46,17 @@ class ShadedJarIntegrationTest {
     }
 
     @Test
-    void mergesGrpcServiceFiles() throws IOException {
-        String resolvers = entry("META-INF/services/io.grpc.NameResolverProvider");
-        String balancers = entry("META-INF/services/io.grpc.LoadBalancerProvider");
-        String channels = entry("META-INF/services/io.grpc.ManagedChannelProvider");
+    void relocatesJacksonsServiceFiles() throws IOException {
+        String factories = entry(
+            "META-INF/services/com.runaxsoftware.qdrant.jdbc.shaded.jackson.core.JsonFactory");
 
-        assertTrue(resolvers.contains("io.grpc.internal.DnsNameResolverProvider"), resolvers);
-        assertTrue(balancers.contains("io.grpc.internal.PickFirstLoadBalancerProvider"), balancers);
-        assertTrue(channels.contains("NettyChannelProvider"), channels);
+        assertTrue(factories.contains("com.runaxsoftware.qdrant.jdbc.shaded.jackson."), factories);
+
+        try (JarFile jar = new JarFile(jar().toFile())) {
+            assertEquals(List.of(), jar.stream().map(ZipEntry::getName)
+                .filter(name -> name.startsWith("META-INF/services/com.fasterxml."))
+                .toList());
+        }
     }
 
     @Test
@@ -67,7 +70,7 @@ class ShadedJarIntegrationTest {
                     || name.startsWith("org/slf4j/") || name.startsWith("io/perfmark/"))
                 .forEach(leaked::add);
             assertNotNull(jar.getEntry(
-                "com/runaxsoftware/qdrant/jdbc/shaded/google/protobuf/Message.class"));
+                "com/runaxsoftware/qdrant/jdbc/shaded/jackson/databind/ObjectMapper.class"));
         }
 
         assertEquals(List.of(), leaked);

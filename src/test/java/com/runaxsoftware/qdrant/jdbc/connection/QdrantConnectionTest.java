@@ -1,4 +1,4 @@
-package com.runaxsoftware.qdrant.jdbc;
+package com.runaxsoftware.qdrant.jdbc.connection;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -9,21 +9,33 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.runaxsoftware.qdrant.jdbc.DriverInfo;
+import com.runaxsoftware.qdrant.jdbc.QdrantDriver;
 import com.runaxsoftware.qdrant.jdbc.support.FakeQdrantServer;
-import io.grpc.Status;
+import com.runaxsoftware.qdrant.jdbc.support.FakeQdrantServer.Endpoint;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 
+import java.io.IOException;
+import java.io.OutputStream;
+import java.net.InetAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLClientInfoException;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
+import java.sql.SQLInvalidAuthorizationSpecException;
+import java.sql.SQLNonTransientConnectionException;
+import java.sql.SQLTimeoutException;
 import java.sql.SQLWarning;
 import java.sql.Statement;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -42,22 +54,187 @@ class QdrantConnectionTest {
 
     @AfterEach
     void close() throws Exception {
-        connection.close();
+        if (connection != null) {
+            connection.close();
+        }
+
         server.close();
     }
 
+    // Opening
+
     @Test
-    void checksTheServerAndTheApiKeyOnConnect() {
+    void checksTheServerVersionAndThenTheApiKeyOnConnect() {
         assertInstanceOf(QdrantConnection.class, connection);
-        assertEquals(1, server.calls("HealthCheck"));
-        assertEquals(1, server.calls("List"));
+        assertEquals(1, server.calls(Endpoint.VERSION));
+        assertEquals(1, server.calls(Endpoint.COLLECTIONS));
+
+        List<FakeQdrantServer.Request> requests = server.requests();
+        assertEquals(2, requests.size(), requests.toString());
+        assertEquals("GET", requests.get(0).method());
+        assertEquals("/", requests.get(0).path());
+        assertEquals("GET", requests.get(1).method());
+        assertEquals("/collections", requests.get(1).path());
+    }
+
+    @Test
+    void keepsTheServerVersionTheUrlAndASchemaReader() throws SQLException {
+        QdrantConnection qdrant = connection.unwrap(QdrantConnection.class);
+
+        assertEquals(FakeQdrantServer.VERSION, qdrant.serverVersion().version());
+        assertEquals(1, qdrant.serverVersion().major());
+        assertEquals(20, qdrant.serverVersion().minor());
+        assertEquals(FakeQdrantServer.COMMIT, qdrant.serverVersion().commit());
+        assertEquals(server.jdbcUrl(), qdrant.url());
+        assertEquals("http://localhost:" + server.port(), qdrant.gateway().baseUrl());
+        assertTrue(qdrant.schemaReader() != null);
+    }
+
+    @Test
+    void sendsTheDriverAsTheUserAgent() {
+        assertFalse(server.userAgents().isEmpty());
+        assertTrue(server.userAgents().stream().allMatch(DriverInfo.USER_AGENT::equals),
+            server.userAgents().toString());
+    }
+
+    @Test
+    void sendsNoApiKeyWhenThereIsNone() {
+        assertTrue(server.apiKeys().stream().allMatch(String::isEmpty), server.apiKeys().toString());
+    }
+
+    @Test
+    void sendsThePasswordAsTheApiKey() throws Exception {
+        server.requireApiKey("secret");
+        Properties properties = new Properties();
+        properties.setProperty("password", "secret");
+
+        try (Connection secured = new QdrantDriver().connect(server.jdbcUrl(), properties)) {
+            assertTrue(secured.isValid(5));
+        }
+
+        List<String> keys = server.apiKeys();
+        assertEquals(List.of("secret", "secret", "secret"), keys.subList(keys.size() - 3, keys.size()));
+    }
+
+    @Test
+    void reportsAWrongApiKeyOnConnect() {
+        server.requireApiKey("secret");
+        Properties properties = new Properties();
+        properties.setProperty("password", "wrong");
+
+        SQLInvalidAuthorizationSpecException error = assertThrows(
+            SQLInvalidAuthorizationSpecException.class,
+            () -> new QdrantDriver().connect(server.jdbcUrl(), properties));
+
+        assertEquals("28000", error.getSQLState());
+        assertTrue(error.getMessage().contains("password field"), error.getMessage());
+        assertTrue(error.getMessage().contains("Invalid API key or JWT"), error.getMessage());
+        assertFalse(error.getMessage().contains("wrong"), error.getMessage());
+    }
+
+    @Test
+    void reportsAMissingApiKeyOnConnect() {
+        server.requireApiKey("secret");
+
+        SQLInvalidAuthorizationSpecException error = assertThrows(
+            SQLInvalidAuthorizationSpecException.class,
+            () -> new QdrantDriver().connect(server.jdbcUrl(), new Properties()));
+
+        assertEquals("28000", error.getSQLState());
+        assertTrue(error.getMessage().contains("Must provide an API key"), error.getMessage());
+    }
+
+    @Test
+    void reportsAConnectionErrorWhenNothingListens() throws IOException {
+        int port = freePort();
+        Properties properties = new Properties();
+        properties.setProperty("timeout", "5");
+
+        SQLNonTransientConnectionException error = assertThrows(
+            SQLNonTransientConnectionException.class,
+            () -> new QdrantDriver().connect("jdbc:qdrant://localhost:" + port, properties));
+
+        assertEquals("08001", error.getSQLState());
+        assertTrue(error.getMessage().contains("localhost:" + port), error.getMessage());
+        assertTrue(error.getMessage().contains("REST port (6333 by default)"), error.getMessage());
+    }
+
+    @Test
+    void pointsToTheRestPortWhenSomethingElseAnswers() {
+        server.failWithBody(Endpoint.VERSION, 404, "text/plain", "");
+
+        SQLNonTransientConnectionException error = assertThrows(
+            SQLNonTransientConnectionException.class,
+            () -> new QdrantDriver().connect(server.jdbcUrl(), new Properties()));
+
+        assertEquals("08001", error.getSQLState());
+        assertTrue(error.getMessage().contains("Qdrant's REST API didn't answer at http://localhost:"
+            + server.port()), error.getMessage());
+        assertTrue(error.getMessage().contains("REST port, 6333 by default, not the gRPC port, 6334"),
+            error.getMessage());
+        assertEquals("42S02", ((SQLException) error.getCause()).getSQLState());
+    }
+
+    @Test
+    void pointsToTheRestPortWhenTheAnswerIsNotJson() {
+        server.failWithBody(Endpoint.VERSION, 200, "text/html", "<html>Not Qdrant</html>");
+
+        SQLNonTransientConnectionException error = assertThrows(
+            SQLNonTransientConnectionException.class,
+            () -> new QdrantDriver().connect(server.jdbcUrl(), new Properties()));
+
+        assertTrue(error.getMessage().contains("not the gRPC port, 6334"), error.getMessage());
+        assertEquals("08S01", ((SQLException) error.getCause()).getSQLState());
+    }
+
+    @Test
+    void pointsToTheRestPortWhenTheServerDoesNotSpeakHttp() throws Exception {
+        try (ServerSocket notHttp = new ServerSocket(0, 50, InetAddress.getLoopbackAddress())) {
+            Thread answerer = new Thread(() -> answerWithGarbage(notHttp));
+            answerer.setDaemon(true);
+            answerer.start();
+
+            Properties properties = new Properties();
+            properties.setProperty("timeout", "5");
+
+            SQLNonTransientConnectionException error = assertThrows(
+                SQLNonTransientConnectionException.class,
+                () -> new QdrantDriver().connect("jdbc:qdrant://localhost:" + notHttp.getLocalPort(),
+                    properties));
+
+            assertEquals("08001", error.getSQLState());
+            assertTrue(error.getMessage().contains("not the gRPC port, 6334"), error.getMessage());
+        }
+    }
+
+    @Test
+    void reportsASlowServerOnConnectAsATimeout() {
+        server.delay(Endpoint.VERSION, Duration.ofSeconds(3));
+
+        SQLTimeoutException error = assertThrows(SQLTimeoutException.class,
+            () -> new QdrantDriver().connect(server.jdbcUrl("timeout=1"), new Properties()));
+
+        assertEquals("HYT00", error.getSQLState());
+    }
+
+    @Test
+    void failsToOpenWhenCollectionsCantBeListed() {
+        server.fail(Endpoint.COLLECTIONS, 500, "Service internal error: disk full");
+
+        SQLException error = assertThrows(SQLException.class,
+            () -> new QdrantDriver().connect(server.jdbcUrl(), new Properties()));
+
+        assertEquals("HY000", error.getSQLState());
+        assertTrue(error.getMessage().contains("disk full"), error.getMessage());
     }
 
     @Test
     void namesTheServerInToString() {
-        assertEquals("QdrantConnection[localhost:" + server.port() + ", Qdrant "
+        assertEquals("QdrantConnection[http://localhost:" + server.port() + ", Qdrant "
             + FakeQdrantServer.VERSION + "]", connection.toString());
     }
+
+    // Closing
 
     @Test
     void closesOnce() throws SQLException {
@@ -83,14 +260,21 @@ class QdrantConnectionTest {
             connection::getWarnings,
             connection::clearWarnings,
             connection::isReadOnly,
+            () -> connection.setReadOnly(true),
             connection::getCatalog,
+            () -> connection.setCatalog("c"),
             connection::getSchema,
+            () -> connection.setSchema("s"),
             connection::getTypeMap,
+            () -> connection.setTypeMap(Map.of()),
             connection::getHoldability,
+            () -> connection.setHoldability(ResultSet.HOLD_CURSORS_OVER_COMMIT),
             connection::getTransactionIsolation,
+            () -> connection.setTransactionIsolation(Connection.TRANSACTION_NONE),
             () -> connection.getClientInfo("ApplicationName"),
             connection::getClientInfo,
-            connection::getNetworkTimeout);
+            connection::getNetworkTimeout,
+            () -> connection.setNetworkTimeout(Runnable::run, 1));
 
         for (Executable call : calls) {
             SQLException error = assertThrows(SQLException.class, call);
@@ -102,11 +286,28 @@ class QdrantConnectionTest {
     void checksValidityAgainstTheServer() throws SQLException {
         assertTrue(connection.isValid(5));
 
-        server.fail("List", Status.UNAVAILABLE);
+        server.fail(Endpoint.COLLECTIONS, 503, "Service unavailable");
         assertFalse(connection.isValid(5));
 
-        server.recover("List");
+        server.recover(Endpoint.COLLECTIONS);
         assertTrue(connection.isValid(0));
+    }
+
+    @Test
+    void checksValidityWithANewRequestEachTime() throws SQLException {
+        int before = server.calls(Endpoint.COLLECTIONS);
+
+        connection.isValid(5);
+        connection.isValid(5);
+
+        assertEquals(before + 2, server.calls(Endpoint.COLLECTIONS));
+    }
+
+    @Test
+    void isNotValidWhenTheApiKeyStopsWorking() throws SQLException {
+        server.requireApiKey("rotated");
+
+        assertFalse(connection.isValid(5));
     }
 
     @Test
@@ -129,13 +330,22 @@ class QdrantConnectionTest {
         connection.abort(tasks::add);
 
         assertTrue(connection.isClosed());
-        assertEquals(1, tasks.size(), "the channel is released once");
+        assertEquals(1, tasks.size(), "the gateway is released once");
         assertDoesNotThrow(() -> tasks.get(0).run());
     }
 
     @Test
     void needsAnExecutorToAbort() {
         assertThrows(SQLException.class, () -> connection.abort(null));
+    }
+
+    // Statements
+
+    @Test
+    void createsStatementsThatBelongToIt() throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            assertSame(connection, statement.getConnection());
+        }
     }
 
     @Test
@@ -176,6 +386,8 @@ class QdrantConnectionTest {
             assertThrows(SQLFeatureNotSupportedException.class, call);
         }
     }
+
+    // Transactions and settings
 
     @Test
     void treatsTransactionsAsAlwaysAutoCommit() throws SQLException {
@@ -244,11 +456,20 @@ class QdrantConnectionTest {
     }
 
     @Test
+    void replacesAllClientInfoAtOnce() throws SQLException {
+        connection.setClientInfo("ApplicationName", "DataGrip");
+        connection.setClientInfo(new Properties());
+
+        assertNull(connection.getClientInfo("ApplicationName"));
+    }
+
+    @Test
     void refusesClientInfoOnceClosed() throws SQLException {
         connection.close();
 
-        assertThrows(SQLClientInfoException.class,
+        SQLClientInfoException error = assertThrows(SQLClientInfoException.class,
             () -> connection.setClientInfo("ApplicationName", "DataGrip"));
+        assertEquals("08003", error.getSQLState());
         assertThrows(SQLClientInfoException.class,
             () -> connection.setClientInfo(new Properties()));
     }
@@ -293,5 +514,25 @@ class QdrantConnectionTest {
         assertFalse(connection.isWrapperFor(String.class));
         assertSame(connection, connection.unwrap(Connection.class));
         assertThrows(SQLException.class, () -> connection.unwrap(String.class));
+    }
+
+    // Helpers
+
+    private static int freePort() throws IOException {
+        try (ServerSocket socket = new ServerSocket(0, 50, InetAddress.getLoopbackAddress())) {
+            return socket.getLocalPort();
+        }
+    }
+
+    // Answers like a gRPC port does to HTTP/1.1: with an HTTP/2 frame, then closes
+    private static void answerWithGarbage(ServerSocket listener) {
+        try (Socket socket = listener.accept(); OutputStream out = socket.getOutputStream()) {
+            socket.getInputStream().read(new byte[1024]);
+            out.write(new byte[] {0, 0, 18, 4, 0, 0, 0, 0, 0});
+            out.write("not http".getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+        } catch (IOException e) {
+            // The test is over
+        }
     }
 }

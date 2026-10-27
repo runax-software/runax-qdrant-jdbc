@@ -1,7 +1,5 @@
-package com.runaxsoftware.qdrant.jdbc;
+package com.runaxsoftware.qdrant.jdbc.connection;
 
-import static io.qdrant.client.PointIdFactory.id;
-import static io.qdrant.client.ValueFactory.value;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -9,8 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.runaxsoftware.qdrant.jdbc.QdrantDriver;
 import com.runaxsoftware.qdrant.jdbc.support.FakeQdrantServer;
-import io.qdrant.client.grpc.Collections.Distance;
+import com.runaxsoftware.qdrant.jdbc.support.Json;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,6 +24,7 @@ import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
+import java.sql.SQLNonTransientConnectionException;
 import java.sql.Statement;
 import java.util.List;
 import java.util.Map;
@@ -41,13 +41,13 @@ class CallLogTest {
     @BeforeEach
     void start() throws Exception {
         server = FakeQdrantServer.start()
-            .collection("products", FakeQdrantServer.unnamedVector(2, Distance.Cosine, Map.of()),
-                List.of(FakeQdrantServer.point(id(1), Map.of("name", value("Lamp")))));
+            .collection("products", FakeQdrantServer.unnamedVector(2, "Cosine", Map.of()),
+                List.of(FakeQdrantServer.point(1, Json.object("name", "Lamp"))));
         log = directory.resolve("calls.log");
     }
 
     @AfterEach
-    void stop() throws Exception {
+    void stop() {
         server.close();
     }
 
@@ -111,7 +111,7 @@ class CallLogTest {
         String line = lines().stream().filter(l -> l.contains("executeQuery")).findFirst()
             .orElseThrow();
         assertFalse(line.contains(sql));
-        assertTrue(line.contains("x".repeat(100) + "...\""), line);
+        assertTrue(line.contains('"' + sql.substring(0, 200) + "...\""), line);
     }
 
     @Test
@@ -124,7 +124,7 @@ class CallLogTest {
             connection.getMetaData().getTables(null, null, "%", null).close();
         }
 
-        assertFalse(text().contains("super-secret-key"));
+        assertFalse(text().contains("super-secret-key"), text());
         assertTrue(text().contains("apiKey=set"), text());
     }
 
@@ -194,6 +194,42 @@ class CallLogTest {
 
         assertEquals("earlier line", lines().get(0));
         assertTrue(lines().size() > 1);
+    }
+
+    @Test
+    void writesDirectlyAndIgnoresWritesOnceClosed() throws Exception {
+        CallLog callLog = CallLog.open(log);
+
+        callLog.write("first");
+        callLog.close();
+        callLog.close();
+        callLog.write("after close");
+
+        assertEquals(1, lines().size());
+        assertTrue(lines().get(0).endsWith("] first"), lines().get(0));
+        assertEquals("CallLog[" + log + "]", callLog.toString());
+    }
+
+    @Test
+    void explainsWhyTheLogCantBeOpened() {
+        Path missing = directory.resolve("missing/calls.log");
+
+        SQLNonTransientConnectionException error = assertThrows(
+            SQLNonTransientConnectionException.class, () -> CallLog.open(missing));
+
+        assertEquals("08001", error.getSQLState());
+        assertTrue(error.getMessage().contains("Can't write the JDBC call log to " + missing),
+            error.getMessage());
+        assertTrue(error.getMessage().contains("its folder doesn't exist"), error.getMessage());
+    }
+
+    @Test
+    void explainsWhenTheLogIsAFolder() {
+        SQLNonTransientConnectionException error = assertThrows(
+            SQLNonTransientConnectionException.class, () -> CallLog.open(directory));
+
+        assertTrue(error.getMessage().startsWith("Can't write the JDBC call log to " + directory),
+            error.getMessage());
     }
 
     private Connection connect(Properties properties) throws SQLException {

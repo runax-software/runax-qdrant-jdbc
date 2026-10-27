@@ -1,7 +1,9 @@
-package com.runaxsoftware.qdrant.jdbc;
+package com.runaxsoftware.qdrant.jdbc.metadata;
 
-import static io.qdrant.client.PointIdFactory.id;
-import static io.qdrant.client.ValueFactory.value;
+import static com.runaxsoftware.qdrant.jdbc.support.FakeQdrantServer.collectionInfo;
+import static com.runaxsoftware.qdrant.jdbc.support.FakeQdrantServer.dense;
+import static com.runaxsoftware.qdrant.jdbc.support.FakeQdrantServer.point;
+import static com.runaxsoftware.qdrant.jdbc.support.FakeQdrantServer.unnamedVector;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -10,12 +12,13 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.runaxsoftware.qdrant.jdbc.DriverInfo;
+import com.runaxsoftware.qdrant.jdbc.QdrantDriver;
+import com.runaxsoftware.qdrant.jdbc.schema.DriverColumns;
 import com.runaxsoftware.qdrant.jdbc.support.FakeQdrantServer;
-import io.grpc.Status;
-import io.qdrant.client.grpc.Collections;
-import io.qdrant.client.grpc.Collections.Distance;
-import io.qdrant.client.grpc.Collections.PayloadSchemaType;
-import io.qdrant.client.grpc.Collections.VectorParams;
+import com.runaxsoftware.qdrant.jdbc.support.FakeQdrantServer.Endpoint;
+import com.runaxsoftware.qdrant.jdbc.support.Json;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,26 +48,16 @@ class QdrantDatabaseMetaDataTest {
 
     @BeforeEach
     void connect() throws Exception {
-        Map<String, PayloadSchemaType> productIndexes = new LinkedHashMap<>();
-        productIndexes.put("price", PayloadSchemaType.Float);
-        productIndexes.put("name", PayloadSchemaType.Keyword);
+        Map<String, String> productIndexes = new LinkedHashMap<>();
+        productIndexes.put("price", "float");
+        productIndexes.put("name", "keyword");
 
         server = FakeQdrantServer.start()
-            .collection("products", FakeQdrantServer.unnamedVector(4, Distance.Cosine, productIndexes),
-                List.of(FakeQdrantServer.point(id(1), Map.of(
-                    "name", value("Lamp"), "price", value(19.5), "count", value(3)))))
-            .collection("Mixed-Case", FakeQdrantServer.unnamedVector(2, Distance.Dot, Map.of()),
-                List.of())
-            .collection("articles", FakeQdrantServer.collectionInfo(
-                Collections.VectorsConfig.newBuilder()
-                    .setParamsMap(Collections.VectorParamsMap.newBuilder()
-                        .putMap("dense", VectorParams.newBuilder().setSize(3)
-                            .setDistance(Distance.Euclid).build()))
-                    .build(),
-                Collections.SparseVectorConfig.newBuilder()
-                    .putMap("keywords", Collections.SparseVectorParams.getDefaultInstance())
-                    .build(),
-                Map.of()), List.of())
+            .collection("products", unnamedVector(4, "Cosine", productIndexes),
+                List.of(point(1, Json.object("name", "Lamp", "price", 19.5, "count", 3))))
+            .collection("Mixed-Case", unnamedVector(2, "Dot", Map.of()), List.of())
+            .collection("articles", collectionInfo(Json.object("dense", dense(3, "Euclid")),
+                Json.object("keywords", Json.object()), Map.of()), List.of())
             .listedButMissing("ghost");
         connection = new QdrantDriver().connect(server.jdbcUrl(), new Properties());
         metaData = connection.getMetaData();
@@ -123,6 +116,17 @@ class QdrantDatabaseMetaDataTest {
         assertEquals(List.of(), column(metaData.getTables(null, "public", "%", null), "TABLE_NAME"));
     }
 
+    @Test
+    void readsTheCollectionsLiveOnEveryCall() throws SQLException {
+        int before = server.calls(Endpoint.COLLECTIONS);
+        assertEquals(4, tables("%", null).size());
+
+        server.collection("added_later", unnamedVector(2, "Dot", Map.of()), List.of());
+
+        assertEquals(5, tables("%", null).size());
+        assertEquals(before + 2, server.calls(Endpoint.COLLECTIONS));
+    }
+
     // Columns
 
     @Test
@@ -167,19 +171,34 @@ class QdrantDatabaseMetaDataTest {
     }
 
     @Test
+    void marksOnlyTheIdAsNotNull() throws SQLException {
+        try (ResultSet columns = metaData.getColumns(null, null, "products", "%")) {
+            while (columns.next()) {
+                boolean id = columns.getString("COLUMN_NAME").equals(DriverColumns.ID.columnName());
+                assertEquals(id ? DatabaseMetaData.columnNoNulls : DatabaseMetaData.columnNullable,
+                    columns.getInt("NULLABLE"));
+            }
+        }
+    }
+
+    @Test
     void putsDescriptionsInRemarks() throws SQLException {
         Map<String, String> remarks = new LinkedHashMap<>();
 
-        try (ResultSet columns = metaData.getColumns(null, null, "articles", "%")) {
+        try (ResultSet columns = metaData.getColumns(null, null, "%", "%")) {
             while (columns.next()) {
-                remarks.put(columns.getString("COLUMN_NAME"), columns.getString("REMARKS"));
+                remarks.put(columns.getString("TABLE_NAME") + "." + columns.getString("COLUMN_NAME"),
+                    columns.getString("REMARKS"));
             }
         }
 
-        assertEquals("Point ID: an unsigned integer or a UUID", remarks.get("_id"));
-        assertEquals("The whole payload as JSON", remarks.get("_payload"));
-        assertEquals("Dense vector, 3 dimensions, Euclid distance", remarks.get("dense"));
-        assertEquals("Sparse vector", remarks.get("keywords"));
+        assertEquals(DriverColumns.ID.remarks(), remarks.get("articles._id"));
+        assertEquals(DriverColumns.PAYLOAD.remarks(), remarks.get("articles._payload"));
+        assertEquals("Dense vector, 3 dimensions, Euclid distance", remarks.get("articles.dense"));
+        assertEquals("Sparse vector", remarks.get("articles.keywords"));
+        assertEquals("Payload field (keyword index)", remarks.get("products.name"));
+        assertEquals("Payload field (not indexed)", remarks.get("products.count"));
+        assertEquals("Dense vector, 4 dimensions, Cosine distance", remarks.get("products._vector"));
     }
 
     @Test
@@ -193,6 +212,16 @@ class QdrantDatabaseMetaDataTest {
     }
 
     @Test
+    void readsCollectionsWhoseNamesNeedEncoding() throws SQLException {
+        server.collection("my docs+v2.1", unnamedVector(2, "Dot", Map.of()), List.of());
+
+        assertEquals(List.of("_id", "_payload", "_vector"),
+            column(metaData.getColumns(null, null, "my docs+v2.1", "%"), "COLUMN_NAME"));
+        assertTrue(server.requests().stream()
+            .anyMatch(request -> request.path().equals("/collections/my docs+v2.1")));
+    }
+
+    @Test
     void skipsCollectionsThatDisappearWhileReading() throws SQLException {
         List<String> tables = column(metaData.getColumns(null, null, "%", "\\_payload"), "TABLE_NAME");
 
@@ -202,12 +231,13 @@ class QdrantDatabaseMetaDataTest {
 
     @Test
     void passesOtherErrorsOn() {
-        server.fail("Get", Status.INTERNAL.withDescription("disk full"));
+        server.fail(Endpoint.COLLECTION, 500, "disk full");
 
         SQLException error = assertThrows(SQLException.class,
             () -> metaData.getColumns(null, null, "products", "%"));
 
         assertEquals("HY000", error.getSQLState());
+        assertTrue(error.getMessage().contains("disk full"), error.getMessage());
     }
 
     @Test
@@ -215,9 +245,11 @@ class QdrantDatabaseMetaDataTest {
         metaData.getColumns(null, null, "products", "%").close();
 
         assertEquals(1, server.scrollRequests().size());
-        assertEquals(100, server.scrollRequests().get(0).getLimit());
-        assertTrue(server.scrollRequests().get(0).getWithPayload().getEnable());
-        assertFalse(server.scrollRequests().get(0).getWithVectors().getEnable());
+        JsonNode scroll = server.scrollRequests().get(0);
+        assertEquals(100, scroll.path("limit").asInt());
+        assertTrue(scroll.path("with_payload").asBoolean());
+        assertFalse(scroll.path("with_vector").asBoolean());
+        assertTrue(scroll.path("offset").isMissingNode(), "starts at the first point");
     }
 
     @Test
@@ -241,7 +273,8 @@ class QdrantDatabaseMetaDataTest {
                 "PK_NAME"), labels(keys));
             assertTrue(keys.next());
             assertEquals("products", keys.getString("TABLE_NAME"));
-            assertEquals("_id", keys.getString("COLUMN_NAME"));
+            assertEquals(DriverColumns.ID.columnName(), keys.getString("COLUMN_NAME"));
+            assertEquals("_id", keys.getString(4));
             assertEquals(1, keys.getShort("KEY_SEQ"));
             assertEquals("products_pkey", keys.getString("PK_NAME"));
             assertFalse(keys.next());
@@ -281,6 +314,27 @@ class QdrantDatabaseMetaDataTest {
     }
 
     @Test
+    void reportsTheCollectionsPointCountAsCardinality() throws SQLException {
+        server.collection("counted", unnamedVector(2, "Dot", Map.of())
+            .put("points_count", 1234), List.of());
+
+        try (ResultSet indexes = metaData.getIndexInfo(null, null, "counted", true, true)) {
+            assertTrue(indexes.next());
+            assertEquals(1234, indexes.getLong("CARDINALITY"));
+        }
+    }
+
+    @Test
+    void skipsIndexesOnFieldsWithoutAColumn() throws SQLException {
+        // A payload field named like a driver column stays in _payload, so its index has no column
+        server.collection("reserved", unnamedVector(2, "Dot", Map.of("_score", "float",
+            "title", "keyword")), List.of());
+
+        assertEquals(List.of("reserved_pkey", "title_idx"),
+            column(metaData.getIndexInfo(null, null, "reserved", false, true), "INDEX_NAME"));
+    }
+
+    @Test
     void reportsOnlyThePrimaryKeyForUniqueIndexes() throws SQLException {
         assertEquals(List.of("products_pkey"),
             column(metaData.getIndexInfo(null, null, "products", true, false), "INDEX_NAME"));
@@ -304,6 +358,7 @@ class QdrantDatabaseMetaDataTest {
              ResultSet filtered = metaData.getSchemas(null, "%");
              ResultSet catalogs = metaData.getCatalogs()) {
             assertEquals(List.of("TABLE_SCHEM", "TABLE_CATALOG"), labels(schemas));
+            assertEquals(List.of("TABLE_SCHEM", "TABLE_CATALOG"), labels(filtered));
             assertEquals(List.of("TABLE_CAT"), labels(catalogs));
             assertFalse(schemas.next());
             assertFalse(filtered.next());
@@ -340,11 +395,28 @@ class QdrantDatabaseMetaDataTest {
                     types.getShort("SEARCHABLE"), name);
                 assertEquals(dataType == Types.VARCHAR || dataType == Types.TIMESTAMP_WITH_TIMEZONE
                     ? "'" : null, types.getString("LITERAL_PREFIX"), name);
+                assertEquals(name, types.getString("LOCAL_TYPE_NAME"));
             }
         }
 
         assertEquals(List.of("BIGINT", "DOUBLE", "VARCHAR", "JSON", "VECTOR", "MULTIVECTOR",
             "SPARSE_VECTOR", "BOOLEAN", "TIMESTAMP WITH TIME ZONE"), names);
+    }
+
+    @Test
+    void givesNumbersAPrecisionAndRadix() throws SQLException {
+        Map<String, String> precisions = new LinkedHashMap<>();
+
+        try (ResultSet types = metaData.getTypeInfo()) {
+            while (types.next()) {
+                precisions.put(types.getString("TYPE_NAME"), types.getObject("PRECISION") + "/"
+                    + types.getObject("NUM_PREC_RADIX"));
+            }
+        }
+
+        assertEquals("19/10", precisions.get("BIGINT"));
+        assertEquals("17/10", precisions.get("DOUBLE"));
+        assertEquals("null/null", precisions.get("VARCHAR"));
     }
 
     // Things Qdrant doesn't have
@@ -400,6 +472,20 @@ class QdrantDatabaseMetaDataTest {
             "TABLE_SCHEM", "TABLE_NAME", "COLUMN_NAME", "DATA_TYPE", "COLUMN_SIZE",
             "DECIMAL_DIGITS", "NUM_PREC_RADIX", "COLUMN_USAGE", "REMARKS", "CHAR_OCTET_LENGTH",
             "IS_NULLABLE"));
+    }
+
+    @Test
+    void answersEmptyResultsWithoutAskingTheServer() throws SQLException {
+        int requests = server.requests().size();
+
+        metaData.getImportedKeys(null, null, "products").close();
+        metaData.getProcedures(null, null, "%").close();
+        metaData.getSchemas().close();
+        metaData.getCatalogs().close();
+        metaData.getTableTypes().close();
+        metaData.getTypeInfo().close();
+
+        assertEquals(requests, server.requests().size());
     }
 
     // Product, driver, and capabilities
@@ -458,9 +544,11 @@ class QdrantDatabaseMetaDataTest {
 
     @Test
     void answersCapabilityQuestionsWithoutAskingTheServer() throws Exception {
-        for (String method : List.of("HealthCheck", "List", "Get", "Scroll")) {
-            server.fail(method, Status.UNAVAILABLE);
+        for (Endpoint endpoint : Endpoint.values()) {
+            server.fail(endpoint, 503, "unavailable");
         }
+
+        int requests = server.requests().size();
 
         for (Method method : DatabaseMetaData.class.getMethods()) {
             Class<?> type = method.getReturnType();
@@ -472,6 +560,8 @@ class QdrantDatabaseMetaDataTest {
                 assertDoesNotThrow(() -> method.invoke(metaData, arguments), method.getName());
             }
         }
+
+        assertEquals(requests, server.requests().size());
     }
 
     @Test
@@ -484,11 +574,13 @@ class QdrantDatabaseMetaDataTest {
             () -> metaData.getPrimaryKeys(null, null, "products"),
             () -> metaData.getIndexInfo(null, null, "products", false, true),
             metaData::getSchemas,
+            () -> metaData.getSchemas(null, "%"),
             metaData::getCatalogs,
             metaData::getTableTypes,
             metaData::getTypeInfo,
             () -> metaData.getImportedKeys(null, null, "products"),
-            () -> metaData.getProcedures(null, null, "%"));
+            () -> metaData.getProcedures(null, null, "%"),
+            metaData::getClientInfoProperties);
 
         for (ThrowingSupplier<ResultSet> query : queries) {
             assertEquals("08003", assertThrows(SQLException.class, query::get).getSQLState());
@@ -498,7 +590,10 @@ class QdrantDatabaseMetaDataTest {
     @Test
     void unwrapsToItself() throws SQLException {
         assertTrue(metaData.isWrapperFor(QdrantDatabaseMetaData.class));
+        assertTrue(metaData.isWrapperFor(DatabaseMetaData.class));
+        assertFalse(metaData.isWrapperFor(Connection.class));
         assertSame(metaData, metaData.unwrap(DatabaseMetaData.class));
+        assertSame(metaData, metaData.unwrap(QdrantDatabaseMetaData.class));
         assertThrows(SQLException.class, () -> metaData.unwrap(Connection.class));
     }
 

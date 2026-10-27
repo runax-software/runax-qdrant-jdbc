@@ -1,4 +1,4 @@
-package com.runaxsoftware.qdrant.jdbc;
+package com.runaxsoftware.qdrant.jdbc.metadata;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;

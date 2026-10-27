@@ -1,8 +1,9 @@
 package com.runaxsoftware.qdrant.jdbc.support;
 
-import com.runaxsoftware.qdrant.jdbc.ConnectionSettings;
 import com.runaxsoftware.qdrant.jdbc.DriverInfo;
-import com.runaxsoftware.qdrant.jdbc.client.QdrantGateway;
+import com.runaxsoftware.qdrant.jdbc.connection.ConnectionSettings;
+import com.runaxsoftware.qdrant.jdbc.connection.Setting;
+import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
 
 import java.sql.SQLException;
 import java.util.Properties;
@@ -12,12 +13,14 @@ import java.util.Properties;
  * {@code compose.yml}:
  *
  * <ul>
- *   <li>{@code QDRANT_JDBC_URL} (default {@code jdbc:qdrant://localhost:6334}) and, if that
+ *   <li>{@code QDRANT_JDBC_URL} (default {@code jdbc:qdrant://localhost:6333}) and, if that
  *       server needs one, {@code QDRANT_API_KEY};</li>
- *   <li>{@code QDRANT_SECURED_JDBC_URL} (default {@code jdbc:qdrant://localhost:6336}) and
+ *   <li>{@code QDRANT_SECURED_JDBC_URL} (default {@code jdbc:qdrant://localhost:6335}) and
  *       {@code QDRANT_SECURED_API_KEY} (default {@code integration-test-key}), a server that
  *       requires an API key, for the authentication tests.</li>
  * </ul>
+ *
+ * <p>Both URLs point at Qdrant's REST port, which is what the driver talks to.
  */
 public final class TestQdrant {
 
@@ -28,7 +31,7 @@ public final class TestQdrant {
      * The JDBC URL to connect to.
      */
     public static String jdbcUrl() {
-        return env("QDRANT_JDBC_URL", "jdbc:qdrant://localhost:6334");
+        return env("QDRANT_JDBC_URL", "jdbc:qdrant://localhost:6333");
     }
 
     /**
@@ -39,7 +42,7 @@ public final class TestQdrant {
         String apiKey = env("QDRANT_API_KEY", "");
 
         if (!apiKey.isEmpty()) {
-            properties.setProperty(ConnectionSettings.PASSWORD, apiKey);
+            properties.setProperty(Setting.PASSWORD.key(), apiKey);
         }
 
         return properties;
@@ -49,7 +52,7 @@ public final class TestQdrant {
      * The JDBC URL of the server that requires an API key.
      */
     public static String securedJdbcUrl() {
-        return env("QDRANT_SECURED_JDBC_URL", "jdbc:qdrant://localhost:6336");
+        return env("QDRANT_SECURED_JDBC_URL", "jdbc:qdrant://localhost:6335");
     }
 
     /**

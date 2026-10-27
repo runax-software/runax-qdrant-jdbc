@@ -1,7 +1,8 @@
 # Local Qdrant for trying the driver and for integration tests.
 #   docker compose up -d
-#   gRPC API (what the driver uses) on localhost:6334
-#   REST API on http://localhost:6333, web dashboard on http://localhost:6333/dashboard
+#   REST API (what the driver uses) on http://localhost:6333, web dashboard on
+#   http://localhost:6333/dashboard
+#   gRPC API on localhost:6334, so tests can check the driver's hint for the wrong port
 #   docker compose down -v   # stop and delete the stored collections
 services:
   qdrant:
@@ -13,7 +14,7 @@ services:
       - qdrant-data:/qdrant/storage
 
   # A second server that requires an API key, for the authentication integration tests.
-  # gRPC on localhost:6336, REST on localhost:6335. It keeps no data between runs.
+  # REST on localhost:6335, gRPC on localhost:6336. It keeps no data between runs.
   qdrant-secured:
     image: qdrant/qdrant:v1.20.0
     ports:

@@ -1,6 +1,6 @@
 package com.runaxsoftware.qdrant.jdbc.support;
 
-import com.runaxsoftware.qdrant.jdbc.client.QdrantGateway;
+import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
 
 /**
  * Loads the sample collections into Qdrant as {@code sample_articles}, {@code sample_events},
@@ -19,7 +19,7 @@ public final class SeedSampleData {
             SampleCollections.create(gateway, PREFIX);
             System.out.println("Loaded " + SampleCollections.NAMES.stream()
                     .map(name -> PREFIX + name)
-                    .toList() + " into Qdrant at " + gateway.address());
+                    .toList() + " into Qdrant at " + gateway.baseUrl());
         }
     }
 }
