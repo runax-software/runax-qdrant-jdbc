@@ -60,14 +60,15 @@ class ShadedJarIntegrationTest {
     }
 
     @Test
-    void relocatesLibrariesThatToolsAlsoShip() throws IOException {
+    void relocatesEveryDependency() throws IOException {
         List<String> leaked = new ArrayList<>();
 
         try (JarFile jar = new JarFile(jar().toFile())) {
+            // Multi-release classes sit under META-INF/versions/<release>/, relocated as well
             jar.stream().map(ZipEntry::getName)
                 .filter(name -> name.endsWith(".class"))
-                .filter(name -> name.startsWith("com/google/") || name.startsWith("com/fasterxml/")
-                    || name.startsWith("org/slf4j/") || name.startsWith("io/perfmark/"))
+                .filter(name -> !name.replaceFirst("^META-INF/versions/\\d+/", "")
+                    .startsWith("com/runaxsoftware/qdrant/jdbc/"))
                 .forEach(leaked::add);
             assertNotNull(jar.getEntry(
                 "com/runaxsoftware/qdrant/jdbc/shaded/jackson/databind/ObjectMapper.class"));
