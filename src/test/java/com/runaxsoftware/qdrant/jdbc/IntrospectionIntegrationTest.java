@@ -3,6 +3,7 @@ package com.runaxsoftware.qdrant.jdbc;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -125,6 +126,74 @@ class IntrospectionIntegrationTest {
 
             assertEquals(28, columns, "products 10, articles 10, events 8");
         }
+    }
+
+    /**
+     * Makes the calls DataGrip makes around a query console: setting up the connection, running
+     * its keep-alive query, stopping a query that has already finished, and closing. None of them
+     * may fail or leave a warning.
+     */
+    @Test
+    void survivesAConsoleSession() throws SQLException {
+        Connection connection = DriverManager.getConnection(TestQdrant.jdbcUrl(),
+            TestQdrant.properties());
+        Statement statement;
+
+        try (connection) {
+            assertFalse(connection.isClosed());
+            connection.getClientInfo("ApplicationName");
+            connection.setClientInfo("ApplicationName", "DataGrip");
+            assertTrue(connection.isValid(20));
+            connection.getAutoCommit();
+            connection.setAutoCommit(true);
+            connection.setReadOnly(false);
+            connection.setCatalog("");
+            connection.setSchema("");
+            assertNull(connection.getWarnings());
+            connection.clearWarnings();
+
+            statement = connection.createStatement(ResultSet.TYPE_FORWARD_ONLY,
+                ResultSet.CONCUR_READ_ONLY);
+            statement.setEscapeProcessing(false);
+            statement.setFetchSize(100);
+            statement.setMaxRows(501);
+
+            assertTrue(statement.execute("select 'keep alive'"));
+
+            try (ResultSet rows = statement.getResultSet()) {
+                assertTrue(rows.next());
+                assertEquals("keep alive", rows.getObject(1));
+            }
+
+            assertFalse(statement.getMoreResults());
+            assertEquals(-1, statement.getUpdateCount());
+            assertNull(statement.getWarnings());
+
+            // Stop pressed after the query finished, then again once the console closed it
+            statement.cancel();
+            statement.close();
+            statement.cancel();
+
+            assertNull(connection.getWarnings());
+        }
+
+        assertTrue(statement.isClosed());
+        statement.cancel();
+    }
+
+    @Test
+    void abortsAConnection() throws SQLException {
+        Connection connection = DriverManager.getConnection(TestQdrant.jdbcUrl(),
+            TestQdrant.properties());
+        Statement statement = connection.createStatement();
+
+        connection.abort(Runnable::run);
+
+        assertTrue(connection.isClosed());
+        assertTrue(statement.isClosed());
+        assertFalse(connection.isValid(5));
+        statement.cancel();
+        connection.close();
     }
 
     @Test

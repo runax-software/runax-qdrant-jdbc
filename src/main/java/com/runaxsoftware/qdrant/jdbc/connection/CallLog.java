@@ -22,6 +22,9 @@ public class CallLog {
         PreparedStatement.class, CallableStatement.class, DatabaseMetaData.class,
         ResultSet.class, ResultSetMetaData.class);
 
+    // The Connection methods after which nothing more is logged: aborting closes it too
+    private static final Set<String> CLOSING_METHODS = Set.of("close", "abort");
+
     private static final int MAX_VALUE_LENGTH = 200;
 
     private final Path file;
@@ -54,7 +57,7 @@ public class CallLog {
     }
 
     /**
-     * Returns a connection that logs every call, and closes the log when it closes.
+     * Returns a connection that logs every call, and closes the log when it closes or aborts.
      */
     public Connection wrap(Connection connection) {
         return (Connection) proxy(Connection.class, connection);
@@ -123,7 +126,7 @@ public class CallLog {
 
             write(call + (method.getReturnType() == void.class ? "" : " = " + render(result)));
 
-            if (type == Connection.class && method.getName().equals("close")) {
+            if (type == Connection.class && CLOSING_METHODS.contains(method.getName())) {
                 close();
             }
 

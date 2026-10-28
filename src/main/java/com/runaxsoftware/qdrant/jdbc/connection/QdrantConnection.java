@@ -141,7 +141,7 @@ public class QdrantConnection implements Connection {
     }
 
     @Override
-    public boolean isClosed() throws SQLException {
+    public boolean isClosed() {
         return closed;
     }
 

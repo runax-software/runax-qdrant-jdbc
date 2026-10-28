@@ -187,6 +187,29 @@ class CallLogTest {
     }
 
     @Test
+    void stopsLoggingWhenTheConnectionAborts() throws Exception {
+        Connection connection = connect(new Properties());
+        connection.abort(Runnable::run);
+        int lines = lines().size();
+
+        connection.isClosed();
+
+        assertEquals(lines, lines().size());
+        assertTrue(text().contains("Connection.abort("), text());
+    }
+
+    @Test
+    void keepsLoggingWhenAnAbortFails() throws Exception {
+        try (Connection connection = connect(new Properties())) {
+            assertThrows(SQLException.class, () -> connection.abort(null));
+            connection.isClosed();
+        }
+
+        assertTrue(text().contains("Connection.abort(null) threw"), text());
+        assertTrue(text().contains("Connection.isClosed() = false"), text());
+    }
+
+    @Test
     void appendsToAnExistingLog() throws Exception {
         Files.writeString(log, "earlier line\n", StandardCharsets.UTF_8);
 
