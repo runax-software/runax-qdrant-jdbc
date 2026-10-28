@@ -5,8 +5,8 @@ Planned work, roughly in the order it will land. The SQL each item accepts is sp
 
 - [x] **Connection** — `jdbc:qdrant://host:6333` over Qdrant's REST API, TLS, and the
   Qdrant API key taken from the password field.
-- [x] **Collections as tables** — `DatabaseMetaData` lists collections, so DataGrip's
-  database explorer fills in on its own.
+- [x] **Collections as tables** — `DatabaseMetaData` lists collections, in catalog `qdrant`
+  and schema `collections`, so DataGrip's database explorer fills in on its own.
 - [x] **Columns** — one column per payload field under its own name (found from the
   collection's payload indexes and a sample of points), plus the driver's `_`-prefixed
   columns: `_id` (text, since Qdrant IDs are unsigned 64-bit integers or UUIDs), `_payload`
@@ -22,9 +22,10 @@ Planned work, roughly in the order it will land. The SQL each item accepts is sp
 - [ ] **DataGrip compatibility** — harmless defaults for the `Connection` and
   `Statement` methods DataGrip calls on every connection, and support for the SQL it
   generates when opening, filtering, and sorting a table.
-- [ ] **Integration tests** against Qdrant in Docker.
+- [x] **Integration tests** against Qdrant in Docker, run by CI on every pull request.
 - [ ] **Packaging** — one self-contained jar, a DataGrip setup guide, and publishing to
-  Maven Central as `com.runaxsoftware:qdrant-jdbc`.
+  Maven Central as `com.runaxsoftware:qdrant-jdbc`. The jar (`./gradlew shadowJar`) and
+  the guide (in the README) are done; Maven Central isn't.
 - [ ] **`embed('text')`** through the embedder abstraction (OpenAI and other providers),
   which is being built separately.
 - [ ] **Qdrant Cloud inference** — let Qdrant embed the text server-side where available.
@@ -46,9 +47,9 @@ Planned work, roughly in the order it will land. The SQL each item accepts is sp
 - [ ] **System tables (later)** — read-only tables for server and collection state, browsable
   in DataGrip: collections (status, optimizer, point and segment counts), aliases,
   snapshots, shard keys, cluster info and peers, telemetry, metrics, and issues, all from
-  Qdrant's REST API. Probably in a `system` schema, so they can't clash
-  with collection names; that means giving collections a default schema too. Read-only
-  lists then move from `CALL` procedures to these tables.
+  Qdrant's REST API. Probably in a `system` schema next to `collections`, the schema
+  collections already sit in, so they can't clash with collection names. Read-only lists
+  then move from `CALL` procedures to these tables.
 - [ ] **Buffered writes (later, opt-in)** — not real transactions, since Qdrant has none.
   With a setting on and auto-commit off, the driver holds `INSERT`, `UPDATE`, and `DELETE`
   until `commit()` and drops them on `rollback()`. Documented as "rollback before commit
