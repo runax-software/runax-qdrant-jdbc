@@ -351,6 +351,32 @@ class QdrantStatementTest {
     }
 
     @Test
+    void isClosedOnceTheConnectionIsClosed() throws SQLException {
+        assertFalse(statement.isClosed());
+
+        connection.close();
+
+        assertTrue(statement.isClosed());
+        assertDoesNotThrow(statement::close);
+    }
+
+    // DataGrip cancels from another thread when the user stops a query, often after it finished
+    @Test
+    void cancelsWithoutErrorEvenOnceClosed() throws SQLException {
+        Statement other = connection.createStatement();
+        ResultSet rows = statement.executeQuery("SELECT 1");
+
+        assertDoesNotThrow(statement::cancel);
+        assertFalse(rows.isClosed(), "cancelling a finished statement leaves its result alone");
+
+        statement.close();
+        assertDoesNotThrow(statement::cancel);
+
+        connection.close();
+        assertDoesNotThrow(other::cancel);
+    }
+
+    @Test
     void unwrapsToItself() throws SQLException {
         assertTrue(statement.isWrapperFor(QdrantStatement.class));
         assertFalse(statement.isWrapperFor(Connection.class));

@@ -73,9 +73,14 @@ abstract class AbstractStatement implements Statement {
         throw new SQLFeatureNotSupportedException("Generated keys aren't supported");
     }
 
+    /**
+     * Does nothing: a statement runs to completion on the caller's thread, and SQL that reads a
+     * collection doesn't run yet, so there's never a request to stop. Tools such as DataGrip call
+     * this from another thread when the user stops a query, often after the statement has finished
+     * and been closed, so it doesn't throw once the statement or its connection is closed either.
+     */
     @Override
-    public void cancel() throws SQLException {
-        checkOpen();
+    public void cancel() {
     }
 
     // Batches
@@ -279,9 +284,13 @@ abstract class AbstractStatement implements Statement {
         closed = true;
     }
 
+    /**
+     * Whether the statement is closed: closed itself, or through its connection, since closing a
+     * connection closes its statements.
+     */
     @Override
     public boolean isClosed() {
-        return closed;
+        return closed || connection.isClosed();
     }
 
     // Wrapper
