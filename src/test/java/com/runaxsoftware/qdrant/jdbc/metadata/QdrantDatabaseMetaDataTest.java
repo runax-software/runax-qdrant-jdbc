@@ -378,6 +378,10 @@ class QdrantDatabaseMetaDataTest {
 
     @Test
     void readsEachCollectionOnceForEachRefresh() throws SQLException {
+        server.alias("current", "products");
+
+        int listings = server.calls(Endpoint.COLLECTIONS);
+
         // The order DataGrip introspects in: list the tables, then ask about each one
         for (int refresh = 1; refresh <= 2; refresh++) {
             for (String table : tables("%", null)) {
@@ -386,8 +390,11 @@ class QdrantDatabaseMetaDataTest {
                 metaData.getIndexInfo(null, null, table, false, true).close();
             }
 
+            assertEquals(listings + refresh, server.calls(Endpoint.COLLECTIONS));
+            assertEquals(refresh, server.calls(Endpoint.ALIASES));
             assertEquals(refresh, reads("products"));
             assertEquals(refresh, reads("articles"));
+            assertEquals(0, reads("current"), "a view is read with its collection");
             assertEquals(2 * refresh, reads("ghost"), "a missing collection isn't kept");
         }
     }
@@ -425,6 +432,160 @@ class QdrantDatabaseMetaDataTest {
 
         assertEquals(List.of(), indexes("products"));
         assertEquals(List.of(), columns("products"));
+        assertEquals(List.of(), column(metaData.getPrimaryKeys(null, null, "products"),
+            "PK_NAME"));
+    }
+
+    @Test
+    void listsCollectionsAndAliasesOnlyWhenNoListIsKept() throws SQLException {
+        int listings = server.calls(Endpoint.COLLECTIONS);
+
+        metaData.getPrimaryKeys(null, null, "products").close();
+        metaData.getColumns(null, null, "%", "%").close();
+        metaData.getIndexInfo(null, null, "products", false, true).close();
+
+        assertEquals(listings + 1, server.calls(Endpoint.COLLECTIONS));
+        assertEquals(1, server.calls(Endpoint.ALIASES));
+    }
+
+    @Test
+    void keepsTheListsForEveryMetadataObjectOfTheConnection() throws SQLException {
+        int listings = server.calls(Endpoint.COLLECTIONS);
+        tables("%", null);
+
+        DatabaseMetaData other = connection.getMetaData();
+        other.getColumns(null, null, "products", "%").close();
+        other.getPrimaryKeys(null, null, "products").close();
+        connection.getMetaData().getIndexInfo(null, null, "products", false, true).close();
+
+        assertEquals(listings + 1, server.calls(Endpoint.COLLECTIONS));
+        assertEquals(1, server.calls(Endpoint.ALIASES));
+    }
+
+    @Test
+    void findsACollectionAndAnAliasCreatedSinceTheLastListing() throws SQLException {
+        tables("%", null);
+        int collections = server.calls(Endpoint.COLLECTIONS);
+        int aliases = server.calls(Endpoint.ALIASES);
+
+        server.collection("added", unnamedVector(2, "Dot", Map.of()), List.of());
+        assertEquals(List.of("_id", "_payload", "_vector"), columns("added"));
+        assertEquals(List.of("added_pkey"), column(metaData.getPrimaryKeys(null, null, "added"),
+            "PK_NAME"));
+        assertEquals(List.of("added_pkey"), indexes("added"));
+        assertEquals(collections + 1, server.calls(Endpoint.COLLECTIONS), "listed again once");
+        assertEquals(aliases + 1, server.calls(Endpoint.ALIASES));
+
+        server.alias("current", "products");
+        assertEquals(columns("products"), columns("current"));
+        assertEquals(List.of(), column(metaData.getPrimaryKeys(null, null, "current"),
+            "PK_NAME"));
+        assertEquals(List.of(), indexes("current"));
+        assertEquals(collections + 2, server.calls(Endpoint.COLLECTIONS), "listed again once");
+        assertEquals(aliases + 2, server.calls(Endpoint.ALIASES));
+    }
+
+    @Test
+    void findsANewCollectionWhicheverCallAsksFirst() throws SQLException {
+        tables("%", null);
+        int collections = server.calls(Endpoint.COLLECTIONS);
+
+        server.collection("keyed", unnamedVector(2, "Dot", Map.of()), List.of());
+        assertEquals(List.of("keyed_pkey"), column(metaData.getPrimaryKeys(null, null, "keyed"),
+            "PK_NAME"));
+
+        server.collection("indexed", unnamedVector(2, "Dot", Map.of()), List.of());
+        assertEquals(List.of("indexed_pkey"), indexes("indexed"));
+
+        server.collection("new_one", unnamedVector(2, "Dot", Map.of()), List.of());
+        assertEquals(List.of("new_one"), column(metaData.getColumns(null, null, "new\\_one",
+            "\\_id"), "TABLE_NAME"), "an escaped _ is no wildcard");
+
+        assertEquals(collections + 3, server.calls(Endpoint.COLLECTIONS), "once for each");
+    }
+
+    @Test
+    void listsAgainOnceForEachAskAboutAMissingName() throws SQLException {
+        tables("%", null);
+        int collections = server.calls(Endpoint.COLLECTIONS);
+        int aliases = server.calls(Endpoint.ALIASES);
+
+        assertEquals(List.of(), columns("nothing"));
+        assertEquals(List.of(), column(metaData.getPrimaryKeys(null, null, "nothing"),
+            "PK_NAME"));
+        assertEquals(List.of(), indexes("nothing"));
+
+        assertEquals(collections + 3, server.calls(Endpoint.COLLECTIONS));
+        assertEquals(aliases + 3, server.calls(Endpoint.ALIASES));
+        assertEquals(0, reads("nothing"));
+    }
+
+    @Test
+    void usesTheKeptListsForPatternsWithWildcards() throws SQLException {
+        tables("%", null);
+        int collections = server.calls(Endpoint.COLLECTIONS);
+        server.collection("added", unnamedVector(2, "Dot", Map.of()), List.of())
+            .alias("current", "products");
+
+        assertEquals(List.of(), columns("add%"));
+        assertEquals(List.of(), columns("adde_"));
+        assertEquals(List.of(), columns("curren_"));
+        assertEquals(List.of("Mixed-Case", "articles", "products"), column(metaData.getColumns(
+            null, null, "%", "\\_id"), "TABLE_NAME"), "as listed, without ghost");
+
+        assertEquals(collections, server.calls(Endpoint.COLLECTIONS));
+        assertEquals(1, server.calls(Endpoint.ALIASES), "only the listing's");
+    }
+
+    @Test
+    void costsNothingForNamesTheKeptListsHave() throws SQLException {
+        server.alias("current", "products");
+        tables("%", null);
+        metaData.getColumns(null, null, "%", "%").close();
+        int requests = server.requests().size();
+
+        for (String table : List.of("products", "current", "ghost", "Mixed-Case")) {
+            metaData.getColumns(null, null, table, "%").close();
+            metaData.getPrimaryKeys(null, null, table).close();
+        }
+
+        metaData.getIndexInfo(null, null, "products", false, true).close();
+        metaData.getIndexInfo(null, null, "current", false, true).close();
+
+        assertEquals(requests + 1, server.requests().size(), "only ghost's failed read again");
+    }
+
+    @Test
+    void keepsTheListsOfTheKindsItListedOnly() throws SQLException {
+        server.alias("current", "products");
+        tables("%", new String[] {"TABLE"});
+        int listings = server.calls(Endpoint.COLLECTIONS);
+
+        assertEquals(columns("products"), columns("current"));
+
+        assertEquals(listings, server.calls(Endpoint.COLLECTIONS), "kept by getTables");
+        assertEquals(1, server.calls(Endpoint.ALIASES), "listed when first needed");
+    }
+
+    @Test
+    void listsEveryTimeWithTheCacheOff() throws Exception {
+        try (Connection uncached = new QdrantDriver().connect(server.jdbcUrl("schemaCache=0"),
+            new Properties())) {
+            DatabaseMetaData uncachedMetaData = uncached.getMetaData();
+            int listings = server.calls(Endpoint.COLLECTIONS);
+
+            uncachedMetaData.getTables(null, null, "%", null).close();
+            uncachedMetaData.getColumns(null, null, "products", "%").close();
+            uncachedMetaData.getPrimaryKeys(null, null, "products").close();
+            uncachedMetaData.getIndexInfo(null, null, "products", false, true).close();
+
+            assertEquals(listings + 4, server.calls(Endpoint.COLLECTIONS));
+            assertEquals(1, server.calls(Endpoint.ALIASES), "a table needs no alias list");
+
+            uncachedMetaData.getColumns(null, null, "nothing", "%").close();
+            assertEquals(listings + 5, server.calls(Endpoint.COLLECTIONS), "no second listing");
+            assertEquals(2, server.calls(Endpoint.ALIASES));
+        }
     }
 
     @Test
@@ -446,6 +607,157 @@ class QdrantDatabaseMetaDataTest {
         }
 
         assertEquals(2, reads("products"));
+    }
+
+    // Views
+
+    @Test
+    void listsAliasesAsViewsAfterTheTables() throws SQLException {
+        server.alias("current", "products").alias("best", "articles");
+        List<String> listed = new ArrayList<>();
+
+        try (ResultSet tables = metaData.getTables(null, null, "%", null)) {
+            while (tables.next()) {
+                listed.add(tables.getString("TABLE_CAT") + "." + tables.getString("TABLE_SCHEM")
+                    + "." + tables.getString("TABLE_NAME") + " " + tables.getString("TABLE_TYPE")
+                    + " " + tables.getString("REMARKS"));
+            }
+        }
+
+        assertEquals(List.of(
+            "qdrant.collections.Mixed-Case TABLE null",
+            "qdrant.collections.articles TABLE null",
+            "qdrant.collections.ghost TABLE null",
+            "qdrant.collections.products TABLE null",
+            "qdrant.collections.best VIEW Alias of articles",
+            "qdrant.collections.current VIEW Alias of products"), listed);
+    }
+
+    @Test
+    void filtersViewsByPatternAndType() throws SQLException {
+        server.alias("current", "products").alias("Current-2", "articles");
+
+        assertEquals(List.of("Current-2", "current"), tables("%", new String[] {"view"}));
+        assertEquals(List.of("current"), tables("cur%", null));
+        assertEquals(List.of("Current-2"), tables("Current\\-_", new String[] {"VIEW", "TABLE"}));
+        assertEquals(4, tables("%", new String[] {"TABLE"}).size());
+        assertEquals(List.of(), tables("%", new String[] {"SYSTEM TABLE"}));
+        assertEquals(List.of(), column(metaData.getTables("other", null, "%", null),
+            "TABLE_NAME"));
+    }
+
+    @Test
+    void asksOnlyForTheKindsTheTypeFilterTakesIn() throws SQLException {
+        int collections = server.calls(Endpoint.COLLECTIONS);
+
+        metaData.getTables(null, null, "%", new String[] {"TABLE"}).close();
+        assertEquals(collections + 1, server.calls(Endpoint.COLLECTIONS));
+        assertEquals(0, server.calls(Endpoint.ALIASES));
+
+        metaData.getTables(null, null, "%", new String[] {"VIEW"}).close();
+        assertEquals(collections + 1, server.calls(Endpoint.COLLECTIONS));
+        assertEquals(1, server.calls(Endpoint.ALIASES));
+    }
+
+    @Test
+    void listsTablesAndViewsWithOneCallEach() throws SQLException {
+        server.alias("current", "products");
+        int requests = server.requests().size();
+
+        tables("%", null);
+
+        assertEquals(requests + 2, server.requests().size());
+        assertEquals(0, server.calls(Endpoint.COLLECTION), "a listing reads no collection");
+    }
+
+    @Test
+    void givesAViewItsCollectionsColumns() throws SQLException {
+        server.alias("current", "products");
+
+        List<String> view = describe(metaData.getColumns(null, null, "current", "%"));
+
+        assertEquals(describe(metaData.getColumns(null, null, "products", "%")).stream()
+            .map(row -> row.replace("products.", "current.")).toList(), view);
+        assertEquals("current._id 1 VARCHAR NO " + DriverColumns.ID.remarks(), view.get(0));
+    }
+
+    @Test
+    void listsViewColumnsInTableNameOrder() throws SQLException {
+        server.alias("current", "products");
+
+        assertEquals(List.of("Mixed-Case", "articles", "current", "products"),
+            column(metaData.getColumns(null, null, "%", "\\_id"), "TABLE_NAME"));
+    }
+
+    @Test
+    void readsAViewsColumnsOnceWithItsCollection() throws SQLException {
+        server.alias("current", "products");
+
+        columns("products");
+        columns("current");
+        indexes("products");
+
+        assertEquals(1, reads("products"));
+        assertEquals(0, reads("current"));
+    }
+
+    @Test
+    void reportsNoKeyOrIndexesForViews() throws SQLException {
+        server.alias("current", "products");
+
+        assertEquals(List.of(), column(metaData.getPrimaryKeys(null, null, "current"), "PK_NAME"));
+        assertEquals(List.of(), indexes("current"));
+        assertEquals(List.of(), column(metaData.getIndexInfo(null, null, "current", true, true),
+            "INDEX_NAME"));
+    }
+
+    @Test
+    void showsTheNewCollectionAfterAnAliasMovesAndARefresh() throws SQLException {
+        server.alias("current", "products");
+        assertEquals(columns("products"), columns("current"));
+
+        server.alias("current", "articles");
+        assertEquals(columns("products"), columns("current"), "kept until a refresh");
+
+        assertEquals(List.of("Alias of articles"),
+            column(metaData.getTables(null, null, "current", null), "REMARKS"));
+        assertEquals(columns("articles"), columns("current"));
+    }
+
+    @Test
+    void refreshingAViewReadsItsCollectionAgain() throws SQLException {
+        server.alias("current", "products");
+        assertFalse(columns("current").contains("color"));
+        server.collection("products", unnamedVector(4, "Cosine", Map.of()),
+            List.of(point(1, Json.object("name", "Lamp", "color", "red"))));
+
+        assertFalse(columns("current").contains("color"), "kept until a refresh");
+        assertEquals(List.of("current"), tables("current", null));
+
+        assertTrue(columns("current").contains("color"));
+        assertTrue(columns("products").contains("color"));
+    }
+
+    @Test
+    void dropsADeletedAliasOnRefresh() throws SQLException {
+        server.alias("current", "products");
+        assertEquals(columns("products"), columns("current"));
+
+        server.deleteAlias("current");
+        assertEquals(columns("products"), columns("current"), "kept until a refresh");
+
+        assertEquals(List.of(), tables("current", null));
+        assertEquals(List.of(), columns("current"));
+        assertEquals(3, indexes("products").size(), "the collection stays");
+    }
+
+    @Test
+    void skipsViewsWhoseCollectionIsGone() throws SQLException {
+        server.alias("stale", "ghost").alias("dangling", "deleted");
+
+        assertEquals(List.of("dangling", "stale"), tables("%", new String[] {"VIEW"}));
+        assertEquals(List.of(), columns("stale"));
+        assertEquals(List.of(), columns("dangling"));
     }
 
     // Schemas, catalogs, types
@@ -479,8 +791,8 @@ class QdrantDatabaseMetaDataTest {
     }
 
     @Test
-    void hasOneTableType() throws SQLException {
-        assertEquals(List.of("TABLE"), column(metaData.getTableTypes(), "TABLE_TYPE"));
+    void hasTablesAndViews() throws SQLException {
+        assertEquals(List.of("TABLE", "VIEW"), column(metaData.getTableTypes(), "TABLE_TYPE"));
     }
 
     @Test
@@ -721,6 +1033,26 @@ class QdrantDatabaseMetaDataTest {
 
     private List<String> indexes(String table) throws SQLException {
         return column(metaData.getIndexInfo(null, null, table, false, true), "INDEX_NAME");
+    }
+
+    /**
+     * Each column as "table.column position type nullable remarks".
+     */
+    private static List<String> describe(ResultSet columns) throws SQLException {
+        List<String> described = new ArrayList<>();
+
+        try (columns) {
+            while (columns.next()) {
+                described.add(columns.getString("TABLE_NAME") + "."
+                    + columns.getString("COLUMN_NAME") + " "
+                    + columns.getInt("ORDINAL_POSITION") + " "
+                    + columns.getString("TYPE_NAME") + " "
+                    + columns.getString("IS_NULLABLE") + " "
+                    + columns.getString("REMARKS"));
+            }
+        }
+
+        return described;
     }
 
     /**

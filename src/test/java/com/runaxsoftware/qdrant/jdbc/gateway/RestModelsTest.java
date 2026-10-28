@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadIndexType;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.Point;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantCollection;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScrollPage;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.VectorField;
@@ -160,6 +161,23 @@ class RestModelsTest {
         assertNull(RestModels.scrollPage(object("points", array(),
             "next_page_offset", null)).nextPageOffset());
         assertNull(RestModels.scrollPage(object("points", array())).nextPageOffset());
+    }
+
+    @Test
+    void readsAliases() {
+        List<QdrantAlias> aliases = RestModels.aliases(object("aliases", array(
+            object("alias_name", "products", "collection_name", "products_v2"),
+            object("alias_name", "my docs", "collection_name", "docs"))));
+
+        assertEquals(List.of(new QdrantAlias("products", "products_v2"),
+            new QdrantAlias("my docs", "docs")), aliases);
+        assertThrows(UnsupportedOperationException.class, aliases::clear);
+    }
+
+    @Test
+    void readsNoAliases() {
+        assertTrue(RestModels.aliases(object("aliases", array())).isEmpty());
+        assertTrue(RestModels.aliases(object()).isEmpty());
     }
 
     @Test

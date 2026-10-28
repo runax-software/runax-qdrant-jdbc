@@ -4,9 +4,11 @@ import static com.runaxsoftware.qdrant.jdbc.support.Json.array;
 import static com.runaxsoftware.qdrant.jdbc.support.Json.object;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.runaxsoftware.qdrant.jdbc.gateway.HttpMethod;
 import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 
 import java.math.BigInteger;
 import java.sql.SQLException;
@@ -54,6 +56,42 @@ public final class SampleCollections {
             if (existing.contains(prefix + name)) {
                 gateway.request(HttpMethod.DELETE, "/collections/" + prefix + name, null);
             }
+        }
+    }
+
+    /**
+     * Points an alias at a collection: creates the alias, or moves it in one atomic change,
+     * the way an application switches to a rebuilt collection.
+     */
+    public static void alias(QdrantGateway gateway, String alias, String collection)
+        throws SQLException {
+        ArrayNode actions = array();
+
+        for (QdrantAlias existing : gateway.listAliases()) {
+            if (existing.name().equals(alias)) {
+                actions.add(object("delete_alias", object("alias_name", alias)));
+            }
+        }
+
+        actions.add(object("create_alias", object("alias_name", alias,
+            "collection_name", collection)));
+        gateway.request(HttpMethod.POST, "/collections/aliases", object("actions", actions));
+    }
+
+    /**
+     * Deletes the aliases whose names start with the prefix, leaving their collections.
+     */
+    public static void deleteAliases(QdrantGateway gateway, String prefix) throws SQLException {
+        ArrayNode actions = array();
+
+        for (QdrantAlias alias : gateway.listAliases()) {
+            if (alias.name().startsWith(prefix)) {
+                actions.add(object("delete_alias", object("alias_name", alias.name())));
+            }
+        }
+
+        if (!actions.isEmpty()) {
+            gateway.request(HttpMethod.POST, "/collections/aliases", object("actions", actions));
         }
     }
 

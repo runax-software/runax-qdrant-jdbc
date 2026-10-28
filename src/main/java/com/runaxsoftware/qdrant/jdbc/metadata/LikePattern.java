@@ -29,4 +29,24 @@ final class LikePattern {
 
         return Pattern.compile(regex.toString(), Pattern.DOTALL).matcher(value).matches();
     }
+
+    /**
+     * The one name a pattern without wildcards matches, with its escapes removed, such as
+     * {@code my_docs} for {@code my\_docs}; {@code null} for a pattern with an unescaped
+     * {@code %} or {@code _}, which can match many names, and for a {@code null} or empty one.
+     */
+    static String literal(String pattern) {
+        if (pattern == null || pattern.isEmpty()) return null;
+        StringBuilder name = new StringBuilder();
+
+        for (int i = 0; i < pattern.length(); i++) {
+            char c = pattern.charAt(i);
+
+            if (c == '\\' && i + 1 < pattern.length()) name.append(pattern.charAt(++i));
+            else if (c == '%' || c == '_') return null;
+            else name.append(c);
+        }
+
+        return name.toString();
+    }
 }

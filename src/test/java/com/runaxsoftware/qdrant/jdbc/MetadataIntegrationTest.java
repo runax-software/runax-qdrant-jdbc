@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.runaxsoftware.qdrant.jdbc.gateway.HttpMethod;
 import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.ScrollRequest;
 import com.runaxsoftware.qdrant.jdbc.support.SampleCollections;
 import com.runaxsoftware.qdrant.jdbc.support.TestQdrant;
 
@@ -58,6 +59,7 @@ class MetadataIntegrationTest {
         }
 
         if (gateway != null) {
+            SampleCollections.deleteAliases(gateway, PREFIX);
             SampleCollections.delete(gateway, PREFIX);
             gateway.close();
         }
@@ -81,8 +83,111 @@ class MetadataIntegrationTest {
 
     @Test
     void listsNoTablesForOtherTableTypes() throws SQLException {
-        try (ResultSet rows = metaData.getTables(null, null, "%", new String[] {"VIEW"})) {
+        try (ResultSet rows = metaData.getTables(null, null, "%", new String[] {"SYSTEM TABLE"})) {
             assertFalse(rows.next());
+        }
+    }
+
+    @Test
+    void listsAliasesAsViewsAfterTheTables() throws SQLException {
+        String view = PREFIX + "current_products";
+        SampleCollections.alias(gateway, view, PREFIX + "products");
+
+        try {
+            List<String> listed = new ArrayList<>();
+
+            try (ResultSet rows = metaData.getTables(null, null, like(PREFIX) + "%", null)) {
+                while (rows.next()) {
+                    listed.add(rows.getString("TABLE_CAT") + "." + rows.getString("TABLE_SCHEM")
+                        + "." + rows.getString("TABLE_NAME") + " " + rows.getString("TABLE_TYPE")
+                        + " " + rows.getString("REMARKS"));
+                }
+            }
+
+            String prefix = "qdrant.collections." + PREFIX;
+            assertEquals(List.of(prefix + "articles TABLE null", prefix + "events TABLE null",
+                prefix + "products TABLE null",
+                prefix + "current_products VIEW Alias of " + PREFIX + "products"), listed);
+            assertEquals(List.of(view), tables(like(PREFIX) + "%", "VIEW"));
+        } finally {
+            SampleCollections.deleteAliases(gateway, PREFIX);
+        }
+
+        assertEquals(List.of(), tables(like(view), "VIEW"));
+    }
+
+    @Test
+    void readsACollectionAndItsPointsByAnAlias() throws SQLException {
+        // What the driver relies on: Qdrant resolves an alias wherever a collection name goes
+        String view = PREFIX + "by_alias";
+        SampleCollections.alias(gateway, view, PREFIX + "products");
+
+        try {
+            assertEquals(5, gateway.collection(view).pointsCount());
+            assertEquals(5, gateway.scroll(new ScrollRequest(view, 10, null, true, false))
+                .points().size());
+        } finally {
+            SampleCollections.deleteAliases(gateway, PREFIX);
+        }
+    }
+
+    @Test
+    void givesAViewItsCollectionsColumnsButNoKeyOrIndexes() throws SQLException {
+        String view = PREFIX + "current_products";
+        SampleCollections.alias(gateway, view, PREFIX + "products");
+
+        try {
+            assertEquals(columns("products"), columns("current_products"));
+
+            try (ResultSet keys = metaData.getPrimaryKeys(null, null, view);
+                 ResultSet indexes = metaData.getIndexInfo(null, null, view, false, true)) {
+                assertFalse(keys.next());
+                assertFalse(indexes.next());
+            }
+        } finally {
+            SampleCollections.deleteAliases(gateway, PREFIX);
+        }
+    }
+
+    @Test
+    void showsTheNewCollectionAfterAnAliasMoves() throws SQLException {
+        String view = PREFIX + "current";
+        SampleCollections.alias(gateway, view, PREFIX + "products");
+
+        try {
+            assertEquals(columns("products"), columns("current"));
+
+            SampleCollections.alias(gateway, view, PREFIX + "articles");
+            assertEquals(columns("products"), columns("current"), "kept until a refresh");
+            assertEquals(List.of(view), tables(like(view), "VIEW"));
+
+            assertEquals(columns("articles"), columns("current"));
+
+            try (ResultSet rows = metaData.getTables(null, null, like(view), null)) {
+                assertTrue(rows.next());
+                assertEquals("Alias of " + PREFIX + "articles", rows.getString("REMARKS"));
+            }
+        } finally {
+            SampleCollections.deleteAliases(gateway, PREFIX);
+        }
+    }
+
+    @Test
+    void plansSelectsFromAnAlias() throws SQLException {
+        String view = PREFIX + "current";
+        SampleCollections.alias(gateway, view, PREFIX + "products");
+
+        try (Statement statement = connection.createStatement()) {
+            // Planned against the collection's columns, so it fails only because reading
+            // points isn't supported yet
+            assertThrows(SQLFeatureNotSupportedException.class,
+                () -> statement.executeQuery("SELECT name, price FROM " + view));
+
+            SQLException unknown = assertThrows(SQLException.class,
+                () -> statement.executeQuery("SELECT nope FROM " + view));
+            assertEquals("42S22", unknown.getSQLState());
+        } finally {
+            SampleCollections.deleteAliases(gateway, PREFIX);
         }
     }
 
@@ -263,9 +368,14 @@ class MetadataIntegrationTest {
 
     /** Lists the tables matching a literal name, as a tool's Refresh does. */
     private static List<String> tables(String name) throws SQLException {
+        return tables(like(name), (String[]) null);
+    }
+
+    /** Lists the tables and views of the given types matching a pattern. */
+    private static List<String> tables(String pattern, String... types) throws SQLException {
         List<String> tables = new ArrayList<>();
 
-        try (ResultSet rows = metaData.getTables(null, null, like(name), null)) {
+        try (ResultSet rows = metaData.getTables(null, null, pattern, types)) {
             while (rows.next()) {
                 tables.add(rows.getString("TABLE_NAME"));
             }
