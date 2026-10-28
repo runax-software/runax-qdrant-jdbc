@@ -24,7 +24,8 @@ import java.util.concurrent.Executors;
 
 /**
  * A stand-in for Qdrant's REST API, for unit tests: the version at {@code GET /}, listing and
- * reading collections, and scrolling points. Answers have the shapes Qdrant 1.20 sends.
+ * reading collections, listing aliases, and scrolling points. Like Qdrant, it reads and scrolls
+ * a collection by an alias's name too. Answers have the shapes Qdrant 1.20 sends.
  * Collections, failures, delays, and a required API key are set per test; requests are recorded
  * for assertions. Like Qdrant, it answers {@code GET /} without an API key, answers a missing
  * or wrong key with plain text, and answers routes it doesn't have (such as {@code POST /})
@@ -64,7 +65,12 @@ public final class FakeQdrantServer implements AutoCloseable {
         /**
          * {@code POST /collections/{name}/points/scroll}.
          */
-        SCROLL
+        SCROLL,
+
+        /**
+         * {@code GET /aliases}.
+         */
+        ALIASES
     }
 
     /**
@@ -84,6 +90,7 @@ public final class FakeQdrantServer implements AutoCloseable {
     }
 
     private final Map<String, ObjectNode> collections = new LinkedHashMap<>();
+    private final Map<String, String> aliases = new LinkedHashMap<>();
     private final Map<String, List<ObjectNode>> points = new ConcurrentHashMap<>();
     private final List<String> listedOnly = new CopyOnWriteArrayList<>();
     private final Map<Endpoint, Failure> failures = new ConcurrentHashMap<>();
@@ -138,11 +145,29 @@ public final class FakeQdrantServer implements AutoCloseable {
     }
 
     /**
-     * Deletes a collection, as if someone deleted it in Qdrant.
+     * Deletes a collection, as if someone deleted it in Qdrant, which deletes its aliases too.
      */
     public synchronized FakeQdrantServer deleteCollection(String name) {
         collections.remove(name);
         points.remove(name);
+        aliases.values().removeIf(name::equals);
+        return this;
+    }
+
+    /**
+     * Points an alias at a collection, creating the alias or moving it as Qdrant does in one
+     * atomic change; aliases are listed in the order created.
+     */
+    public synchronized FakeQdrantServer alias(String alias, String collection) {
+        aliases.put(alias, collection);
+        return this;
+    }
+
+    /**
+     * Deletes an alias, leaving its collection.
+     */
+    public synchronized FakeQdrantServer deleteAlias(String alias) {
+        aliases.remove(alias);
         return this;
     }
 
@@ -357,6 +382,7 @@ public final class FakeQdrantServer implements AutoCloseable {
                 case COLLECTIONS -> ok(exchange, Json.object("collections", names()));
                 case COLLECTION -> collectionInfo(exchange, segments[2]);
                 case SCROLL -> scroll(exchange, segments[2], body);
+                case ALIASES -> ok(exchange, Json.object("aliases", aliasList()));
             }
         } finally {
             exchange.close();
@@ -367,6 +393,10 @@ public final class FakeQdrantServer implements AutoCloseable {
         // "/collections/x/points/scroll".split("/") is ["", "collections", "x", "points", "scroll"]
         if (method.equals("GET") && segments.length == 2 && segments[1].isEmpty()) {
             return Endpoint.VERSION;
+        }
+
+        if (method.equals("GET") && segments.length == 2 && segments[1].equals("aliases")) {
+            return Endpoint.ALIASES;
         }
 
         if (segments.length < 2 || !segments[1].equals("collections")) {
@@ -403,8 +433,23 @@ public final class FakeQdrantServer implements AutoCloseable {
         return names;
     }
 
+    private synchronized List<JsonNode> aliasList() {
+        List<JsonNode> list = new ArrayList<>();
+
+        for (Map.Entry<String, String> alias : aliases.entrySet()) {
+            list.add(Json.object("alias_name", alias.getKey(), "collection_name", alias.getValue()));
+        }
+
+        return list;
+    }
+
+    // A collection by its name or an alias's, as Qdrant resolves them
+    private synchronized String resolve(String name) {
+        return aliases.getOrDefault(name, name);
+    }
+
     private synchronized ObjectNode find(String name) {
-        return collections.get(name);
+        return collections.get(resolve(name));
     }
 
     private void collectionInfo(HttpExchange exchange, String name) throws IOException {
@@ -424,7 +469,7 @@ public final class FakeQdrantServer implements AutoCloseable {
             return;
         }
 
-        List<ObjectNode> all = points.get(name);
+        List<ObjectNode> all = points.get(resolve(name));
         JsonNode offset = request == null ? null : request.get("offset");
         int start = 0;
 

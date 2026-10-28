@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadIndexType;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.Point;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantCollection;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScrollPage;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScrollRequest;
@@ -121,6 +122,33 @@ class QdrantGatewayTest {
     @Test
     void listsNoCollections() throws SQLException {
         assertEquals(List.of(), gateway.listCollections());
+    }
+
+    @Test
+    void listsAliasesWithTheirCollections() throws SQLException {
+        server.collection("products_v2", plainCollection(), List.of())
+            .alias("products", "products_v2")
+            .alias("current", "products_v2");
+
+        assertEquals(List.of(new QdrantAlias("products", "products_v2"),
+            new QdrantAlias("current", "products_v2")), gateway.listAliases());
+        assertEquals("GET /aliases", server.requests().get(0).method() + " "
+            + server.requests().get(0).path());
+    }
+
+    @Test
+    void listsNoAliases() throws SQLException {
+        assertEquals(List.of(), gateway.listAliases());
+    }
+
+    @Test
+    void readsACollectionByAnAlias() throws SQLException {
+        server.collection("products_v2", plainCollection(), points(3)).alias("products",
+            "products_v2");
+
+        assertEquals("products", gateway.collection("products").name());
+        assertEquals(3, gateway.scroll(new ScrollRequest("products", 10, null, false, false))
+            .points().size());
     }
 
     @Test

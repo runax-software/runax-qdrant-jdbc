@@ -46,11 +46,13 @@ class IntrospectionIntegrationTest {
     static void createCollections() throws SQLException {
         gateway = TestQdrant.gateway();
         SampleCollections.create(gateway, PREFIX);
+        SampleCollections.alias(gateway, PREFIX + "current_products", PREFIX + "products");
     }
 
     @AfterAll
     static void deleteCollections() throws SQLException {
         if (gateway != null) {
+            SampleCollections.deleteAliases(gateway, PREFIX);
             SampleCollections.delete(gateway, PREFIX);
             gateway.close();
         }
@@ -95,7 +97,9 @@ class IntrospectionIntegrationTest {
                 }
             }
 
+            assertEquals(List.of("TABLE", "VIEW"), tableTypes);
             List<String> tables = new ArrayList<>();
+            List<String> views = new ArrayList<>();
 
             try (ResultSet rows = metaData.getTables(null, null, "%",
                 tableTypes.toArray(new String[0]))) {
@@ -103,12 +107,13 @@ class IntrospectionIntegrationTest {
                     String name = (String) row.get(2);
 
                     if (name.startsWith(PREFIX)) {
-                        tables.add(name);
+                        (row.get(3).equals("VIEW") ? views : tables).add(name);
                     }
                 }
             }
 
             assertEquals(3, tables.size());
+            assertEquals(List.of(PREFIX + "current_products"), views);
             int columns = 0;
 
             for (String table : tables) {
@@ -125,6 +130,14 @@ class IntrospectionIntegrationTest {
             }
 
             assertEquals(28, columns, "products 10, articles 10, events 8");
+
+            for (String view : views) {
+                assertEquals(10, readAll(metaData.getColumns(null, null, view, "%")).size());
+                assertTrue(readAll(metaData.getPrimaryKeys(null, null, view)).isEmpty());
+                assertTrue(readAll(metaData.getIndexInfo(null, null, view, false, true)).isEmpty());
+                readAll(metaData.getImportedKeys(null, null, view));
+                readAll(metaData.getTablePrivileges(null, null, view));
+            }
         }
     }
 

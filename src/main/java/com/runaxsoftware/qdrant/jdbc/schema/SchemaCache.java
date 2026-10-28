@@ -10,9 +10,10 @@ import java.util.function.LongSupplier;
 import java.util.function.Predicate;
 
 /**
- * The schemas a {@link SchemaReader} has read, by collection name, each kept until it expires
- * or is forgotten. Safe to use from several threads: threads that ask for the same collection
- * at once share one read, and a read that fails isn't kept, so the next call asks again.
+ * The schemas a {@link SchemaReader} has read, by the collection or alias name they were read
+ * under, each kept until it expires or is forgotten. Safe to use from several threads: threads
+ * that ask for the same name at once share one read, and a read that fails isn't kept, so the
+ * next call asks again.
  */
 final class SchemaCache {
 
@@ -92,7 +93,7 @@ final class SchemaCache {
     }
 
     // The loader throws only SQLException, so anything else is unchecked and is thrown as is
-    private static SQLException failure(Throwable cause) {
+    static SQLException failure(Throwable cause) {
         if (cause instanceof SQLException sql) return sql;
         if (cause instanceof RuntimeException unchecked) throw unchecked;
         if (cause instanceof Error error) throw error;

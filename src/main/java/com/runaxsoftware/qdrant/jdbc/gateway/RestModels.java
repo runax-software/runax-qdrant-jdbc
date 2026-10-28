@@ -33,6 +33,17 @@ final class RestModels {
             List.copyOf(vectors), Collections.unmodifiableMap(indexes));
     }
 
+    static List<QdrantAlias> aliases(JsonNode result) {
+        List<QdrantAlias> aliases = new ArrayList<>();
+
+        for (JsonNode alias : result.path("aliases")) {
+            aliases.add(new QdrantAlias(alias.path("alias_name").asText(),
+                alias.path("collection_name").asText()));
+        }
+
+        return List.copyOf(aliases);
+    }
+
     static ScrollPage scrollPage(JsonNode result) {
         List<Point> points = new ArrayList<>();
 

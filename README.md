@@ -39,7 +39,7 @@ Other settings go in the URL (`?tls=true&timeout=60`) or in the connection prope
 | `tls` | `false` | Connect over TLS, as Qdrant Cloud needs |
 | `timeout` | `30` | Seconds to wait for each call to Qdrant |
 | `sampleSize` | `100` | Points read to work out a collection's columns |
-| `schemaCache` | `3600` | Seconds to keep a collection's columns before reading them again; listing tables, as DataGrip's Refresh does, reads them again sooner, and `0` reads them every time |
+| `schemaCache` | `3600` | Seconds to keep a collection's columns, and the lists of collections and aliases, before reading them again; listing tables, as DataGrip's Refresh does, reads them again sooner, asking for a table by a name the kept lists don't have lists them again, and `0` reads them every time |
 | `logFile` | — | File to log every JDBC call to, for troubleshooting; the API key is never logged |
 
 ## Try it in DataGrip
@@ -53,7 +53,8 @@ Other settings go in the URL (`?tls=true&timeout=60`) or in the connection prope
 4. Create a data source from that driver. Choose **No auth**, or **User & Password** with
    the API key as the password and the user left empty.
 5. **Test Connection**, then open the data source: collections show up as tables, with
-   their columns, primary key, and payload indexes.
+   their columns, primary key, and payload indexes, and aliases as views with their
+   collection's columns.
 
 To try it on sample data, start Qdrant with `docker compose up -d` and load three small
 collections with `./gradlew seedQdrant`.

@@ -1,6 +1,8 @@
 package com.runaxsoftware.qdrant.jdbc.metadata;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
@@ -63,5 +65,24 @@ class LikePatternTest {
     @Test
     void matchesNamesAcrossLines() {
         assertTrue(LikePattern.matches("a%b", "a\nb"));
+    }
+
+    @Test
+    void readsAPatternWithoutWildcardsAsTheOneNameItMatches() {
+        assertEquals("products", LikePattern.literal("products"));
+        assertEquals("Mixed-Case.v2 (x)", LikePattern.literal("Mixed-Case.v2 (x)"));
+        assertEquals("sample_events", LikePattern.literal("sample\\_events"));
+        assertEquals("100%", LikePattern.literal("100\\%"));
+        assertEquals("a\\b", LikePattern.literal("a\\\\b"));
+        assertEquals("a\\", LikePattern.literal("a\\"));
+    }
+
+    @Test
+    void findsNoOneNameInAPatternWithWildcards() {
+        assertNull(LikePattern.literal("sample_events"));
+        assertNull(LikePattern.literal("prod%"));
+        assertNull(LikePattern.literal("%"));
+        assertNull(LikePattern.literal(null));
+        assertNull(LikePattern.literal(""));
     }
 }

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantCollection;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScrollPage;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScrollRequest;
@@ -70,6 +71,13 @@ public class QdrantGateway implements AutoCloseable {
         }
 
         return names;
+    }
+
+    /**
+     * Every alias, with the collection it points at, in the order Qdrant lists them.
+     */
+    public List<QdrantAlias> listAliases() throws SQLException {
+        return RestModels.aliases(request(HttpMethod.GET, "/aliases", null));
     }
 
     public QdrantCollection collection(String collection) throws SQLException {

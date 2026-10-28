@@ -2,6 +2,7 @@ package com.runaxsoftware.qdrant.jdbc.metadata;
 
 import com.runaxsoftware.qdrant.jdbc.DriverInfo;
 import com.runaxsoftware.qdrant.jdbc.connection.QdrantConnection;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnKind;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnType;
@@ -16,37 +17,68 @@ import java.sql.SQLException;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Describes a Qdrant server to JDBC tools.
  *
- * <p>Each collection is a table. Qdrant has no catalogs or schemas, but tools such as DataGrip
- * show both levels anyway, as unnamed placeholders when a driver reports none. So every table
- * sits in one catalog, {@value #CATALOG}, and one schema, {@value #SCHEMA}. Catalog and schema
- * filters that name anything else match nothing. Columns come from {@link SchemaInference}:
- * every table has an {@code _id} primary key, and payload indexes show up as table indexes.
+ * <p>Each collection is a table and each alias a view. Qdrant has no catalogs or schemas, but
+ * tools such as DataGrip show both levels anyway, as unnamed placeholders when a driver reports
+ * none. So every table and view sits in one catalog, {@value #CATALOG}, and one schema,
+ * {@value #SCHEMA}. Catalog and schema filters that name anything else match nothing. Columns
+ * come from {@link SchemaInference}: every table has an {@code _id} primary key, and payload
+ * indexes show up as table indexes.
  *
- * <p>The collection list is read from Qdrant on every call. Each collection's columns and
- * indexes come from the connection's {@link SchemaReader}, which keeps them for a while, and
- * {@link #getTables} makes it forget the collections it lists. Tools list the tables first
- * when they refresh, then ask for each table's columns and indexes, so a refresh reads each
- * collection from Qdrant once and shows its current columns.
+ * <p>A view has the columns of the collection its alias points at, under the view's name, and
+ * its remarks name that collection. It has no primary key and no indexes, like a view or an
+ * alias in other databases, so a tool shows the key and indexes once, on the collection; the
+ * view's column remarks still say which fields are indexed.
+ *
+ * <p>{@link #getTables} reads the collection and alias lists from Qdrant on every call, and the
+ * connection's {@link SchemaReader} keeps them; columns, keys, and indexes use the kept lists,
+ * and list again only when none is kept, the kept ones have expired with the connection's
+ * {@code schemaCache} setting, or they lack a name asked for (see below). Each collection's
+ * columns and indexes come from the same reader, which keeps them for as long. A view's
+ * columns are read under its collection's name, so a collection and its aliases share one
+ * read. {@link #getTables} makes the reader forget the names it matches and the collections
+ * behind the views it lists. Tools list the tables first when they refresh, then ask for each
+ * table's columns and indexes, so a refresh lists the collections and aliases once, reads each
+ * collection from Qdrant once, and shows its current columns.
+ *
+ * <p>Between listings, columns, keys, and indexes follow the kept lists, with the rule
+ * statements use for a column they don't know: a table or view asked for by its exact name
+ * that the kept lists don't have, as for one created since the last listing, makes the reader
+ * list both again, once, before it counts as missing. An exact name is any table name of
+ * {@link #getPrimaryKeys} and {@link #getIndexInfo}, and a {@link #getColumns} table pattern
+ * without an unescaped {@code %} or {@code _}; other patterns use the kept lists as they are.
+ * So only such a miss costs a listing. A collection or alias deleted or moved since the last
+ * listing shows as it was listed until the next listing or until the kept lists expire.
  */
 public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
     /**
-     * The one catalog, which every collection is in.
+     * The one catalog, which every collection and alias is in.
      */
     public static final String CATALOG = "qdrant";
 
     /**
-     * The one schema, which every collection is in.
+     * The one schema, which every collection and alias is in.
      */
     public static final String SCHEMA = "collections";
 
     private static final String TABLE_TYPE = "TABLE";
+    private static final String VIEW_TYPE = "VIEW";
+    private static final String VIEW_REMARKS = "Alias of ";
     private static final String PRIMARY_KEY_SUFFIX = "_pkey";
     private static final String INDEX_SUFFIX = "_idx";
+
+    /**
+     * A table or view: its name, and the collection its columns come from.
+     */
+    private record Listed(String name, String collection) {
+    }
 
     private final QdrantConnection connection;
 
@@ -87,20 +119,33 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
     }
 
     /**
-     * Lists the collections as tables, and makes the {@link SchemaReader} forget every
-     * collection the pattern matches, including ones deleted since it read them, so the columns
-     * and indexes asked for next are read again.
+     * Lists the collections as tables and the aliases as views: tables first, then views, each
+     * sorted by name, as JDBC orders them. A view's remarks name its collection. Asks Qdrant only
+     * for the kinds the type filter takes in, always afresh, and has the {@link SchemaReader}
+     * keep the lists it read for the calls that follow.
+     *
+     * <p>Makes the reader forget every schema the pattern matches, including ones deleted since
+     * it read them, and the collection behind each view it lists, so the columns and indexes
+     * asked for next are read again, from the collection an alias points at now.
      */
     @Override
     public ResultSet getTables(String catalog, String schemaPattern, String tableNamePattern, String[] types) throws SQLException {
         checkOpen();
         List<Object[]> rows = new ArrayList<>();
+        boolean tables = includes(types, TABLE_TYPE);
+        boolean views = includes(types, VIEW_TYPE);
+        SchemaReader reader = connection.schemaReader();
 
-        if (inScope(catalog, schemaPattern) && includesTables(types)) {
-            connection.schemaReader().forget(name -> LikePattern.matches(tableNamePattern, name));
+        if (inScope(catalog, schemaPattern) && (tables || views)) {
+            List<String> collections = tables
+                ? sortedCollections(tableNamePattern, reader.listCollections()) : List.of();
+            List<QdrantAlias> aliases = views
+                ? sortedAliases(tableNamePattern, reader.listAliases()) : List.of();
+            forgetListed(tableNamePattern, aliases);
 
-            for (String name : sortedCollections(tableNamePattern)) {
-                rows.add(new Object[]{CATALOG, SCHEMA, name, TABLE_TYPE, null, null, null, null, null, null});
+            for (String name : collections) rows.add(tableRow(name, TABLE_TYPE, null));
+            for (QdrantAlias alias : aliases) {
+                rows.add(tableRow(alias.name(), VIEW_TYPE, VIEW_REMARKS + alias.collection()));
             }
         }
 
@@ -113,18 +158,24 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
 
         List<Object[]> rows = new ArrayList<>();
         rows.add(new Object[]{TABLE_TYPE});
+        rows.add(new Object[]{VIEW_TYPE});
 
         return MetadataColumns.TABLE_TYPES.rows(rows);
     }
 
+    /**
+     * Describes the columns of the tables and views the pattern matches, sorted by their name.
+     * A view has the columns of the collection its alias points at. A pattern without
+     * wildcards that the kept lists don't have lists them again first.
+     */
     @Override
     public ResultSet getColumns(String catalog, String schemaPattern, String tableNamePattern, String columnNamePattern) throws SQLException {
         checkOpen();
         List<Object[]> rows = new ArrayList<>();
 
         if (inScope(catalog, schemaPattern)) {
-            for (String name : sortedCollections(tableNamePattern)) {
-                TableSchema schema = readSchema(name);
+            for (Listed table : tablesAndViews(tableNamePattern)) {
+                TableSchema schema = readSchema(table.collection());
                 if (schema == null) continue;
 
                 List<ColumnDefinition> columns = schema.columns();
@@ -133,7 +184,7 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
                     ColumnDefinition column = columns.get(i);
 
                     if (LikePattern.matches(columnNamePattern, column.name())) {
-                        rows.add(columnRow(name, column, i + 1));
+                        rows.add(columnRow(table.name(), column, i + 1));
                     }
                 }
             }
@@ -142,12 +193,16 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
         return MetadataColumns.COLUMNS.rows(rows);
     }
 
+    /**
+     * Reports {@code _id} as a table's primary key. A view has none. A name the kept lists
+     * don't have lists them again first.
+     */
     @Override
     public ResultSet getPrimaryKeys(String catalog, String schema, String table) throws SQLException {
         checkOpen();
         List<Object[]> rows = new ArrayList<>();
 
-        if (inScope(catalog, schema) && connection.gateway().listCollections().contains(table)) {
+        if (inScope(catalog, schema) && isCollection(table)) {
             rows.add(new Object[]{CATALOG, SCHEMA, table, DriverColumns.ID.columnName(), (short) 1, table + PRIMARY_KEY_SUFFIX});
         }
 
@@ -167,11 +222,15 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
         return MetadataColumns.TYPE_INFO.rows(rows);
     }
 
+    /**
+     * Reports a table's primary key and its payload indexes. A view has none. A name the kept
+     * lists don't have lists them again first.
+     */
     @Override
     public ResultSet getIndexInfo(String catalog, String schema, String table, boolean unique, boolean approximate) throws SQLException {
         checkOpen();
         List<Object[]> rows = new ArrayList<>();
-        TableSchema tableSchema = inScope(catalog, schema) ? readSchema(table) : null;
+        TableSchema tableSchema = inScope(catalog, schema) && isCollection(table) ? readSchema(table) : null;
 
         if (tableSchema != null) {
             rows.add(new Object[]{CATALOG, SCHEMA, table, false, null, table + PRIMARY_KEY_SUFFIX, tableIndexOther, (short) 1, DriverColumns.ID.columnName(), null, tableSchema.collection().pointsCount(), null, null});
@@ -251,17 +310,52 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
             || LikePattern.matches(schemaPattern, SCHEMA));
     }
 
-    private static boolean includesTables(String[] types) {
+    private static boolean includes(String[] types, String tableType) {
         if (types == null) return true;
-        for (String type : types) if (TABLE_TYPE.equalsIgnoreCase(type)) return true;
+        for (String type : types) if (tableType.equalsIgnoreCase(type)) return true;
 
         return false;
     }
 
-    private List<String> sortedCollections(String tableNamePattern) throws SQLException {
+    private static Object[] tableRow(String name, String type, String remarks) {
+        return new Object[]{CATALOG, SCHEMA, name, type, remarks, null, null, null, null, null};
+    }
+
+    /**
+     * Makes the {@link SchemaReader} forget the names the pattern matches, and the collections
+     * behind the listed views, whose columns those views show.
+     */
+    private void forgetListed(String tableNamePattern, List<QdrantAlias> views) {
+        Set<String> collections = new HashSet<>();
+        for (QdrantAlias view : views) collections.add(view.collection());
+
+        connection.schemaReader().forget(
+            name -> LikePattern.matches(tableNamePattern, name) || collections.contains(name));
+    }
+
+    // Whether the name is a collection rather than a view or nothing, listing again on a miss
+    private boolean isCollection(String name) throws SQLException {
+        return name != null && name.equals(connection.schemaReader().collectionOf(name));
+    }
+
+    /**
+     * The tables and views a pattern matches, sorted by name. A pattern without wildcards names
+     * one table or view, which is looked up with {@link SchemaReader#collectionOf}, so one
+     * created since the last listing is found; any other pattern is matched against the kept
+     * lists.
+     */
+    private List<Listed> tablesAndViews(String tableNamePattern) throws SQLException {
+        String name = LikePattern.literal(tableNamePattern);
+        if (name == null) return sortedTablesAndViews(tableNamePattern);
+
+        String collection = connection.schemaReader().collectionOf(name);
+        return collection == null ? List.of() : List.of(new Listed(name, collection));
+    }
+
+    private static List<String> sortedCollections(String tableNamePattern, List<String> collections) {
         List<String> names = new ArrayList<>();
 
-        for (String name : connection.gateway().listCollections()) {
+        for (String name : collections) {
             if (LikePattern.matches(tableNamePattern, name)) {
                 names.add(name);
             }
@@ -269,6 +363,39 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
 
         names.sort(null);
         return names;
+    }
+
+    private static List<QdrantAlias> sortedAliases(String tableNamePattern, List<QdrantAlias> all) {
+        List<QdrantAlias> aliases = new ArrayList<>();
+
+        for (QdrantAlias alias : all) {
+            if (LikePattern.matches(tableNamePattern, alias.name())) {
+                aliases.add(alias);
+            }
+        }
+
+        aliases.sort(Comparator.comparing(QdrantAlias::name));
+        return aliases;
+    }
+
+    /**
+     * The tables and views the pattern matches in the kept lists, sorted by name. Collection
+     * and alias names share one namespace in Qdrant, so no name is both.
+     */
+    private List<Listed> sortedTablesAndViews(String tableNamePattern) throws SQLException {
+        SchemaReader reader = connection.schemaReader();
+        List<Listed> listed = new ArrayList<>();
+
+        for (String name : sortedCollections(tableNamePattern, reader.collections())) {
+            listed.add(new Listed(name, name));
+        }
+
+        for (QdrantAlias alias : sortedAliases(tableNamePattern, reader.aliases())) {
+            listed.add(new Listed(alias.name(), alias.collection()));
+        }
+
+        listed.sort(Comparator.comparing(Listed::name));
+        return listed;
     }
 
     /**
