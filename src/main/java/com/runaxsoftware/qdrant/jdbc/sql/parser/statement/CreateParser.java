@@ -11,7 +11,8 @@ import java.util.Locale;
 
 /**
  * Reads {@code CREATE TABLE [IF NOT EXISTS] docs (column type [(size)] [DISTANCE d]
- * [MODIFIER m] [INDEX], ...)}. The type and the words after it mean something only here, so
+ * [MODIFIER m] [INDEX], ...)}, and hands {@code CREATE INDEX} and {@code CREATE [OR REPLACE]
+ * VIEW} to their own parsers. The type and the words after it mean something only here, so
  * they're read as words and stay usable as names everywhere else.
  */
 public final class CreateParser {
@@ -24,6 +25,21 @@ public final class CreateParser {
 
     public Statement parse() throws SQLSyntaxErrorException {
         this.tokenStream.expectKeyword("CREATE");
+
+        if (this.tokenStream.peekWord("INDEX")) {
+            return new IndexParser(this.tokenStream).parseCreate();
+        }
+        if (this.tokenStream.peekWord("VIEW")) {
+            return new ViewParser(this.tokenStream).parseCreate(false);
+        }
+        if (this.tokenStream.matchKeyword("OR")) {
+            expectWord("REPLACE");
+            return new ViewParser(this.tokenStream).parseCreate(true);
+        }
+        if (!this.tokenStream.peekKeyword("TABLE")) {
+            throw this.tokenStream.error("Expected TABLE, INDEX, VIEW or OR REPLACE VIEW");
+        }
+
         this.tokenStream.expectKeyword("TABLE");
 
         boolean ifNotExists = this.tokenStream.peekWord("IF");

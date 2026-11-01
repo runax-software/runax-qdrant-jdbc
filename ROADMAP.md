@@ -74,6 +74,12 @@ measured REST and SQL coverage is in [docs/coverage.md](docs/coverage.md).
 - [x] **Grid edits** — `UPDATE ... WHERE _id = ?` from DataGrip's data editor, mapped to
   Qdrant's set-payload call: fields, fields inside objects, `NULL` to delete one, a new field,
   or `_payload` for the whole payload, in one batch call. Changing vectors comes later.
+- [x] **Indexes** — `CREATE INDEX [IF NOT EXISTS] ON docs (lang) [USING text] [WITH (…)]`
+  and `DROP INDEX lang_idx ON docs`, with each type's options, the type defaulting to the
+  column's, and the columns the driver keeps following at once.
+- [x] **Views** — Qdrant aliases: `CREATE [OR REPLACE] VIEW current AS SELECT * FROM docs_v2`,
+  `ALTER VIEW current RENAME TO live`, and `DROP VIEW [IF EXISTS] current`, the replace as one
+  atomic switch.
 - [x] **INSERT** — `INSERT INTO docs (_id, lang, dense) VALUES (…), (…)` as one upsert that
   skips points already there: an ID that's taken is an error, as a primary key's is, and a row
   without one gets a UUID, which `getGeneratedKeys` returns. Vectors are written out, given as

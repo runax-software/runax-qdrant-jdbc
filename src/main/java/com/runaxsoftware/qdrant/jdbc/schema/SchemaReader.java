@@ -90,6 +90,15 @@ public final class SchemaReader {
     }
 
     /**
+     * Drops the kept collection and alias lists, as after a statement that changed them, so the
+     * next lookup lists them again.
+     */
+    public void forgetLists() {
+        collections.clear();
+        aliases.clear();
+    }
+
+    /**
      * The collection names, as kept from the last listing, or listed now if none is kept.
      */
     public List<String> collections() throws SQLException {

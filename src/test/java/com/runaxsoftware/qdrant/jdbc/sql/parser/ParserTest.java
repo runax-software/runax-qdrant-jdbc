@@ -20,11 +20,16 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.SelectItem;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Star;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.TableName;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.VectorLiteral;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AlterViewStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Assignment;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.ColumnSpec;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateIndexStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateTableStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateViewStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DeleteStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropIndexStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropTableStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropViewStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.InsertStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.TruncateStatement;
@@ -36,6 +41,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import java.sql.SQLSyntaxErrorException;
 import java.util.List;
+import java.util.Map;
 
 // A parser bug usually shows up as a loop that never ends. A separate thread lets the timeout
 // stop such a loop: on the test's own thread it could only ask, and the loop would ignore it
@@ -429,15 +435,15 @@ class ParserTest {
 
     @Test
     void rejectsStatementsItDoesntRead() {
-        assertError("Expected SELECT, INSERT, UPDATE, DELETE, TRUNCATE, DROP, CREATE, SET, RESET or "
-            + "SHOW, "
+        assertError("Expected SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE, ALTER, DROP, SET, "
+            + "RESET or SHOW, "
             + "found 'MERGE' at line 1, column 1", "MERGE INTO docs");
     }
 
     @Test
     void rejectsAnEmptyStatement() {
-        assertError("Expected SELECT, INSERT, UPDATE, DELETE, TRUNCATE, DROP, CREATE, SET, RESET or "
-            + "SHOW, "
+        assertError("Expected SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE, ALTER, DROP, SET, "
+            + "RESET or SHOW, "
             + "found the end of the statement at line 1, column 1", "");
     }
 
@@ -468,6 +474,54 @@ class ParserTest {
             Parser.parse("drop table if exists docs"));
         assertEquals(new DropTableStatement(TableName.of("if"), false), Parser.parse("DROP TABLE if"),
             "a collection may be called if");
+    }
+
+    // Indexes and views
+
+    @Test
+    void parsesCreateIndexInEveryForm() throws SQLSyntaxErrorException {
+        assertEquals(new CreateIndexStatement(TableName.of("docs"), Column.of("lang"), null, null,
+                Map.of(), false), Parser.parse("CREATE INDEX ON docs (lang)"));
+        assertEquals(new CreateIndexStatement(TableName.of("collections", "docs"),
+                Column.of("title"), "title_idx", "TEXT",
+                Map.of("tokenizer", new Literal("word"), "phrase_matching", new Literal(true),
+                    "min_token_len", new Literal(2L)), true),
+            Parser.parse("create index if not exists title_idx on collections.docs (title) "
+                + "using text with (tokenizer = word, phrase_matching = true, MIN_TOKEN_LEN = 2)"));
+    }
+
+    @Test
+    void parsesDropIndexByNameOrField() throws SQLSyntaxErrorException {
+        assertEquals(new DropIndexStatement(TableName.of("docs"), "lang_idx", null, false),
+            Parser.parse("DROP INDEX lang_idx ON docs"));
+        assertEquals(new DropIndexStatement(TableName.of("docs"), null, Column.of("specs.color"), true),
+            Parser.parse("DROP INDEX IF EXISTS ON docs (\"specs.color\")"));
+    }
+
+    @Test
+    void parsesTheViewStatements() throws SQLSyntaxErrorException {
+        CreateViewStatement create = (CreateViewStatement) Parser.parse(
+            "CREATE OR REPLACE VIEW current AS SELECT * FROM docs_v2");
+        assertEquals(TableName.of("current"), create.view());
+        assertEquals(TableName.of("docs_v2"), create.query().table());
+        assertEquals(true, create.orReplace());
+
+        assertEquals(new AlterViewStatement(TableName.of("current"), "live"),
+            Parser.parse("ALTER VIEW current RENAME TO live"));
+        assertEquals(new DropViewStatement(TableName.of("collections", "current"), true),
+            Parser.parse("drop view if exists collections.current"));
+    }
+
+    @Test
+    void rejectsIndexAndViewStatementsItCantRead() {
+        assertError("Expected ): a Qdrant payload index is on one field, found ',' at line 1, "
+            + "column 27", "CREATE INDEX ON docs (lang, year)");
+        assertError("Expected SELECT * FROM the collection the view shows, found 'docs' at line 1, "
+            + "column 18", "CREATE VIEW v AS docs");
+        assertError("Expected VIEW: ALTER TABLE isn't supported yet, found 'TABLE' at line 1, "
+            + "column 7", "ALTER TABLE docs RENAME TO x");
+        assertError("Expected TABLE, INDEX, VIEW or OR REPLACE VIEW, found 'SEQUENCE' at line 1, "
+            + "column 8", "CREATE SEQUENCE s");
     }
 
     // INSERT
@@ -619,8 +673,8 @@ class ParserTest {
                 + "at line 1, column 11", "SELECT 1; SELECT 2");
         assertError("Expected the end of the statement: run one statement at a time, found ';' at "
                 + "line 1, column 10", "SELECT 1;;");
-        assertError("Expected SELECT, INSERT, UPDATE, DELETE, TRUNCATE, DROP, CREATE, SET, RESET or "
-            + "SHOW, "
+        assertError("Expected SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE, ALTER, DROP, SET, "
+            + "RESET or SHOW, "
                 + "found ';' at line 1, column 1", ";");
     }
 

@@ -9,6 +9,8 @@ import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetHit;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.Document;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadIndexType;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QueryRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScoredPoint;
 import com.runaxsoftware.qdrant.jdbc.resultset.ListResultSet;
@@ -18,8 +20,12 @@ import com.runaxsoftware.qdrant.jdbc.schema.ColumnType;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConstantPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CountPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateCollectionPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateIndexPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateViewPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DeletePointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropCollectionPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropIndexPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropViewPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.EmbedText;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetColumn;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetPlan;
@@ -27,6 +33,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.InsertPointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.NewPoint;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.RenameViewPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.SystemTablePlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdatePointsPlan;
@@ -232,6 +239,31 @@ public final class Executor {
             return ExecutionResult.updated(0);
         }
 
+        if (plan instanceof CreateIndexPlan index) {
+            createIndex(index);
+            return ExecutionResult.updated(0);
+        }
+
+        if (plan instanceof DropIndexPlan index) {
+            dropIndex(index);
+            return ExecutionResult.updated(0);
+        }
+
+        if (plan instanceof CreateViewPlan view) {
+            createView(view);
+            return ExecutionResult.updated(0);
+        }
+
+        if (plan instanceof RenameViewPlan view) {
+            renameView(view);
+            return ExecutionResult.updated(0);
+        }
+
+        if (plan instanceof DropViewPlan view) {
+            dropView(view);
+            return ExecutionResult.updated(0);
+        }
+
         if (plan instanceof SystemTablePlan system) {
             return ExecutionResult.rows(new ListResultSet(resultColumns(system),
                 systemRows(system, limit(system.limit(), maxRows)), statement));
@@ -384,7 +416,7 @@ public final class Executor {
 
         try {
             for (CreateCollectionPlan.PayloadIndex index : plan.indexes()) {
-                writer.createIndex(plan.collection(), index.field(), index.type());
+                writer.createIndex(plan.collection(), index.field(), JSON.textNode(index.type()));
             }
         } catch (SQLException e) {
             try {
@@ -443,6 +475,107 @@ public final class Executor {
         }
     }
 
+    /**
+     * Creates the index unless the field has one. Qdrant would replace an index already there
+     * with the new one without a word, so the driver looks first: changing an index's type is a
+     * DROP INDEX and a CREATE INDEX, said on purpose.
+     */
+    private void createIndex(CreateIndexPlan plan) throws SQLException {
+        PayloadIndexType existing = writer.payloadIndexes(plan.collection()).get(plan.field());
+
+        if (existing != null) {
+            if (plan.ifNotExists()) return;
+
+            throw new SQLException("'" + plan.field() + "' of " + plan.collection() + " already "
+                + "has an index, " + plan.field() + "_idx, of type " + existing.qdrantName()
+                + ": drop it first to change it", "42S11");
+        }
+
+        writer.createIndex(plan.collection(), plan.field(), plan.schema());
+    }
+
+    /**
+     * Deletes the index on the first field the plan names that has one. Qdrant answers a field
+     * without an index as a success, so the driver looks first, and reports a missing one.
+     */
+    private void dropIndex(DropIndexPlan plan) throws SQLException {
+        Map<String, PayloadIndexType> indexes = writer.payloadIndexes(plan.collection());
+        String field = plan.fields().stream().filter(indexes::containsKey).findFirst()
+            .orElse(null);
+
+        if (field == null) {
+            if (plan.ifExists()) return;
+
+            List<String> names = indexes.keySet().stream().sorted().map(x -> x + "_idx").toList();
+            throw new SQLException("No index '" + plan.written() + "' on " + plan.collection()
+                + ": its indexes are " + (names.isEmpty() ? "none" : String.join(", ", names)),
+                "42S12");
+        }
+
+        writer.deleteIndex(plan.collection(), field);
+    }
+
+    /**
+     * Creates the alias, or with OR REPLACE moves it, in one atomic change. Qdrant would move
+     * an existing alias on a plain create too, so the driver looks first and makes that an
+     * error unless OR REPLACE asked for it.
+     */
+    private void createView(CreateViewPlan plan) throws SQLException {
+        List<QdrantAlias> aliases = writer.aliases();
+        QdrantAlias existing = alias(aliases, plan.view());
+        QdrantAlias target = alias(aliases, plan.collection());
+
+        if (target != null) {
+            throw new SQLException("'" + plan.collection() + "' is a view of "
+                + target.collection() + ": a view shows a collection, so name "
+                + target.collection(), "42000");
+        }
+        if (existing != null && !plan.orReplace()) {
+            throw new SQLException("View '" + plan.view() + "' already exists, showing "
+                + existing.collection() + ": use CREATE OR REPLACE VIEW to move it", "42S01");
+        }
+
+        var actions = new ArrayList<JsonNode>();
+        if (existing != null) {
+            actions.add(JSON.objectNode().set("delete_alias",
+                JSON.objectNode().put("alias_name", plan.view())));
+        }
+        actions.add(JSON.objectNode().set("create_alias", JSON.objectNode()
+            .put("collection_name", plan.collection()).put("alias_name", plan.view())));
+
+        writer.changeAliases(actions);
+    }
+
+    // Qdrant would move an alias already called the new name, so that's checked too
+    private void renameView(RenameViewPlan plan) throws SQLException {
+        List<QdrantAlias> aliases = writer.aliases();
+
+        if (alias(aliases, plan.view()) == null) {
+            throw new SQLException("Unknown view '" + plan.view() + "'", "42S02");
+        }
+        if (alias(aliases, plan.newName()) != null) {
+            throw new SQLException("View '" + plan.newName() + "' already exists", "42S01");
+        }
+
+        writer.changeAliases(List.of(JSON.objectNode().set("rename_alias", JSON.objectNode()
+            .put("old_alias_name", plan.view()).put("new_alias_name", plan.newName()))));
+    }
+
+    // Qdrant answers a missing alias as deleted, so the driver looks first
+    private void dropView(DropViewPlan plan) throws SQLException {
+        if (alias(writer.aliases(), plan.view()) == null) {
+            if (plan.ifExists()) return;
+            throw new SQLException("Unknown view '" + plan.view() + "'", "42S02");
+        }
+
+        writer.changeAliases(List.of(JSON.objectNode().set("delete_alias",
+            JSON.objectNode().put("alias_name", plan.view()))));
+    }
+
+    private static QdrantAlias alias(List<QdrantAlias> aliases, String name) {
+        return aliases.stream().filter(x -> x.name().equals(name)).findFirst().orElse(null);
+    }
+
     private static Writer writer(QdrantGateway gateway) {
         return new Writer() {
             @Override
@@ -489,9 +622,30 @@ public final class Executor {
             }
 
             @Override
-            public void createIndex(String collection, String field, String type)
+            public void createIndex(String collection, String field, JsonNode schema)
                 throws SQLException {
-                gateway.createIndex(collection, field, type);
+                gateway.createIndex(collection, field, schema);
+            }
+
+            @Override
+            public Map<String, PayloadIndexType> payloadIndexes(String collection)
+                throws SQLException {
+                return gateway.collection(collection).payloadIndexes();
+            }
+
+            @Override
+            public void deleteIndex(String collection, String field) throws SQLException {
+                gateway.deleteIndex(collection, field);
+            }
+
+            @Override
+            public List<QdrantAlias> aliases() throws SQLException {
+                return gateway.listAliases();
+            }
+
+            @Override
+            public void changeAliases(List<JsonNode> actions) throws SQLException {
+                gateway.changeAliases(actions);
             }
         };
     }
