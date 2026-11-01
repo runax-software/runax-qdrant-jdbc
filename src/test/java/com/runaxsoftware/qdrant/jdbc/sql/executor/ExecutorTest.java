@@ -851,7 +851,7 @@ class ExecutorTest {
         }, query -> {
             requests.add(query);
             return List.of();
-        }, collection -> 0, table -> List.of());
+        }, (collection, filter) -> 0, facet -> List.of(), table -> List.of());
 
         recording.execute(document("qdrant/bm25"), STATEMENT).resultSet().close();
 
@@ -866,7 +866,7 @@ class ExecutorTest {
         }, query -> {
             throw new SQLException("Qdrant: Service internal error: InferenceService URL not "
                 + "configured - please provide valid address in config", "HY000");
-        }, collection -> 0, table -> List.of());
+        }, (collection, filter) -> 0, facet -> List.of(), table -> List.of());
 
         SQLException error = assertThrows(SQLException.class,
             () -> local.execute(document("sentence-transformers/all-minilm-l6-v2"), STATEMENT));

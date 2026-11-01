@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -85,6 +86,21 @@ class DocumentSearchIntegrationTest {
         assertEquals(List.of("4"), ids("SELECT _id FROM " + NAME + " WHERE lang = 'de' "
             + "ORDER BY similarity(keywords, document('refund policy', '" + BM25 + "')) DESC "
             + "LIMIT 10"));
+    }
+
+    @Test
+    void takesTheTextAndModelAsParameters() throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("SELECT _id FROM " + NAME
+            + " WHERE lang = ? ORDER BY similarity(keywords, document(?, ?)) DESC LIMIT 10")) {
+            statement.setString(1, "de");
+            statement.setString(2, "refund policy");
+            statement.setString(3, BM25);
+
+            try (ResultSet rows = statement.executeQuery()) {
+                assertTrue(rows.next());
+                assertEquals("4", rows.getString("_id"));
+            }
+        }
     }
 
     @Test
