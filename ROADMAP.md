@@ -1,7 +1,8 @@
 # Runax JDBC Driver for Qdrant — Roadmap
 
 Planned work, roughly in the order it will land. The SQL each item accepts is specified in
-[docs/specs/sql-dialect.md](docs/specs/sql-dialect.md).
+[docs/specs/sql-dialect.md](docs/specs/sql-dialect.md); what the ticks below amount to in
+measured REST and SQL coverage is in [docs/coverage.md](docs/coverage.md).
 
 - [x] **Connection** — `jdbc:qdrant://host:6333` over Qdrant's REST API, TLS, and the
   Qdrant API key taken from the password field.
