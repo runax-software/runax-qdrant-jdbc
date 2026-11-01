@@ -65,7 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   driver counts them first, as Qdrant doesn't report it). A `DELETE` without `WHERE` is an
   error that points to `TRUNCATE TABLE docs`, which deletes every point and keeps the
   collection and its indexes. `DROP TABLE docs` deletes the collection; `DROP TABLE IF EXISTS`
-  doesn't mind a missing one. Writes wait for Qdrant to apply them. ([#17])
+  doesn't mind a missing one. Writes wait for Qdrant to apply them. ([#19])
 - Table aliases and qualified names: `FROM docs t` (with or without `AS`), and `t.*`,
   `t.name`, `t.price AS cost`, `WHERE t.lang = 'en'` and `ORDER BY t.price` under that name
   or under the table's own name, as SQL does — a name given to the table replaces its own.
@@ -99,7 +99,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Connection.isReadOnly()` and `DatabaseMetaData.isReadOnly()` now return `false`, as the
   driver can write. `setReadOnly(true)` is kept, and a read-only connection refuses
   `DELETE`, `TRUNCATE` and `DROP TABLE` with SQLState `25006`, so a tool's read-only
-  connection setting protects the data. ([#17])
+  connection setting protects the data. ([#19])
 
 - **Breaking:** the driver talks to Qdrant's REST API with the JDK's HTTP client instead
   of the Qdrant Java SDK over gRPC, so the default port is now `6333` instead of `6334`.
@@ -130,4 +130,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#18]: https://github.com/runax-software/runax-qdrant-jdbc/pull/18
 [#16]: https://github.com/runax-software/runax-qdrant-jdbc/pull/16
 [#17]: https://github.com/runax-software/runax-qdrant-jdbc/pull/17
+[#19]: https://github.com/runax-software/runax-qdrant-jdbc/pull/19
 [#20]: https://github.com/runax-software/runax-qdrant-jdbc/pull/20
