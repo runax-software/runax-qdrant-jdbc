@@ -53,7 +53,10 @@ Planned work, roughly in the order it will land. The SQL each item accepts is sp
 - [ ] **DataGrip plugin** (`runax-qdrant-datagrip`, a separate repository) — a search
   panel that writes SQL into a console, collection tools, and a bundled driver
   definition.
-- [ ] **Creating collections** — needs SQL syntax for vector size and distance.
+- [x] **Creating collections** — `CREATE TABLE [IF NOT EXISTS] docs (dense VECTOR(384)
+  DISTANCE COSINE, keywords SPARSE_VECTOR MODIFIER IDF, lang KEYWORD INDEX)`: dense,
+  multi-, and sparse vectors, a single `_vector` column for the unnamed vector, and payload
+  indexes. Collection settings in `WITH (…)` and `ALTER TABLE` come later.
 - [ ] **Post-filtering in the driver (to decide)** — conditions Qdrant can't run, such as
   `price > cost`, `LOWER(name) = 'lamp'`, or joins, checked by the driver on the rows Qdrant
   returns. Probably opt-in and capped, since it can read far more points than it returns.

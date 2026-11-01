@@ -121,6 +121,7 @@ FROM system.collections
 | `DELETE FROM docs WHERE …` | Delete points by filter | Returns the number deleted; needs a `WHERE` |
 | `TRUNCATE TABLE docs` | Delete every point | The collection and its indexes stay |
 | `DROP TABLE [IF EXISTS] docs` | Delete the collection | |
+| `CREATE TABLE docs (dense VECTOR(384) DISTANCE COSINE, lang KEYWORD INDEX)` | Create the collection, then its payload indexes | `_vector VECTOR(n)` makes the unnamed vector |
 | `JOIN`, `SUM`, `AVG`, subqueries | — | Rejected with an error |
 
 The full mapping, covering writes, DDL, aliases, hybrid search, and the rest of Qdrant's API,

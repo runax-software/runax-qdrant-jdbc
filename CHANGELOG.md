@@ -60,6 +60,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a `lang`. Conditions Qdrant can't run, such as `price = ?`, `lower(name) = 'x'` or
   `name > 'm'`, fail with an `SQLFeatureNotSupportedException` instead of being checked by the
   driver; a filtered read still pages through the scroll cursor. ([#16])
+- `CREATE TABLE [IF NOT EXISTS] docs (...)` creates a collection: `VECTOR(n)`,
+  `MULTIVECTOR(n)` and `SPARSE_VECTOR [MODIFIER IDF]` columns become its vectors, with
+  `DISTANCE COSINE` (the default), `DOT`, `EUCLID` or `MANHATTAN`; a single `_vector` column
+  makes the unnamed vector; and `lang KEYWORD INDEX` (or `INTEGER`, `FLOAT`, `BOOL`,
+  `DATETIME`, `TEXT`, `UUID`, `GEO`, and the SQL names `VARCHAR`, `BIGINT`, `DOUBLE`,
+  `BOOLEAN`, `TIMESTAMP`) becomes a payload index. If an index fails, the new collection is
+  deleted again. ([#CREATE])
 - Deleting points and collections. `DELETE FROM docs WHERE …` deletes the points the
   condition matches, with the same filters as `SELECT`, and returns how many it deleted (the
   driver counts them first, as Qdrant doesn't report it). A `DELETE` without `WHERE` is an

@@ -1,5 +1,6 @@
 package com.runaxsoftware.qdrant.jdbc.sql.planner;
 
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateTableStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DeleteStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropTableStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
@@ -30,6 +31,9 @@ public final class Planner {
         }
         if (statement instanceof DropTableStatement drop) {
             return writePlanner.plan(drop);
+        }
+        if (statement instanceof CreateTableStatement create) {
+            return writePlanner.plan(create);
         }
 
         throw new SQLFeatureNotSupportedException(

@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DeletePointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.support.Json;
@@ -24,6 +25,8 @@ class WriteExecutorTest {
     private final List<String> calls = new ArrayList<>();
     private long matching = 3;
     private SQLException dropFailure;
+    private boolean exists;
+    private String failingIndex;
 
     private final Executor executor = new Executor(
         request -> {
@@ -54,6 +57,24 @@ class WriteExecutorTest {
             public void deleteCollection(String collection) throws SQLException {
                 calls.add("drop " + collection);
                 if (dropFailure != null) throw dropFailure;
+            }
+
+            @Override
+            public boolean collectionExists(String collection) {
+                calls.add("exists " + collection);
+                return exists;
+            }
+
+            @Override
+            public void createCollection(String collection, JsonNode config) {
+                calls.add("create " + collection + " " + config);
+            }
+
+            @Override
+            public void createIndex(String collection, String field, String type)
+                throws SQLException {
+                calls.add("index " + collection + " " + field + " " + type);
+                if (field.equals(failingIndex)) throw new SQLException("Qdrant: bad index", "42000");
             }
         });
 
@@ -99,6 +120,42 @@ class WriteExecutorTest {
 
         assertEquals("28000", assertThrows(SQLException.class,
             () -> executor.execute(new DropCollectionPlan("docs", true), statement())).getSQLState());
+    }
+
+    // CREATE TABLE
+
+    private static final JsonNode CONFIG = Json.object("vectors", Json.object("size", 2, "distance", "Cosine"));
+
+    private static CreateCollectionPlan create(boolean ifNotExists) {
+        return new CreateCollectionPlan("docs", ifNotExists, CONFIG, List.of(
+            new CreateCollectionPlan.PayloadIndex("lang", "keyword"),
+            new CreateCollectionPlan.PayloadIndex("year", "integer")));
+    }
+
+    @Test
+    void createsTheCollectionThenItsIndexes() throws SQLException {
+        assertEquals(0, executor.execute(create(false), statement()).updateCount());
+        assertEquals(List.of("create docs " + CONFIG, "index docs lang keyword",
+            "index docs year integer"), calls);
+    }
+
+    @Test
+    void createsNothingWhenTheCollectionExistsAndIfNotExists() throws SQLException {
+        exists = true;
+
+        executor.execute(create(true), statement());
+
+        assertEquals(List.of("exists docs"), calls);
+    }
+
+    @Test
+    void deletesTheCollectionAgainWhenAnIndexFails() {
+        failingIndex = "year";
+
+        assertEquals("42000", assertThrows(SQLException.class,
+            () -> executor.execute(create(false), statement())).getSQLState());
+        assertEquals(List.of("create docs " + CONFIG, "index docs lang keyword",
+            "index docs year integer", "drop docs"), calls);
     }
 
     private static Statement statement() {
