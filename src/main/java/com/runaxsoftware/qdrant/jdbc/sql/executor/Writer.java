@@ -24,4 +24,19 @@ interface Writer {
      * Deletes the collection; fails with SQL state {@code 42S02} when there's none.
      */
     void deleteCollection(String collection) throws SQLException;
+
+    /**
+     * Whether the collection exists.
+     */
+    boolean collectionExists(String collection) throws SQLException;
+
+    /**
+     * Creates the collection with these vectors.
+     */
+    void createCollection(String collection, JsonNode config) throws SQLException;
+
+    /**
+     * Creates a payload index on the collection.
+     */
+    void createIndex(String collection, String field, String type) throws SQLException;
 }

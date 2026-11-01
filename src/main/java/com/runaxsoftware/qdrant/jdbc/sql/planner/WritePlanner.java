@@ -3,6 +3,7 @@ package com.runaxsoftware.qdrant.jdbc.sql.planner;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.runaxsoftware.qdrant.jdbc.schema.TableSchema;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.TableName;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateTableStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DeleteStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropTableStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.TruncateStatement;
@@ -15,7 +16,8 @@ import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 
 /**
- * Plans the statements that change what Qdrant holds: DELETE, TRUNCATE, and DROP TABLE.
+ * Plans the statements that change what Qdrant holds: DELETE, TRUNCATE, DROP TABLE, and
+ * CREATE TABLE.
  */
 final class WritePlanner {
 
@@ -50,6 +52,13 @@ final class WritePlanner {
     Plan plan(DropTableStatement statement) throws SQLException {
         return new DropCollectionPlan(collection(statement.table(), "DROP"),
             statement.ifExists());
+    }
+
+    /**
+     * Creates the collection. Its columns aren't read: the statement says what they are.
+     */
+    Plan plan(CreateTableStatement statement) throws SQLException {
+        return CreatePlanner.plan(statement, collection(statement.table(), "CREATE"));
     }
 
     // The collection a statement names; the system schema's tables are read-only

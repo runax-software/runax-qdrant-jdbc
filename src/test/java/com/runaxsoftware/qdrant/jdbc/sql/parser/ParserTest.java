@@ -20,6 +20,8 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.SelectItem;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Star;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.TableName;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.VectorLiteral;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.ColumnSpec;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateTableStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DeleteStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropTableStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
@@ -400,14 +402,15 @@ class ParserTest {
 
     @Test
     void rejectsStatementsItDoesntRead() {
-        assertError("Expected SELECT, DELETE, TRUNCATE or DROP, found 'INSERT' at line 1, column 1",
+        assertError("Expected SELECT, DELETE, TRUNCATE, DROP or CREATE, found 'INSERT' at line 1, "
+            + "column 1",
             "INSERT INTO docs");
     }
 
     @Test
     void rejectsAnEmptyStatement() {
-        assertError("Expected SELECT, DELETE, TRUNCATE or DROP, found the end of the statement "
-            + "at line 1, column 1", "");
+        assertError("Expected SELECT, DELETE, TRUNCATE, DROP or CREATE, found the end of the "
+            + "statement at line 1, column 1", "");
     }
 
     // DELETE, TRUNCATE and DROP TABLE
@@ -437,6 +440,35 @@ class ParserTest {
             Parser.parse("drop table if exists docs"));
         assertEquals(new DropTableStatement(TableName.of("if"), false), Parser.parse("DROP TABLE if"),
             "a collection may be called if");
+    }
+
+    // CREATE TABLE
+
+    @Test
+    void parsesACreateTableWithVectorsAndIndexes() throws SQLSyntaxErrorException {
+        assertEquals(new CreateTableStatement(TableName.of("docs"), false, List.of(
+                new ColumnSpec("dense", "VECTOR", 384, "COSINE", null, false),
+                new ColumnSpec("colbert", "MULTIVECTOR", 128, "DOT", null, false),
+                new ColumnSpec("keywords", "SPARSE_VECTOR", null, null, "IDF", false),
+                new ColumnSpec("lang", "KEYWORD", null, null, null, true),
+                new ColumnSpec("specs.color", "KEYWORD", null, null, null, true))),
+            Parser.parse("CREATE TABLE docs (dense VECTOR(384) DISTANCE COSINE, "
+                + "colbert multivector(128) distance dot, keywords SPARSE_VECTOR MODIFIER IDF, "
+                + "lang KEYWORD INDEX, \"specs.color\" keyword index)"));
+    }
+
+    @Test
+    void parsesCreateTableIfNotExists() throws SQLSyntaxErrorException {
+        assertEquals(new CreateTableStatement(TableName.of("collections", "docs"), true, List.of(
+                new ColumnSpec("_vector", "VECTOR", 4, null, null, false))),
+            Parser.parse("create table if not exists collections.docs (_vector vector(4))"));
+    }
+
+    @Test
+    void rejectsACreateTableWithoutColumns() {
+        assertError("Expected a name, found ')' at line 1, column 20", "CREATE TABLE docs ()");
+        assertError("Expected a column type, such as VECTOR(384) or KEYWORD INDEX, found ',' at "
+            + "line 1, column 25", "CREATE TABLE docs (dense, lang KEYWORD INDEX)");
     }
 
     @Test

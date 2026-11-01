@@ -289,6 +289,16 @@ CREATE TABLE docs (
 CREATE INDEX ON docs (title) USING text WITH (tokenizer = 'word', phrase_matching = true);
 ```
 
+**What runs today:** `CREATE TABLE [IF NOT EXISTS]` with `VECTOR(n)`, `MULTIVECTOR(n)`
+(`max_sim`), and `SPARSE_VECTOR [MODIFIER IDF]` columns; `DISTANCE` is `COSINE` (the
+default), `DOT`, `EUCLID`, or `MANHATTAN`. A column of a payload type followed by `INDEX`
+becomes a payload index: `KEYWORD`, `INTEGER`, `FLOAT`, `BOOL`, `DATETIME`, `TEXT`, `UUID`,
+`GEO`, or the SQL names `VARCHAR`, `BIGINT`, `DOUBLE`, `BOOLEAN`, `TIMESTAMP`. A payload column
+without `INDEX` is an error, since the payload has no schema to declare it in. Qdrant creates
+the collection and each index in separate calls, so when an index fails the driver deletes the
+new collection again rather than leave half a table. `WITH (…)`, `ALTER TABLE`, and
+`CREATE INDEX` are still the target.
+
 | SQL | Qdrant |
 | --- | --- |
 | `CREATE TABLE` with vector columns | Create collection; a single column named `_vector` makes the unnamed vector |

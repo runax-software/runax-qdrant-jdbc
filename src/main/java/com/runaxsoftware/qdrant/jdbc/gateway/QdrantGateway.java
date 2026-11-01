@@ -181,6 +181,34 @@ public class QdrantGateway implements AutoCloseable {
     }
 
     /**
+     * Whether a collection, or an alias of one, exists.
+     */
+    public boolean collectionExists(String collection) throws SQLException {
+        return request(HttpMethod.GET, "/collections/" + segment(collection) + "/exists", null)
+            .path("exists").asBoolean();
+    }
+
+    /**
+     * Creates a collection.
+     *
+     * @param config its vectors and settings, as Qdrant's create-collection API takes them
+     */
+    public void createCollection(String collection, JsonNode config) throws SQLException {
+        request(HttpMethod.PUT, "/collections/" + segment(collection), config);
+    }
+
+    /**
+     * Creates a payload index, and waits until Qdrant has built it.
+     *
+     * @param type Qdrant's name for the index type, such as {@code keyword}
+     */
+    public void createIndex(String collection, String field, String type) throws SQLException {
+        ObjectNode body = JSON.createObjectNode().put("field_name", field).put("field_schema", type);
+
+        request(HttpMethod.PUT, "/collections/" + segment(collection) + "/index?wait=true", body);
+    }
+
+    /**
      * Any endpoint; returns the response's "result".
      */
     public JsonNode request(HttpMethod method, String path, JsonNode body) throws SQLException {

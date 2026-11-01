@@ -10,6 +10,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DeleteStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Statement;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.Planner;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
 import com.runaxsoftware.qdrant.jdbc.system.SystemTable;
@@ -24,7 +25,7 @@ import java.sql.SQLException;
  * instead; a SELECT from one of the {@code system} schema's tables reads the server's own state
  * at once; a SELECT without FROM (such as a tool's {@code SELECT 'keep alive'}) returns its row.
  * The statement's maximum rows limit every result, and its fetch size sets how many points one
- * page reads. DELETE, TRUNCATE and DROP TABLE change what Qdrant holds and return a count
+ * page reads. DELETE, TRUNCATE, DROP TABLE and CREATE TABLE change what Qdrant holds and return a count
  * instead, unless the connection is read-only.
  *
  * <p>The columns come from the connection's {@link SchemaReader}, which keeps them for a while,
@@ -149,6 +150,9 @@ public final class QdrantStatement extends AbstractStatement {
         // A dropped collection's columns are gone; a new one by that name has its own
         if (plan instanceof DropCollectionPlan drop) {
             schemaReader.forget(drop.collection()::equals);
+        }
+        if (plan instanceof CreateCollectionPlan create) {
+            schemaReader.forget(create.collection()::equals);
         }
 
         return result;

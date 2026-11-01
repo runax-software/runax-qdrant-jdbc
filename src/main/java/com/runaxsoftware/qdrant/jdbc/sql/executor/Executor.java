@@ -9,6 +9,7 @@ import com.runaxsoftware.qdrant.jdbc.resultset.ResultColumn;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConstantPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CountPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DeletePointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
@@ -141,6 +142,11 @@ public final class Executor {
             return ExecutionResult.updated(0);
         }
 
+        if (plan instanceof CreateCollectionPlan create) {
+            create(create);
+            return ExecutionResult.updated(0);
+        }
+
         if (plan instanceof SystemTablePlan system) {
             return ExecutionResult.rows(new ListResultSet(resultColumns(system),
                 systemRows(system, limit(system.limit(), maxRows)), statement));
@@ -198,6 +204,33 @@ public final class Executor {
         }
     }
 
+    /**
+     * Creates the collection, then its indexes. Qdrant can't do both in one call, so when an
+     * index fails the collection is deleted again: a CREATE TABLE either makes the whole table
+     * or none of it.
+     */
+    private void create(CreateCollectionPlan plan) throws SQLException {
+        if (plan.ifNotExists() && writer.collectionExists(plan.collection())) {
+            return;
+        }
+
+        writer.createCollection(plan.collection(), plan.config());
+
+        try {
+            for (CreateCollectionPlan.PayloadIndex index : plan.indexes()) {
+                writer.createIndex(plan.collection(), index.field(), index.type());
+            }
+        } catch (SQLException e) {
+            try {
+                writer.deleteCollection(plan.collection());
+            } catch (SQLException undo) {
+                e.addSuppressed(undo);
+            }
+
+            throw e;
+        }
+    }
+
     private static Writer writer(QdrantGateway gateway) {
         return new Writer() {
             @Override
@@ -213,6 +246,22 @@ public final class Executor {
             @Override
             public void deleteCollection(String collection) throws SQLException {
                 gateway.deleteCollection(collection);
+            }
+
+            @Override
+            public boolean collectionExists(String collection) throws SQLException {
+                return gateway.collectionExists(collection);
+            }
+
+            @Override
+            public void createCollection(String collection, JsonNode config) throws SQLException {
+                gateway.createCollection(collection, config);
+            }
+
+            @Override
+            public void createIndex(String collection, String field, String type)
+                throws SQLException {
+                gateway.createIndex(collection, field, type);
             }
         };
     }
