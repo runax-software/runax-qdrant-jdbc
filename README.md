@@ -113,7 +113,7 @@ FROM system.collections
 | `WHERE` on payload fields | Filter (`must` / `should` / `must_not`) | Fast with payload indexes |
 | `LIMIT` | `limit` | |
 | `OFFSET n` | Scroll | Qdrant pages with a cursor, so the driver skips `n` points |
-| `ORDER BY field` | Scroll `order_by` | Needs a range index on the field |
+| `ORDER BY field` | Scroll `order_by` | Needs a range index on the field, and a `LIMIT` |
 | `COUNT(*)` | Count API | |
 | `GROUP BY field` + `COUNT(*)` | Facet API | Needs a keyword index on the field |
 | `ORDER BY similarity(v, [0.1, ...]) DESC` | Query API | Score returned as `_score`; needs a `LIMIT` |

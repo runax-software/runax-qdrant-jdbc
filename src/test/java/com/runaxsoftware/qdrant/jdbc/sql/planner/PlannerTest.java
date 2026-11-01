@@ -5,6 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.runaxsoftware.qdrant.jdbc.gateway.models.Ordering;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadIndexType;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantCollection;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.VectorField;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.VectorKind;
@@ -63,6 +65,20 @@ class PlannerTest {
                     new ColumnDefinition("colbert", ColumnKind.VECTOR, ColumnType.MULTIVECTOR, 2, "colbert", ""),
                     new ColumnDefinition("sparse", ColumnKind.VECTOR, ColumnType.SPARSE_VECTOR, 0, "sparse", "")));
 
+    private static final TableSchema INDEXED = new TableSchema(
+            new QdrantCollection("indexed", 3, List.of(), Map.of(
+                    "price", PayloadIndexType.FLOAT,
+                    "year", PayloadIndexType.INTEGER,
+                    "created_at", PayloadIndexType.DATETIME,
+                    "name", PayloadIndexType.KEYWORD)),
+            List.of(
+                    new ColumnDefinition("_id", ColumnKind.ID, ColumnType.TEXT, 0, null, ""),
+                    new ColumnDefinition("name", ColumnKind.PAYLOAD_FIELD, ColumnType.TEXT, 0, "name", ""),
+                    new ColumnDefinition("year", ColumnKind.PAYLOAD_FIELD, ColumnType.INTEGER, 0, "year", ""),
+                    new ColumnDefinition("price", ColumnKind.PAYLOAD_FIELD, ColumnType.FLOAT, 0, "price", ""),
+                    new ColumnDefinition("created_at", ColumnKind.PAYLOAD_FIELD, ColumnType.DATETIME, 0, "created_at", ""),
+                    new ColumnDefinition("_payload", ColumnKind.PAYLOAD, ColumnType.JSON, 0, null, "")));
+
     private static final Catalog CATALOG = name -> {
         if (name.equals("docs")) {
             return DOCS;
@@ -72,6 +88,9 @@ class PlannerTest {
         }
         if (name.equals("named")) {
             return NAMED;
+        }
+        if (name.equals("indexed")) {
+            return INDEXED;
         }
 
         throw new SQLException("Collection " + name + " doesn't exist", "42S02");
@@ -179,6 +198,64 @@ class PlannerTest {
             "SELECT 1 FROM docs"})
     void rejectsWhatASelectWithFromCantDoYet(String sql) {
         assertThrows(SQLFeatureNotSupportedException.class, () -> plan(sql, CATALOG));
+    }
+
+    // Ordering
+
+    @Test
+    void ordersByARangeIndexedField() throws SQLException {
+        assertEquals(new Ordering("price", false),
+                scroll("SELECT _id FROM indexed ORDER BY price LIMIT 5").ordering());
+        assertEquals(new Ordering("price", true),
+                scroll("SELECT _id FROM indexed ORDER BY price DESC LIMIT 5").ordering());
+        assertEquals(new Ordering("year", false),
+                scroll("SELECT _id FROM indexed ORDER BY year ASC LIMIT 5").ordering());
+        assertEquals(new Ordering("created_at", true),
+                scroll("SELECT _id FROM indexed t ORDER BY t.created_at DESC LIMIT 5").ordering());
+    }
+
+    @Test
+    void ordersAFilteredReadToo() throws SQLException {
+        ScrollPlan plan = scroll("SELECT _id FROM indexed WHERE name = 'Lamp' "
+                + "ORDER BY price DESC LIMIT 5");
+
+        assertEquals(new Ordering("price", true), plan.ordering());
+        assertEquals("{\"must\":[{\"key\":\"name\",\"match\":{\"value\":\"Lamp\"}}]}",
+                plan.filter().toString());
+    }
+
+    @Test
+    void readsPointsInQdrantsOwnOrderForTheIdColumn() throws SQLException {
+        // Which is the order a scroll reads in anyway, so it needs no ordering and no limit
+        ScrollPlan plan = scroll("SELECT _id FROM indexed ORDER BY _id");
+
+        assertEquals(null, plan.ordering());
+        assertEquals(null, plan.limit());
+    }
+
+    @Test
+    void rejectsReadingPointsFromTheHighestIdDown() {
+        SQLException error = assertThrows(SQLFeatureNotSupportedException.class,
+                () -> plan("SELECT _id FROM indexed ORDER BY _id DESC LIMIT 5", CATALOG));
+
+        assertTrue(error.getMessage().contains("ORDER BY _id DESC isn't supported"),
+                error.getMessage());
+    }
+
+    @Test
+    void rejectsOrderingByAFieldQdrantCantOrderBy() {
+        SQLException keyword = assertThrows(SQLFeatureNotSupportedException.class,
+                () -> plan("SELECT _id FROM indexed ORDER BY name LIMIT 5", CATALOG));
+        assertTrue(keyword.getMessage().contains("indexed as keyword"), keyword.getMessage());
+
+        SQLException missing = assertThrows(SQLFeatureNotSupportedException.class,
+                () -> plan("SELECT _id FROM docs ORDER BY price LIMIT 5", CATALOG));
+        assertTrue(missing.getMessage().contains("not indexed"), missing.getMessage());
+
+        assertThrows(SQLFeatureNotSupportedException.class,
+                () -> plan("SELECT _id FROM indexed ORDER BY _payload LIMIT 5", CATALOG));
+        assertThrows(SQLFeatureNotSupportedException.class,
+                () -> plan("SELECT _id FROM docs ORDER BY _vector LIMIT 5", CATALOG));
     }
 
     // Similarity search

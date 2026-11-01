@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `ORDER BY` a payload field, mapped to Qdrant's scroll `order_by`: it needs a range index on
+  the field (`integer`, `float`, or `datetime`), which the driver checks against the
+  collection's own indexes before reading, and a `LIMIT` or the statement's maximum rows,
+  because Qdrant answers an ordered read in one page and returns no cursor to ask for another.
+  The fetch size doesn't cut an ordered read down, since there would be no second page to read
+  the rest from. `ORDER BY _id` is Qdrant's own order, which a scroll reads in anyway, so it
+  pages as usual and needs no limit; `ORDER BY _id DESC` is an error, as Qdrant reads IDs
+  upwards. An ordered read takes the same `WHERE` filter as any other. ([#18])
+
 - Catalog `qdrant` and schema `collections`. Every collection is listed under them, and
   the connection reports them as its current catalog and schema, so DataGrip shows the
   collections straight away instead of under `database #1 › schema #1` placeholders with
@@ -107,6 +116,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#13]: https://github.com/runax-software/runax-qdrant-jdbc/pull/13
 [#14]: https://github.com/runax-software/runax-qdrant-jdbc/pull/14
 [#15]: https://github.com/runax-software/runax-qdrant-jdbc/pull/15
+[#18]: https://github.com/runax-software/runax-qdrant-jdbc/pull/18
 [#16]: https://github.com/runax-software/runax-qdrant-jdbc/pull/16
 [#17]: https://github.com/runax-software/runax-qdrant-jdbc/pull/17
 [#20]: https://github.com/runax-software/runax-qdrant-jdbc/pull/20

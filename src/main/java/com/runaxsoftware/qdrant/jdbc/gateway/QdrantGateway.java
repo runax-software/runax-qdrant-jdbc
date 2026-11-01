@@ -105,6 +105,12 @@ public class QdrantGateway implements AutoCloseable {
         if (scroll.offset() != null) body.set("offset", scroll.offset());
         if (scroll.filter() != null) body.set("filter", scroll.filter());
 
+        if (scroll.ordering() != null) {
+            body.putObject("order_by")
+                .put("key", scroll.ordering().key())
+                .put("direction", scroll.ordering().direction());
+        }
+
         return RestModels.scrollPage(
             request(HttpMethod.POST, "/collections/" + segment(scroll.collection()) + "/points/scroll", body));
     }

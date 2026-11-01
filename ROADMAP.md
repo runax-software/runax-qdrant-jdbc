@@ -25,11 +25,12 @@ Planned work, roughly in the order it will land. The SQL each item accepts is sp
   `ORDER BY similarity(vector, [0.1, ...]) DESC` through the Query API, with a `_score`
   column. Dense vectors only: searching a sparse vector or a multivector, and the other forms
   a search can take, come with the items below.
-- [ ] **DataGrip compatibility** — harmless defaults for the `Connection` and
+- [x] **DataGrip compatibility** — harmless defaults for the `Connection` and
   `Statement` methods DataGrip calls on every connection, and support for the SQL it
   generates when opening, filtering, and sorting a table. The defaults and the statement
   that opens a table (`SELECT t.* FROM collections.docs t`, through table aliases and
-  qualified names) and filtering through `WHERE` are done; sorting needs `ORDER BY`.
+  qualified names), filtering through `WHERE`, and sorting through `ORDER BY` are all done.
+  What a grid still can't do is page past the first screen (`OFFSET`), its own item below.
 - [x] **Integration tests** against Qdrant in Docker, run by CI on every pull request.
 - [ ] **Packaging** — one self-contained jar, a DataGrip setup guide, and publishing to
   Maven Central as `com.runaxsoftware:qdrant-jdbc`. The jar (`./gradlew shadowJar`) and
@@ -40,8 +41,9 @@ Planned work, roughly in the order it will land. The SQL each item accepts is sp
 - [ ] **Embedding model per vector** — kept in the collection's metadata for each named
   vector, not per connection, so a query can't silently use the wrong model.
 - [ ] **GROUP BY** with `COUNT(*)` through the facet API.
-- [ ] **ORDER BY** on range-indexed payload fields. Only `ORDER BY similarity(...) DESC`
-  works so far; every other ordering is an error.
+- [x] **ORDER BY** on range-indexed payload fields, through the scroll's `order_by`, and
+  `ORDER BY _id` as Qdrant's own order. An ordered read needs a limit, since Qdrant answers
+  one in a single page; paging an ordered read by value (`order_by.start_from`) comes later.
 - [ ] **Prepared statements** with parameters.
 - [ ] **Grid edits** — `UPDATE ... WHERE _id = ?` from DataGrip's data editor, mapped to
   Qdrant's set-payload call.

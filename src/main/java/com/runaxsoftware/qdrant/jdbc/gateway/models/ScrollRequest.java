@@ -19,13 +19,22 @@ public record ScrollRequest(
     JsonNode offset,
     boolean withPayload,
     boolean withVector,
-    JsonNode filter) {
+    JsonNode filter,
+    Ordering ordering) {
 
     /**
-     * A page of every point, unfiltered.
+     * A page of every point, unfiltered and in Qdrant's own order.
      */
     public ScrollRequest(String collection, int limit, JsonNode offset, boolean withPayload,
                          boolean withVector) {
-        this(collection, limit, offset, withPayload, withVector, null);
+        this(collection, limit, offset, withPayload, withVector, null, null);
+    }
+
+    /**
+     * A filtered page in Qdrant's own order.
+     */
+    public ScrollRequest(String collection, int limit, JsonNode offset, boolean withPayload,
+                         boolean withVector, JsonNode filter) {
+        this(collection, limit, offset, withPayload, withVector, filter, null);
     }
 }

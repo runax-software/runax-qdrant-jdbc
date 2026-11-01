@@ -88,7 +88,7 @@ Objects and arrays use PostgreSQL's JSON operators and functions:
 | `LIMIT n` | `limit` |
 | `OFFSET n` | Query API `offset` for searches; for plain reads, skip `n` points with the cursor |
 | `ORDER BY _id` | Scroll order (the default) |
-| `ORDER BY price DESC` | `order_by` with direction; needs a range index on `price` |
+| `ORDER BY price DESC` | `order_by` with direction; needs a range index on `price`, and a limit, since Qdrant answers an ordered read in one page |
 | `ORDER BY RANDOM()` | Query `sample: random` |
 | `SELECT MIN(price)`, `MAX(price)` | `order_by` on `price` with `limit 1`; needs a range index |
 | `SELECT DISTINCT lang` | Facet on `lang` |
