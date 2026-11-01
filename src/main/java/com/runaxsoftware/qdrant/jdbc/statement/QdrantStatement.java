@@ -35,8 +35,8 @@ import java.util.List;
  * instead; a SELECT from one of the {@code system} schema's tables reads the server's own state
  * at once; a SELECT without FROM (such as a tool's {@code SELECT 'keep alive'}) returns its row.
  * The statement's maximum rows limit every result, and its fetch size sets how many points one
- * page reads. UPDATE, DELETE, TRUNCATE, DROP TABLE and CREATE TABLE change what Qdrant holds and return a count
- * instead, unless the connection is read-only.
+ * page reads. INSERT, UPDATE, DELETE, TRUNCATE, DROP TABLE and CREATE TABLE change what Qdrant
+ * holds and return a count instead, unless the connection is read-only.
  *
  * <p>The columns come from the connection's {@link SchemaReader}, which keeps them for a while,
  * so they can be older than the collection. When the SQL names a column the kept columns don't
@@ -51,6 +51,7 @@ public class QdrantStatement extends AbstractStatement {
     private final Executor executor;
     private final SchemaReader schemaReader;
     private final QdrantConnection connection;
+    private List<String> generatedKeys = List.of();
 
     public QdrantStatement(QdrantConnection connection) {
         super(connection);
@@ -163,6 +164,7 @@ public class QdrantStatement extends AbstractStatement {
     private ExecutionResult run(Plan plan) throws SQLException {
         closeResultSet();
         setUpdateCount(-1);
+        generatedKeys = List.of();
 
         if (plan.changesData() && connection.isReadOnly()) {
             throw new SQLException("The connection is read-only, so it can't change what Qdrant "
@@ -174,6 +176,7 @@ public class QdrantStatement extends AbstractStatement {
             : executor.execute(plan, this);
         setResultSet(result.resultSet());
         setUpdateCount(result.updateCount());
+        generatedKeys = result.keys();
 
         if (result.warning() != null) {
             warn(result.warning());
@@ -188,6 +191,20 @@ public class QdrantStatement extends AbstractStatement {
         }
 
         return result;
+    }
+
+    /**
+     * The IDs of the points the latest INSERT added, as one {@code _id} column: the ones the
+     * statement gave, and the UUIDs the driver made for rows without one. Empty after anything
+     * else.
+     */
+    @Override
+    public ResultSet getGeneratedKeys() throws SQLException {
+        checkOpen();
+        var rows = new ArrayList<Object[]>();
+        for (String key : generatedKeys) rows.add(new Object[] {key});
+
+        return new ListResultSet(List.of(ResultColumn.of("_id", Types.VARCHAR)), rows, this);
     }
 
     /**

@@ -399,7 +399,7 @@ final class SelectPlanner {
      * model, and one that names another is an error rather than a search that silently finds
      * nonsense.
      */
-    private static EmbedText embed(FunctionCall call, ColumnDefinition vector, TableSchema schema)
+    static EmbedText embed(FunctionCall call, ColumnDefinition vector, TableSchema schema)
         throws SQLException {
         String usage = EMBED + "('refund policy', 'provider:model'), as " + SIMILARITY + "("
             + vector.name() + ", " + EMBED + "('refund policy', 'openai:text-embedding-3-small'))";

@@ -1,6 +1,9 @@
 package com.runaxsoftware.qdrant.jdbc.sql.executor;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.runaxsoftware.qdrant.jdbc.embedding.Embedders;
 import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetHit;
@@ -20,6 +23,8 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.EmbedText;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetColumn;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.InsertPointsPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.NewPoint;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
@@ -35,7 +40,9 @@ import java.sql.SQLSyntaxErrorException;
 import java.sql.Statement;
 import java.sql.Types;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Runs a plan and returns what it produced.
@@ -53,6 +60,8 @@ public final class Executor {
     static final int MAX_PAGE_SIZE = 1_000;
 
     private static final String UNKNOWN_TABLE = "42S02";
+
+    private static final JsonNodeFactory JSON = JsonNodeFactory.instance;
 
     // What Qdrant answers when it's asked to embed with a model and has no inference service
     private static final String NO_INFERENCE = "InferenceService URL not configured";
@@ -205,6 +214,10 @@ public final class Executor {
             return ExecutionResult.updated(delete(delete));
         }
 
+        if (plan instanceof InsertPointsPlan insert) {
+            return ExecutionResult.inserted(insert(insert));
+        }
+
         if (plan instanceof UpdatePointsPlan update) {
             return ExecutionResult.updated(update(update));
         }
@@ -261,6 +274,72 @@ public final class Executor {
         }
 
         return count;
+    }
+
+    /**
+     * Adds the plan's points and returns their IDs. A point ID an INSERT gives mustn't be taken,
+     * as a primary key mustn't: Qdrant's upsert would replace that point, so the IDs are looked
+     * up first, and the upsert skips any point that arrives in between.
+     */
+    private List<String> insert(InsertPointsPlan plan) throws SQLException {
+        List<JsonNode> given = plan.points().stream()
+            .filter(NewPoint::idGiven)
+            .map(NewPoint::id)
+            .toList();
+
+        if (!given.isEmpty()) {
+            List<JsonNode> taken = writer.existingIds(plan.collection(), given);
+
+            if (!taken.isEmpty()) {
+                throw new SQLException("Point " + taken.get(0) + " is already in "
+                    + plan.collection() + ": INSERT adds new points, and UPDATE changes one",
+                    "23505");
+            }
+        }
+
+        var points = new ArrayList<JsonNode>(plan.points().size());
+        for (NewPoint point : plan.points()) points.add(point(point, plan.collection()));
+
+        writer.insertPoints(plan.collection(), points);
+
+        return plan.points().stream().map(x -> x.id().asText()).toList();
+    }
+
+    /**
+     * A point as Qdrant takes it, with the vectors the driver embeds made now: the unnamed
+     * vector on its own, named ones under their names.
+     */
+    private JsonNode point(NewPoint point, String collection) throws SQLException {
+        Map<String, JsonNode> vectors = new LinkedHashMap<>(point.vectors());
+
+        for (Map.Entry<String, EmbedText> embed : point.embeds().entrySet()) {
+            EmbedText text = embed.getValue();
+            List<Double> vector = embedders.embedder(text.model().provider())
+                .embed(text.model().name(), text.text());
+
+            if (vector.size() != text.dimensions()) {
+                throw new SQLException(text.model() + " made a vector of " + vector.size()
+                    + " dimensions, and '" + embed.getKey() + "' of " + collection + " has "
+                    + text.dimensions(), "42000");
+            }
+
+            ArrayNode values = JSON.arrayNode();
+            vector.forEach(values::add);
+            vectors.put(embed.getKey(), values);
+        }
+
+        ObjectNode json = JSON.objectNode();
+        json.set("id", point.id());
+        json.set("payload", point.payload());
+
+        if (vectors.containsKey("")) {
+            json.set("vector", vectors.get(""));
+        } else {
+            ObjectNode named = json.putObject("vector");
+            vectors.forEach(named::set);
+        }
+
+        return json;
     }
 
     /**
@@ -370,6 +449,18 @@ public final class Executor {
             @Override
             public void deletePoints(String collection, JsonNode filter) throws SQLException {
                 gateway.deletePoints(collection, filter);
+            }
+
+            @Override
+            public List<JsonNode> existingIds(String collection, List<JsonNode> ids)
+                throws SQLException {
+                return gateway.existingIds(collection, ids);
+            }
+
+            @Override
+            public void insertPoints(String collection, List<JsonNode> points)
+                throws SQLException {
+                gateway.insertPoints(collection, points);
             }
 
             @Override

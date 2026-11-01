@@ -271,6 +271,19 @@ else writes to the collection between the two calls. A `DELETE` without `WHERE` 
 that points to `TRUNCATE`, so a forgotten condition can't empty a collection. A read-only
 connection (`setReadOnly(true)`) refuses every write with SQLState `25006`.
 
+`INSERT INTO docs (columns) VALUES (…), (…)` runs as one upsert in `insert_only` mode. The
+column list is required, since a collection's columns come from its points. An ID the statement
+gives mustn't be taken: the driver looks the IDs up first and fails with `23505` before
+anything is written, and the `insert_only` upsert leaves alone any point that arrives in
+between. A row without `_id` gets a random UUID, which `getGeneratedKeys` returns, with the IDs
+the statement gave. `_payload` gives the whole payload, and fields named beside it go into it;
+`"specs.color"` builds its object; a field the collection doesn't have yet is added; `NULL`
+leaves a field or a vector out. A vector is written out (`[0.1, 0.2]`), given as JSON text as a
+tool sends a cell (`'[[0.1, 0.2]]'` for a multivector, `'{"indices": […], "values": […]}'`
+for a sparse vector), or made with `embed('text' [, 'provider:model'])`: Qdrant embeds a
+`qdrant:` model as it stores the point, and the driver embeds any other before it sends the
+point. `ON CONFLICT` and generating IDs other than UUIDs are still the target.
+
 `UPDATE docs SET … WHERE …` runs too, as one call to the batch update API: fields are set
 together, a field inside an object (`"specs.color"`, or `specs.color` without quotes) is set
 under its object's `key`, `NULL` deletes a field, and `_payload` replaces or clears the whole

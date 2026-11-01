@@ -216,6 +216,37 @@ public class QdrantGateway implements AutoCloseable {
     }
 
     /**
+     * The IDs among these that a collection already has a point for.
+     */
+    public List<JsonNode> existingIds(String collection, List<JsonNode> ids) throws SQLException {
+        ObjectNode body = JSON.createObjectNode().put("with_payload", false).put("with_vector", false);
+        ArrayNode list = body.putArray("ids");
+        ids.forEach(list::add);
+
+        var found = new ArrayList<JsonNode>();
+        for (JsonNode point : request(HttpMethod.POST,
+            "/collections/" + segment(collection) + "/points" + readParameters(), body)) {
+            found.add(point.path("id"));
+        }
+
+        return found;
+    }
+
+    /**
+     * Adds points, in one upsert that leaves any point already there as it is.
+     *
+     * @param points the points as Qdrant takes them: id, payload, and vector
+     */
+    public void insertPoints(String collection, List<JsonNode> points) throws SQLException {
+        ObjectNode body = JSON.createObjectNode().put("update_mode", "insert_only");
+        ArrayNode list = body.putArray("points");
+        points.forEach(list::add);
+
+        request(HttpMethod.PUT,
+            "/collections/" + segment(collection) + "/points" + writeParameters(), body);
+    }
+
+    /**
      * Deletes a collection, with its points and indexes. Fails with SQL state {@code 42S02} when
      * there's no such collection.
      */

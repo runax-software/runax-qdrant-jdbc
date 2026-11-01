@@ -157,6 +157,7 @@ RESET ALL;
 | `GROUP BY field` + `COUNT(*)` | Facet API | Needs a keyword, integer, bool, or uuid index; bounded like an ordered read |
 | `ORDER BY similarity(v, [0.1, ...]) DESC` | Query API | Score returned as `_score`; bounded like an ordered read |
 | `FROM system.collections`, `system.aliases` | Collection and alias APIs | Read-only system tables |
+| `INSERT INTO docs (_id, lang, dense) VALUES (…)` | Upsert that skips points already there | A taken ID is an error; no `_id` gets a UUID, from `getGeneratedKeys` |
 | `UPDATE docs SET lang = 'de' WHERE _id = 7` | Set or delete payload fields, in one batch | What DataGrip's data editor sends; needs a `WHERE` |
 | `DELETE FROM docs WHERE …` | Delete points by filter | Returns the number deleted; needs a `WHERE` |
 | `TRUNCATE TABLE docs` | Delete every point | The collection and its indexes stay |

@@ -8,6 +8,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DeletePointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropCollectionPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.InsertPointsPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.NewPoint;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdatePointsPlan;
 import com.runaxsoftware.qdrant.jdbc.support.Json;
 
@@ -18,6 +20,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 class WriteExecutorTest {
 
@@ -27,6 +30,7 @@ class WriteExecutorTest {
     private long matching = 3;
     private SQLException dropFailure;
     private boolean exists;
+    private final List<JsonNode> taken = new ArrayList<>();
     private String failingIndex;
 
     private final Executor executor = new Executor(
@@ -55,6 +59,17 @@ class WriteExecutorTest {
             @Override
             public void deletePoints(String collection, JsonNode filter) {
                 calls.add("delete " + collection + " " + filter);
+            }
+
+            @Override
+            public List<JsonNode> existingIds(String collection, List<JsonNode> ids) {
+                calls.add("existing " + collection + " " + ids);
+                return ids.stream().filter(taken::contains).toList();
+            }
+
+            @Override
+            public void insertPoints(String collection, List<JsonNode> points) {
+                calls.add("insert " + collection + " " + points);
             }
 
             @Override
@@ -150,6 +165,49 @@ class WriteExecutorTest {
         assertEquals(0, executor.execute(new UpdatePointsPlan("docs", FILTER, List.of()), statement())
             .updateCount());
         assertEquals(List.of("count docs " + FILTER), calls);
+    }
+
+    // INSERT
+
+    private static NewPoint point(JsonNode id, boolean given) {
+        return new NewPoint(id, given, Json.object("lang", "en"),
+            Map.of("dense", Json.array(0.1, 0.2)), Map.of());
+    }
+
+    @Test
+    void insertsThePointsAndReturnsTheirIds() throws SQLException {
+        ExecutionResult result = executor.execute(new InsertPointsPlan("docs", List.of(
+            point(Json.node(7), true), point(Json.node("5c56c793-69f3-4fbf-87e6-c4bf54c28c26"), false))),
+            statement());
+
+        assertEquals(2, result.updateCount());
+        assertEquals(List.of("7", "5c56c793-69f3-4fbf-87e6-c4bf54c28c26"), result.keys());
+        assertEquals(List.of("existing docs [7]",
+            "insert docs [{\"id\":7,\"payload\":{\"lang\":\"en\"},\"vector\":{\"dense\":[0.1,0.2]}}, "
+                + "{\"id\":\"5c56c793-69f3-4fbf-87e6-c4bf54c28c26\",\"payload\":{\"lang\":\"en\"},"
+                + "\"vector\":{\"dense\":[0.1,0.2]}}]"), calls,
+            "only the IDs the statement gave are looked up");
+    }
+
+    @Test
+    void refusesAnIdThatIsTakenAndInsertsNothing() {
+        taken.add(Json.node(7));
+
+        SQLException error = assertThrows(SQLException.class, () -> executor.execute(
+            new InsertPointsPlan("docs", List.of(point(Json.node(7), true))), statement()));
+
+        assertEquals("23505", error.getSQLState());
+        assertEquals("Point 7 is already in docs: INSERT adds new points, and UPDATE changes one",
+            error.getMessage());
+        assertEquals(List.of("existing docs [7]"), calls);
+    }
+
+    @Test
+    void putsTheUnnamedVectorOnItsOwn() throws SQLException {
+        executor.execute(new InsertPointsPlan("docs", List.of(new NewPoint(Json.node(1), false,
+            Json.object(), Map.of("", Json.array(1, 0)), Map.of()))), statement());
+
+        assertEquals(List.of("insert docs [{\"id\":1,\"payload\":{},\"vector\":[1,0]}]"), calls);
     }
 
     // CREATE TABLE

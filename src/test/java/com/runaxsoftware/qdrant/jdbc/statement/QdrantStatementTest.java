@@ -567,13 +567,20 @@ class QdrantStatementTest {
     }
 
     @Test
-    void doesNotSupportBatchesGeneratedKeysOrCursorNames() {
+    void doesNotSupportBatchesOrCursorNames() {
         assertThrows(SQLFeatureNotSupportedException.class, () -> statement.addBatch(SQL));
         assertThrows(SQLFeatureNotSupportedException.class, statement::clearBatch);
         assertThrows(SQLFeatureNotSupportedException.class, statement::executeBatch);
         assertThrows(SQLFeatureNotSupportedException.class, statement::executeLargeBatch);
-        assertThrows(SQLFeatureNotSupportedException.class, statement::getGeneratedKeys);
         assertThrows(SQLFeatureNotSupportedException.class, () -> statement.setCursorName("c"));
+    }
+
+    @Test
+    void hasNoGeneratedKeysUntilAnInsertAddsPoints() throws SQLException {
+        try (ResultSet keys = statement.getGeneratedKeys()) {
+            assertEquals("_id", keys.getMetaData().getColumnName(1));
+            assertFalse(keys.next());
+        }
     }
 
     @Test

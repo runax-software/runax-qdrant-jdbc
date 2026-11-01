@@ -3,6 +3,7 @@ package com.runaxsoftware.qdrant.jdbc.sql.planner;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateTableStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DeleteStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropTableStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.InsertStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.ResetStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SetStatement;
@@ -24,6 +25,7 @@ public final class Planner {
     private final WritePlanner writePlanner = new WritePlanner();
     private final OptionPlanner optionPlanner = new OptionPlanner();
     private final UpdatePlanner updatePlanner = new UpdatePlanner();
+    private final InsertPlanner insertPlanner = new InsertPlanner();
 
     public Plan plan(Statement statement, Catalog catalog) throws SQLException {
         if (statement instanceof SelectStatement select) {
@@ -40,6 +42,9 @@ public final class Planner {
         }
         if (statement instanceof CreateTableStatement create) {
             return writePlanner.plan(create);
+        }
+        if (statement instanceof InsertStatement insert) {
+            return insertPlanner.plan(insert, catalog);
         }
         if (statement instanceof UpdateStatement update) {
             return updatePlanner.plan(update, catalog);
