@@ -20,6 +20,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.TableName;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.VectorLiteral;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConstantPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CountPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
@@ -44,6 +45,10 @@ final class SelectPlanner {
 
     // The function a search orders by, lower case: the driver's own names ignore case
     private static final String SIMILARITY = "similarity";
+
+    // The one aggregate Qdrant answers itself, lower case, and the name PostgreSQL gives its
+    // column when the statement gives it none
+    private static final String COUNT = "count";
 
     // The driver's score column, which a search has and a scroll doesn't
     private static final String SCORE = DriverColumns.SCORE.columnName();
@@ -87,6 +92,11 @@ final class SelectPlanner {
                 + SystemTable.SCHEMA + " for the server's own tables", "42S02");
         }
 
+        SelectItem counted = counted(statement.items());
+        if (counted != null) {
+            return count(statement, table.name(), counted.alias());
+        }
+
         TableSchema schema = catalog.table(table.name());
         Search search = search(statement, schema);
         List<ColumnDefinition> columns =
@@ -103,6 +113,60 @@ final class SelectPlanner {
                 filter)
             : new QueryPlan(schema.name(), columns, search.vector(), search.query(), withPayload,
                 withVector, statement.limit(), filter);
+    }
+
+    /**
+     * The item a select list counts points with, {@code COUNT(*)} in any case and under any
+     * name, or {@code null} when the list counts nothing. Qdrant's count API is the only
+     * aggregate it runs, so every other call in a select list is an error here rather than work
+     * the driver would have to do over a whole collection.
+     */
+    private static SelectItem counted(List<SelectItem> items) throws SQLException {
+        for (SelectItem item : items) {
+            if (!(item.expression() instanceof FunctionCall call)) {
+                continue;
+            }
+
+            if (!call.is(COUNT)) {
+                throw new SQLFeatureNotSupportedException("'" + call.name() + "' isn't an "
+                    + "aggregate this driver has: Qdrant counts points, through COUNT(*), and "
+                    + "computes no other aggregate over a collection");
+            }
+            if (call.arguments().size() != 1 || !(call.arguments().get(0) instanceof Star)) {
+                throw new SQLFeatureNotSupportedException("COUNT takes a star, as COUNT(*): "
+                    + "Qdrant counts the points of a collection, not the values of a field");
+            }
+            if (items.size() > 1) {
+                throw new SQLFeatureNotSupportedException("COUNT(*) is a row of its own: a "
+                    + "statement that counts a collection's points selects nothing besides it");
+            }
+
+            return item;
+        }
+
+        return null;
+    }
+
+    /**
+     * A count of a collection's points. Qdrant's count API answers one number for the whole
+     * collection, so the plan needs nothing but the collection's name and what to call the
+     * column: no column of the collection is read, and none has to be looked up.
+     *
+     * @param alias the name the statement gives the count, or {@code null} for the driver's own
+     */
+    private static Plan count(SelectStatement statement, String collection, String alias)
+        throws SQLException {
+        if (statement.where() != null) {
+            throw new SQLFeatureNotSupportedException("WHERE isn't supported in a count yet: "
+                + "Qdrant's count API takes the same filter a read does, and the count doesn't "
+                + "send one");
+        }
+        if (!statement.orderBy().isEmpty()) {
+            throw new SQLFeatureNotSupportedException(
+                "ORDER BY isn't supported in a count: COUNT(*) is one row, in no order");
+        }
+
+        return new CountPlan(collection, alias == null ? COUNT : alias, statement.limit());
     }
 
     /**
@@ -216,6 +280,12 @@ final class SelectPlanner {
         SystemTable table = SystemTable.named(name.name()).orElseThrow(
             () -> new SQLSyntaxErrorException("Unknown table '" + name.qualified() + "': the "
                 + SystemTable.SCHEMA + " schema has " + systemTableNames(), "42S02"));
+
+        if (counted(statement.items()) != null) {
+            throw new SQLFeatureNotSupportedException("Counting " + name.qualified() + " isn't "
+                + "supported: Qdrant counts the points of a collection, and a table of the "
+                + SystemTable.SCHEMA + " schema describes the server instead");
+        }
 
         List<SystemColumn> columns = resolve(statement.items(), table, statement.alias());
 

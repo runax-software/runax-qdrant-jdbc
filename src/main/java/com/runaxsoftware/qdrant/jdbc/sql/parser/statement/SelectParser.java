@@ -42,6 +42,11 @@ public final class SelectParser {
 
         Expression where = this.tokenStream.matchKeyword("WHERE") ? this.expressionParser.parseOr() : null;
 
+        if (this.tokenStream.peekKeyword("GROUP")) {
+            throw this.tokenStream.errorAt("GROUP BY isn't supported yet: a count per group "
+                + "comes from Qdrant's facet API", "42000");
+        }
+
         var orderBy = new ArrayList<OrderItem>();
         if (this.tokenStream.matchKeyword("ORDER")) {
             this.tokenStream.expectKeyword("BY");
@@ -65,12 +70,17 @@ public final class SelectParser {
 
     /**
      * One entry of the select list: {@code *}, {@code t.*}, a column named on its own or under
-     * the table or an alias, or a constant, each with its own alias or none. A star takes no
-     * alias of its own, as it stands for several columns.
+     * the table or an alias, a call such as {@code COUNT(*)}, or a constant, each with its own
+     * alias or none. A star takes no alias of its own, as it stands for several columns.
      */
     private SelectItem parseItem() throws SQLSyntaxErrorException {
         if (this.tokenStream.matchSymbol("*")) {
             return new SelectItem(Star.of(), null);
+        }
+
+        if (this.tokenStream.peekKeyword("DISTINCT")) {
+            throw this.tokenStream.errorAt("SELECT DISTINCT isn't supported yet: a field's "
+                + "distinct values come from Qdrant's facet API", "42000");
         }
 
         if (!this.tokenStream.peekIdentifier()) {
@@ -78,6 +88,10 @@ public final class SelectParser {
         }
 
         String name = this.tokenStream.expectIdentifier();
+        if (this.tokenStream.peekSymbol("(")) {
+            return item(this.expressionParser.parseCall(name));
+        }
+
         if (!this.tokenStream.matchSymbol(".")) {
             return item(Column.of(name));
         }

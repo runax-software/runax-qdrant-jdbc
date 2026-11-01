@@ -123,4 +123,16 @@ public final class TokenStream {
         return new SQLSyntaxErrorException(
             message + ", found " + found + " at " + SourceLocation.describe(sql, token.position()));
     }
+
+    /**
+     * An error at the token the stream is on, for SQL the driver reads and doesn't do: the
+     * message says what that is, so only the place is added, where {@link #error} also names
+     * the token it found instead of what it expected.
+     *
+     * @param sqlState the SQL state to report, as the planner reports one for SQL it can't run
+     */
+    public SQLSyntaxErrorException errorAt(String message, String sqlState) {
+        return new SQLSyntaxErrorException(
+            message + " at " + SourceLocation.describe(sql, peek().position()), sqlState);
+    }
 }

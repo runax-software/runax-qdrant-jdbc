@@ -22,6 +22,7 @@ import com.runaxsoftware.qdrant.jdbc.schema.ColumnType;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.Parser;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.Planner;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConstantPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CountPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.SystemTablePlan;
@@ -64,6 +65,8 @@ class ExecutorTest {
         throw new AssertionError("Scrolled " + request.collection());
     }, query -> {
         throw new AssertionError("Searched " + query.collection());
+    }, collection -> {
+        throw new AssertionError("Counted " + collection);
     }, table -> switch (table) {
         case ALIASES -> List.of(
             new Object[]{"best", "articles"}, new Object[]{"current", "products"});
@@ -420,10 +423,89 @@ class ExecutorTest {
             throw new AssertionError("Scrolled " + request.collection());
         }, query -> {
             throw failure;
+        }, collection -> {
+            throw new AssertionError("Counted " + collection);
         }, table -> List.of());
 
         assertSame(failure, assertThrows(SQLException.class,
             () -> failing.execute(plan(5L), STATEMENT)));
+    }
+
+    // Count plans
+
+    @Test
+    void runsACountPlanAsOneRowOwnedByTheStatement() throws SQLException {
+        var counted = new ArrayList<String>();
+        ExecutionResult result = counting(counted, 42)
+            .execute(new CountPlan("docs", "count", null), STATEMENT);
+
+        assertTrue(result.hasResultSet());
+        assertEquals(-1, result.updateCount());
+        assertEquals(List.of("docs"), counted);
+
+        try (ResultSet rows = result.resultSet()) {
+            ResultSetMetaData columns = rows.getMetaData();
+
+            assertSame(STATEMENT, rows.getStatement());
+            assertEquals(1, columns.getColumnCount());
+            assertEquals("count", columns.getColumnLabel(1));
+            assertEquals(Types.BIGINT, columns.getColumnType(1));
+            assertEquals("BIGINT", columns.getColumnTypeName(1));
+            assertEquals("", columns.getTableName(1), "a count is no column of the collection");
+            assertEquals(ResultSetMetaData.columnNoNulls, columns.isNullable(1));
+
+            assertTrue(rows.next());
+            assertEquals(42L, rows.getLong(1));
+            assertFalse(rows.next(), "a count is one row");
+        }
+    }
+
+    @Test
+    void namesTheCountColumnAsThePlanAsks() throws SQLException {
+        try (ResultSet rows = counting(new ArrayList<>(), 7)
+            .execute(new CountPlan("docs", "total", null), STATEMENT).resultSet()) {
+            assertEquals("total", rows.getMetaData().getColumnLabel(1));
+            assertTrue(rows.next());
+            assertEquals(7L, rows.getLong("total"));
+        }
+    }
+
+    @Test
+    void countsNothingForALimitOfNoRows() throws SQLException {
+        var counted = new ArrayList<String>();
+
+        try (ResultSet rows = counting(counted, 42)
+            .execute(new CountPlan("docs", "count", 0L), STATEMENT).resultSet()) {
+            assertEquals(1, rows.getMetaData().getColumnCount());
+            assertFalse(rows.next());
+        }
+
+        assertEquals(List.of(), counted, "no call counts a row nobody reads");
+    }
+
+    @Test
+    void countsOnceWhateverTheLimitAndMaximumRowsAllow() throws SQLException {
+        var counted = new ArrayList<String>();
+
+        assertEquals(List.of(42L), counts(counting(counted, 42), 1L, STATEMENT));
+        assertEquals(List.of(42L), counts(counting(counted, 42), 5L, statement(2, 0)));
+        assertEquals(List.of(42L), counts(counting(counted, 42), null, statement(1, 0)));
+        assertEquals(List.of("docs", "docs", "docs"), counted, "one call each, and only one");
+    }
+
+    @Test
+    void reportsWhatCountingReported() {
+        SQLException failure = new SQLException("Qdrant: Not found", "42S02");
+        Executor failing = new Executor(request -> {
+            throw new AssertionError("Scrolled " + request.collection());
+        }, query -> {
+            throw new AssertionError("Searched " + query.collection());
+        }, collection -> {
+            throw failure;
+        }, table -> List.of());
+
+        assertSame(failure, assertThrows(SQLException.class,
+            () -> failing.execute(new CountPlan("docs", "count", null), STATEMENT)));
     }
 
     // System table plans
@@ -502,6 +584,8 @@ class ExecutorTest {
             throw new AssertionError("Scrolled " + request.collection());
         }, query -> {
             throw new AssertionError("Searched " + query.collection());
+        }, collection -> {
+            throw new AssertionError("Counted " + collection);
         }, table -> {
             throw failure;
         });
@@ -540,7 +624,34 @@ class ExecutorTest {
                     JSON.createObjectNode().put("name", "Lamp"), null), 0.9),
                 new ScoredPoint(new Point(JSON.getNodeFactory().numberNode(2), null, null), 0.5))
                 .subList(0, (int) Math.min(2, query.limit()));
+        }, collection -> {
+            throw new AssertionError("Counted " + collection);
         }, table -> List.of());
+    }
+
+    /**
+     * An executor whose counts answer the same number and which records the collections it was
+     * asked to count.
+     */
+    private static Executor counting(List<String> counted, long count) {
+        return new Executor(request -> {
+            throw new AssertionError("Scrolled " + request.collection());
+        }, query -> {
+            throw new AssertionError("Searched " + query.collection());
+        }, collection -> {
+            counted.add(collection);
+
+            return count;
+        }, table -> List.of());
+    }
+
+    // The counts a plan's rows hold
+    private static List<Long> counts(Executor executor, Long limit, Statement statement)
+        throws SQLException {
+        try (ResultSet rows = executor.execute(new CountPlan("docs", "count", limit), statement)
+            .resultSet()) {
+            return longs(rows);
+        }
     }
 
     private static QueryPlan plan(Long limit) {

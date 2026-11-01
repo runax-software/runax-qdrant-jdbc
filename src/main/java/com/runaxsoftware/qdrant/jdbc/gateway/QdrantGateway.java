@@ -131,6 +131,19 @@ public class QdrantGateway implements AutoCloseable {
     }
 
     /**
+     * How many points a collection holds, through Qdrant's count API. The count is exact:
+     * Qdrant's estimate is a different number from one call to the same SQL to the next, and a
+     * count is the whole answer rather than a hint about one.
+     */
+    public long count(String collection) throws SQLException {
+        // The WHERE filter goes into this body, next to "exact", once filters are mapped
+        ObjectNode body = JSON.createObjectNode().put("exact", true);
+
+        return request(HttpMethod.POST,
+            "/collections/" + segment(collection) + "/points/count", body).path("count").asLong(0);
+    }
+
+    /**
      * Any endpoint; returns the response's "result".
      */
     public JsonNode request(HttpMethod method, String path, JsonNode body) throws SQLException {

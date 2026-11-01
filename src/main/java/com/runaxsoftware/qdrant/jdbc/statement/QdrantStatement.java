@@ -17,10 +17,11 @@ import java.sql.SQLException;
 /**
  * A statement. SQL is parsed and planned against the collections' columns, so syntax errors,
  * unknown collections and unknown columns are reported before anything runs. A SELECT from a
- * collection reads its points page by page; a SELECT from one of the {@code system} schema's
- * tables reads the server's own state at once; a SELECT without FROM (such as a tool's
- * {@code SELECT 'keep alive'}) returns its row. The statement's maximum rows limit every result,
- * and its fetch size sets how many points one page reads.
+ * collection reads its points page by page; a {@code COUNT(*)} of one asks Qdrant to count them
+ * instead; a SELECT from one of the {@code system} schema's tables reads the server's own state
+ * at once; a SELECT without FROM (such as a tool's {@code SELECT 'keep alive'}) returns its row.
+ * The statement's maximum rows limit every result, and its fetch size sets how many points one
+ * page reads.
  *
  * <p>The columns come from the connection's {@link SchemaReader}, which keeps them for a while,
  * so they can be older than the collection. When the SQL names a column the kept columns don't
