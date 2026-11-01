@@ -94,11 +94,22 @@ public final class ExpressionParser {
         }
 
         String name = this.tokenStream.expectIdentifier();
-        if (!this.tokenStream.matchSymbol("(")) {
+        if (!this.tokenStream.peekSymbol("(")) {
             return this.tokenStream.matchSymbol(".")
                 ? new Column(name, this.tokenStream.expectIdentifier())
                 : Column.of(name);
         }
+
+        return parseCall(name);
+    }
+
+    /**
+     * The arguments of a call whose name has already been read, as a select list does for
+     * {@code COUNT(*)}: there a name followed by brackets is a call and not a column, which
+     * only the brackets tell apart.
+     */
+    public Expression parseCall(String name) throws SQLSyntaxErrorException {
+        this.tokenStream.expectSymbol("(");
 
         var arguments = new ArrayList<Expression>();
         if (!this.tokenStream.matchSymbol(")")) {
@@ -126,9 +137,18 @@ public final class ExpressionParser {
     }
 
     /**
-     * One argument of a call: a column, a nested call, or a value such as a vector literal.
+     * One argument of a call: a star, as {@code COUNT(*)} counts whole rows, a column, a nested
+     * call, or a value such as a vector literal.
      */
     private Expression parseArgument() throws SQLSyntaxErrorException {
+        if (this.tokenStream.matchSymbol("*")) {
+            return Star.of();
+        }
+        if (this.tokenStream.peekKeyword("DISTINCT")) {
+            throw this.tokenStream.errorAt("DISTINCT isn't supported in a call: Qdrant counts "
+                + "points, and a field's distinct values come from its facet API", "42000");
+        }
+
         return this.tokenStream.peekIdentifier() ? parseTerm() : parseValue();
     }
 

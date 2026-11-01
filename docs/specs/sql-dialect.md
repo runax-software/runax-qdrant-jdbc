@@ -234,7 +234,16 @@ LIMIT 10;
 | `query_groups(…, lookup => 'docs')` | `with_lookup`: adds each group's record from `docs` as `_lookup` |
 | `SELECT * FROM distance_matrix(docs, dense, 100, 5)` | Search matrix pairs: 100 sampled points, their 5 nearest neighbours, as rows `(_a, _b, _score)` |
 
-Other aggregates (`SUM`, `AVG`, …) are errors: Qdrant has no way to compute them.
+**What runs today:** `SELECT COUNT(*) FROM docs`, as one count call, exact, answering one
+`BIGINT` column called `count` or whatever the statement calls it. Counting reads neither points
+nor columns, so a count of a collection that doesn't exist is Qdrant's answer to the count rather
+than a check before it. `LIMIT 0` returns no row and counts nothing, as it does for a `SELECT`
+without `FROM`; a count is one row, so no other limit changes it. A count with a `WHERE`, the
+`exact=false` hint, and the rest of this section are still the target.
+
+Other aggregates (`SUM`, `AVG`, …) are errors: Qdrant has no way to compute them. So are `COUNT`
+of a column, `COUNT(DISTINCT …)`, and `COUNT(*)` beside other select items, which Qdrant's count
+API has no answer for.
 
 ## Writing points
 

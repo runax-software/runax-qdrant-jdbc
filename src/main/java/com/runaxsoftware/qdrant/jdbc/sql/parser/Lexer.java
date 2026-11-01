@@ -5,9 +5,12 @@ import java.util.*;
 
 final class Lexer {
 
+    // GROUP and DISTINCT are keywords so that the SQL they belong to fails saying so, rather
+    // than reading as a name and failing somewhere later
     private static final Set<String> KETWORDS = Set.of(
         "SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "IN", "IS", "NULL",
-        "TRUE", "FALSE", "ORDER", "BY", "ASC", "DESC", "LIMIT", "OFFSET", "AS");
+        "TRUE", "FALSE", "ORDER", "BY", "ASC", "DESC", "LIMIT", "OFFSET", "AS",
+        "GROUP", "DISTINCT");
 
     private static final List<String> TWO_CHAR_SYMBOLS = List.of(
         "<=", ">=", "<>", "!=");

@@ -17,7 +17,10 @@ Planned work, roughly in the order it will land. The SQL each item accepts is sp
   when a query names their column. `WHERE` takes comparisons, `IN`, `IS NULL`, `AND`, `OR`
   and `NOT`; `LIKE`, `BETWEEN`, and the filter functions in the dialect spec (full text,
   geo, nested arrays) come later.
-- [ ] **COUNT(\*)** through the count API.
+- [x] **COUNT(\*)** through the count API — `SELECT COUNT(*) FROM docs` is one exact count call
+  and one `BIGINT` row, without reading a single point or column. Still to come: counting the
+  points a `WHERE` matches, by sending the filter above to the count, and a count per group
+  through the facet API below.
 - [x] **Similarity search with vector literals** —
   `ORDER BY similarity(vector, [0.1, ...]) DESC` through the Query API, with a `_score`
   column. Dense vectors only: searching a sparse vector or a multivector, and the other forms

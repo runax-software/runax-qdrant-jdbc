@@ -15,6 +15,7 @@ import com.runaxsoftware.qdrant.jdbc.schema.ColumnType;
 import com.runaxsoftware.qdrant.jdbc.schema.TableSchema;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.Parser;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConstantPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CountPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
@@ -341,6 +342,91 @@ class PlannerTest {
                 () -> plan("SELECT _id FROM docs" + search + " LIMIT 5 OFFSET 2", CATALOG));
     }
 
+    // Counting
+
+    @Test
+    void plansACountWithoutLookingUpTheCollectionsColumns() throws SQLException {
+        // Counting reads no column, so it costs the one call Qdrant counts with
+        CountPlan plan = count("SELECT COUNT(*) FROM docs", NO_LOOKUPS);
+
+        assertEquals("docs", plan.collection());
+        assertEquals("count", plan.column(), "the name PostgreSQL gives an unnamed count");
+        assertEquals(null, plan.limit());
+    }
+
+    @Test
+    void plansACountHoweverItIsWritten() throws SQLException {
+        assertEquals("count", count("select count(*) from docs", NO_LOOKUPS).column());
+        assertEquals("total", count("SELECT COUNT(*) AS total FROM docs", NO_LOOKUPS).column());
+        assertEquals("docs", count("SELECT COUNT(*) FROM docs t", NO_LOOKUPS).collection());
+        assertEquals("docs", count("SELECT COUNT(*) FROM collections.docs", NO_LOOKUPS)
+            .collection());
+        assertEquals("docs", count("SELECT COUNT(*) FROM qdrant.collections.docs t", NO_LOOKUPS)
+            .collection());
+    }
+
+    @Test
+    void plansTheLimitACountGives() throws SQLException {
+        assertEquals(5L, count("SELECT COUNT(*) FROM docs LIMIT 5", NO_LOOKUPS).limit());
+        assertEquals(0L, count("SELECT COUNT(*) FROM docs LIMIT 0", NO_LOOKUPS).limit());
+    }
+
+    @Test
+    void rejectsACountOfAColumn() {
+        SQLException error = assertThrows(SQLFeatureNotSupportedException.class,
+            () -> plan("SELECT COUNT(price) FROM docs", CATALOG));
+
+        assertEquals("COUNT takes a star, as COUNT(*): Qdrant counts the points of a collection, "
+            + "not the values of a field", error.getMessage());
+    }
+
+    @Test
+    void rejectsAggregatesQdrantCantCompute() {
+        for (String aggregate : List.of("SUM(price)", "AVG(price)", "MIN(price)", "MAX(price)")) {
+            SQLException error = assertThrows(SQLFeatureNotSupportedException.class,
+                () -> plan("SELECT " + aggregate + " FROM docs", CATALOG), aggregate);
+
+            assertTrue(error.getMessage().endsWith("isn't an aggregate this driver has: Qdrant "
+                + "counts points, through COUNT(*), and computes no other aggregate over a "
+                + "collection"), error.getMessage());
+        }
+    }
+
+    @Test
+    void rejectsACountAmongOtherSelectItems() {
+        for (String items : List.of("COUNT(*), title", "title, COUNT(*)", "COUNT(*), COUNT(*)")) {
+            SQLException error = assertThrows(SQLFeatureNotSupportedException.class,
+                () -> plan("SELECT " + items + " FROM docs", CATALOG), items);
+
+            assertEquals("COUNT(*) is a row of its own: a statement that counts a collection's "
+                + "points selects nothing besides it", error.getMessage());
+        }
+    }
+
+    @Test
+    void rejectsACountOfASystemTable() {
+        SQLException error = assertThrows(SQLFeatureNotSupportedException.class,
+            () -> plan("SELECT COUNT(*) FROM system.collections", NO_LOOKUPS));
+
+        assertEquals("Counting system.collections isn't supported: Qdrant counts the points of a "
+            + "collection, and a table of the system schema describes the server instead",
+            error.getMessage());
+
+        // The table's name is still what's reported when there's no such table
+        assertEquals("42S02", assertThrows(SQLSyntaxErrorException.class,
+            () -> plan("SELECT COUNT(*) FROM system.queries", NO_LOOKUPS)).getSQLState());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "SELECT COUNT(*) FROM docs WHERE price > 1",
+        "SELECT COUNT(*) FROM docs OFFSET 5",
+        "SELECT COUNT(*) FROM docs ORDER BY price",
+        "SELECT COUNT(*) FROM docs ORDER BY similarity(_vector, [0.1, 0.2, 0.3, 0.4]) DESC"})
+    void rejectsWhatACountCantDoYet(String sql) {
+        assertThrows(SQLFeatureNotSupportedException.class, () -> plan(sql, NO_LOOKUPS));
+    }
+
     // Table aliases and qualified names
 
     @Test
@@ -556,6 +642,10 @@ class PlannerTest {
 
     private QueryPlan query(String sql) throws SQLException {
         return (QueryPlan) plan(sql, CATALOG);
+    }
+
+    private CountPlan count(String sql, Catalog catalog) throws SQLException {
+        return (CountPlan) plan(sql, catalog);
     }
 
     private static List<String> names(ScrollPlan plan) {

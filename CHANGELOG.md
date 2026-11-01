@@ -62,6 +62,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   catalog, the two schemas, and the system tables and their columns — match whatever the
   case; a collection name is still matched exactly, as Qdrant matches it. An unknown catalog
   or schema reports SQLState `42S02`. ([#13])
+- `COUNT(*)`: `SELECT COUNT(*) FROM docs` asks Qdrant's count API how many points the collection
+  holds and returns one `BIGINT` row. The count is exact, and counting reads neither the points
+  nor the collection's columns, so the statement is one call to Qdrant. The column is called
+  `count`, as PostgreSQL names it, or whatever the statement names it (`COUNT(*) AS total`), and
+  `LIMIT 0` returns no row and counts nothing. `COUNT` of a column, `COUNT(DISTINCT ...)`, other
+  aggregates, `COUNT(*)` beside other select items, counting a `system` table, and `GROUP BY` say
+  what they are instead of scanning the collection in the driver. Counting the points a `WHERE`
+  matches isn't supported yet: Qdrant's count API takes the same filter a read does, and the
+  count doesn't send one. ([#17])
 
 ### Fixed
 
@@ -99,4 +108,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#14]: https://github.com/runax-software/runax-qdrant-jdbc/pull/14
 [#15]: https://github.com/runax-software/runax-qdrant-jdbc/pull/15
 [#16]: https://github.com/runax-software/runax-qdrant-jdbc/pull/16
+[#17]: https://github.com/runax-software/runax-qdrant-jdbc/pull/17
 [#20]: https://github.com/runax-software/runax-qdrant-jdbc/pull/20
