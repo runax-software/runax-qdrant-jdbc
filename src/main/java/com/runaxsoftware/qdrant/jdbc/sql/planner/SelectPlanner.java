@@ -23,6 +23,8 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.VectorLiteral;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConstantPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CountPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetColumn;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
@@ -52,6 +54,10 @@ final class SelectPlanner {
     // The one aggregate Qdrant answers itself, lower case, and the name PostgreSQL gives its
     // column when the statement gives it none
     private static final String COUNT = "count";
+
+    // The payload indexes Qdrant can count the values of, for a GROUP BY
+    private static final Set<PayloadIndexType> FACET_INDEXES = Set.of(PayloadIndexType.KEYWORD,
+        PayloadIndexType.INTEGER, PayloadIndexType.BOOL, PayloadIndexType.UUID);
 
     // The payload indexes Qdrant can order by: the ones that compare values as a range
     private static final Set<PayloadIndexType> RANGE_INDEXES = Set.of(
@@ -96,11 +102,23 @@ final class SelectPlanner {
         checkCollectionSchema(table);
 
         SelectItem counted = counted(statement.items());
-        if (counted != null) {
-            return count(statement, table.name(), counted.alias());
+
+        if (counted != null && statement.groupBy().isEmpty()) {
+            if (statement.items().size() > 1) {
+                throw new SQLFeatureNotSupportedException("COUNT(*) is a row of its own: a "
+                    + "statement that counts a collection's points selects nothing besides it, "
+                    + "unless it groups them with GROUP BY");
+            }
+
+            return count(statement, table, catalog, counted.alias());
         }
 
         TableSchema schema = catalog.table(table.name());
+
+        if (!statement.groupBy().isEmpty()) {
+            return facet(statement, schema, counted);
+        }
+
         OrderItem order = order(statement);
         Search search = order == null ? null : search(order, schema, statement.alias());
         List<ColumnDefinition> columns =
@@ -202,11 +220,6 @@ final class SelectPlanner {
                 throw new SQLFeatureNotSupportedException("COUNT takes a star, as COUNT(*): "
                     + "Qdrant counts the points of a collection, not the values of a field");
             }
-            if (items.size() > 1) {
-                throw new SQLFeatureNotSupportedException("COUNT(*) is a row of its own: a "
-                    + "statement that counts a collection's points selects nothing besides it");
-            }
-
             return item;
         }
 
@@ -220,19 +233,109 @@ final class SelectPlanner {
      *
      * @param alias the name the statement gives the count, or {@code null} for the driver's own
      */
-    private static Plan count(SelectStatement statement, String collection, String alias)
-        throws SQLException {
-        if (statement.where() != null) {
-            throw new SQLFeatureNotSupportedException("WHERE isn't supported in a count yet: "
-                + "Qdrant's count API takes the same filter a read does, and the count doesn't "
-                + "send one");
-        }
+    private static Plan count(SelectStatement statement, TableName table, Catalog catalog,
+                              String alias) throws SQLException {
         if (!statement.orderBy().isEmpty()) {
             throw new SQLFeatureNotSupportedException(
                 "ORDER BY isn't supported in a count: COUNT(*) is one row, in no order");
         }
 
-        return new CountPlan(collection, alias == null ? COUNT : alias, statement.limit());
+        JsonNode filter = null;
+
+        // A count of the whole collection needs none of its columns; a filter names some
+        if (statement.where() != null) {
+            TableSchema schema = catalog.table(table.name());
+            filter = FilterPlanner.plan(statement.where(), schema.name(),
+                column -> find(schema, column, statement.alias(), false));
+        }
+
+        return new CountPlan(table.name(), alias == null ? COUNT : alias, filter,
+            statement.limit());
+    }
+
+    /**
+     * Counting the points per value of one payload field, which is what a GROUP BY with
+     * COUNT(*) asks Qdrant's facet API for. Qdrant facets one field at a time, and only one
+     * with an index it can facet on, so grouping by anything else is an error rather than
+     * counting the driver would have to do over a whole collection.
+     */
+    private static Plan facet(SelectStatement statement, TableSchema schema, SelectItem counted)
+        throws SQLException {
+        if (statement.groupBy().size() > 1) {
+            throw new SQLFeatureNotSupportedException("Grouping by more than one field isn't "
+                + "supported: Qdrant counts the values of one field at a time");
+        }
+        if (!statement.orderBy().isEmpty()) {
+            throw new SQLFeatureNotSupportedException("ORDER BY isn't supported on a GROUP BY "
+                + "yet: Qdrant answers with the most common values first");
+        }
+
+        Column grouped = statement.groupBy().get(0);
+        ColumnDefinition column = find(schema, grouped, statement.alias(), false);
+
+        if (column.kind() != ColumnKind.PAYLOAD_FIELD) {
+            throw new SQLFeatureNotSupportedException("Grouping by '" + column.name() + "' of "
+                + schema.name() + " isn't supported: Qdrant counts the values of a payload "
+                + "field");
+        }
+
+        PayloadIndexType index = schema.collection().payloadIndexes().get(column.source());
+
+        if (index == null || !FACET_INDEXES.contains(index)) {
+            throw new SQLFeatureNotSupportedException("Grouping by '" + column.name() + "' of "
+                + schema.name() + " needs an index Qdrant can count values of: it counts a "
+                + "field indexed as keyword, integer, bool, or uuid, and this one is "
+                + (index == null ? "not indexed" : "indexed as " + index.qdrantName()));
+        }
+
+        JsonNode filter = FilterPlanner.plan(statement.where(), schema.name(),
+            named -> find(schema, named, statement.alias(), false));
+
+        // Qdrant counts the values its index holds, so a group's type follows the index: an
+        // array of keywords is a JSON column, but each group of it is one keyword
+        ColumnType type = ColumnType.forIndex(index);
+
+        return new FacetPlan(schema.name(), column.source(),
+            facetColumns(statement, schema, column, type, counted), filter, statement.limit());
+    }
+
+    /**
+     * The columns a grouped select list reads: the grouped field and the count, in the
+     * statement's order. Qdrant answers a facet with those two and nothing else, so any other
+     * column is an error, as it is in SQL for a column that isn't grouped.
+     */
+    private static List<FacetColumn> facetColumns(SelectStatement statement, TableSchema schema,
+                                                  ColumnDefinition grouped, ColumnType type,
+                                                  SelectItem counted) throws SQLException {
+        var columns = new ArrayList<FacetColumn>();
+
+        for (SelectItem item : statement.items()) {
+            String name = item.alias();
+
+            if (item == counted) {
+                columns.add(new FacetColumn(name == null ? COUNT : name, ColumnType.INTEGER,
+                    true));
+                continue;
+            }
+
+            if (!(item.expression() instanceof Column named)) {
+                throw new SQLFeatureNotSupportedException("A grouped statement selects the field "
+                    + "it groups by and COUNT(*), and Qdrant answers a group with nothing else");
+            }
+
+            // Resolved the same way as the grouped field, so a name under the table matches too
+            ColumnDefinition selected = find(schema, named, statement.alias(), false);
+
+            if (!selected.source().equals(grouped.source())) {
+                throw new SQLSyntaxErrorException("Column '" + selected.name() + "' of "
+                    + schema.name() + " isn't grouped: a grouped statement selects the field it "
+                    + "groups by, '" + grouped.name() + "', and COUNT(*)", "42S22");
+            }
+
+            columns.add(new FacetColumn(name == null ? selected.name() : name, type, false));
+        }
+
+        return columns;
     }
 
     /**

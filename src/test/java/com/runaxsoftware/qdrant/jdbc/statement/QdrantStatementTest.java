@@ -184,8 +184,7 @@ class QdrantStatementTest {
             "SELECT SUM(price) FROM products",
             "SELECT COUNT(*), name FROM products",
             "SELECT COUNT(*) FROM system.collections",
-            "SELECT name, COUNT(*) FROM products GROUP BY name",
-            "SELECT COUNT(*) FROM products WHERE price > 1");
+            "SELECT name, COUNT(*) FROM products GROUP BY name");
 
         for (String sql : rejected) {
             assertThrows(SQLException.class, () -> statement.executeQuery(sql), sql);
@@ -228,6 +227,74 @@ class QdrantStatementTest {
         assertEquals("42S02", error.getSQLState());
         assertEquals("Unknown table or alias 'x' in 'x.name': this statement reads products as t",
             error.getMessage());
+    }
+
+    @Test
+    void countsTheRowsPerGroup() throws SQLException {
+        server.collection("tagged", FakeQdrantServer.unnamedVector(2, "Cosine",
+                Map.of("lang", "keyword")),
+            List.of(point(1, Json.object("lang", "en")), point(2, Json.object("lang", "en")),
+                point(3, Json.object("lang", "de"))));
+
+        try (ResultSet rows = statement.executeQuery(
+            "SELECT lang, COUNT(*) AS n FROM tagged GROUP BY lang LIMIT 9")) {
+            assertEquals(List.of("lang", "n"), List.of(rows.getMetaData().getColumnLabel(1),
+                rows.getMetaData().getColumnLabel(2)));
+            assertEquals(Types.BIGINT, rows.getMetaData().getColumnType(2));
+
+            assertTrue(rows.next());
+            assertEquals("en", rows.getString("lang"));
+            assertEquals(2L, rows.getLong("n"), "the most common value first");
+            assertTrue(rows.next());
+            assertEquals("de", rows.getString("lang"));
+            assertEquals(1L, rows.getLong("n"));
+            assertFalse(rows.next());
+        }
+
+        assertEquals(Json.object("key", "lang", "limit", 9, "exact", true),
+            server.facetRequests().get(0));
+    }
+
+    /**
+     * Which points are counted is Qdrant's to decide, so what this checks is the filter the
+     * driver sent: the fake server counts every point whatever the filter says.
+     */
+    @Test
+    void sendsTheFilterOfAGroupedStatement() throws SQLException {
+        server.collection("tagged", FakeQdrantServer.unnamedVector(2, "Cosine",
+            Map.of("lang", "keyword")), List.of(point(1, Json.object("lang", "en"))));
+
+        statement.executeQuery("SELECT lang, COUNT(*) FROM tagged WHERE lang = 'en' "
+            + "GROUP BY lang LIMIT 9").close();
+
+        assertEquals(Json.object("key", "lang", "limit", 9, "exact", true, "filter",
+            Json.object("must", Json.array(
+                Json.object("key", "lang", "match", Json.object("value", "en"))))),
+            server.facetRequests().get(0));
+    }
+
+    @Test
+    void countsThePointsAFilterMatches() throws SQLException {
+        try (ResultSet rows = statement.executeQuery(
+            "SELECT COUNT(*) FROM products WHERE name = 'Lamp'")) {
+            assertTrue(rows.next());
+            assertEquals(1L, rows.getLong("count"));
+        }
+
+        assertEquals(Json.object("exact", true, "filter", Json.object("must", Json.array(
+            Json.object("key", "name", "match", Json.object("value", "Lamp"))))),
+            server.countRequests().get(0));
+    }
+
+    @Test
+    void reportsAGroupedStatementThatCantRunBeforeRunning() throws SQLException {
+        // price has no index Qdrant can count values of, and the second says no limit
+        for (String sql : List.of("SELECT price, COUNT(*) FROM products GROUP BY price LIMIT 1",
+            "SELECT name, COUNT(*) FROM products GROUP BY name")) {
+            assertThrows(SQLException.class, () -> statement.executeQuery(sql), sql);
+        }
+
+        assertEquals(List.of(), server.facetRequests(), "neither reached Qdrant");
     }
 
     @Test

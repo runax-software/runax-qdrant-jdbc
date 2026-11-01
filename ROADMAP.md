@@ -40,7 +40,10 @@ Planned work, roughly in the order it will land. The SQL each item accepts is sp
 - [ ] **Qdrant Cloud inference** — let Qdrant embed the text server-side where available.
 - [ ] **Embedding model per vector** — kept in the collection's metadata for each named
   vector, not per connection, so a query can't silently use the wrong model.
-- [ ] **GROUP BY** with `COUNT(*)` through the facet API.
+- [x] **GROUP BY** with `COUNT(*)` through the facet API, on a field indexed as keyword,
+  integer, bool, or uuid. A grouped statement needs a limit, since Qdrant counts the most
+  common values in one call; `HAVING` and ordering the groups by anything but their count come
+  later.
 - [x] **ORDER BY** on range-indexed payload fields, through the scroll's `order_by`, and
   `ORDER BY _id` as Qdrant's own order. An ordered read needs a limit, since Qdrant answers
   one in a single page; paging an ordered read by value (`order_by.start_from`) comes later.

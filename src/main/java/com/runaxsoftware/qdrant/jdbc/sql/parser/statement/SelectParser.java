@@ -42,9 +42,13 @@ public final class SelectParser {
 
         Expression where = this.tokenStream.matchKeyword("WHERE") ? this.expressionParser.parseOr() : null;
 
-        if (this.tokenStream.peekKeyword("GROUP")) {
-            throw this.tokenStream.errorAt("GROUP BY isn't supported yet: a count per group "
-                + "comes from Qdrant's facet API", "42000");
+        var groupBy = new ArrayList<Column>();
+        if (this.tokenStream.matchKeyword("GROUP")) {
+            this.tokenStream.expectKeyword("BY");
+
+            do {
+                groupBy.add(this.expressionParser.parseColumn());
+            } while (this.tokenStream.matchSymbol(","));
         }
 
         var orderBy = new ArrayList<OrderItem>();
@@ -65,7 +69,8 @@ public final class SelectParser {
 
         Long limit = this.tokenStream.matchKeyword("LIMIT") ? this.tokenStream.expectWholeNumber() : null;
         Long offset = this.tokenStream.matchKeyword("OFFSET") ? this.tokenStream.expectWholeNumber() : null;
-        return new SelectStatement(items, table, alias, where, orderBy, limit, offset);
+        return new SelectStatement(items, table, alias, where, groupBy, orderBy, limit,
+            offset);
     }
 
     /**

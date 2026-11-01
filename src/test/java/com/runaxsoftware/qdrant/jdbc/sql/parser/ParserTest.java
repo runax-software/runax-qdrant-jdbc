@@ -43,7 +43,7 @@ class ParserTest {
 
     @Test
     void parsesSelectStar() throws SQLSyntaxErrorException {
-        assertEquals(new SelectStatement(star(), TableName.of("docs"), null, null, List.of(), null, null),
+        assertEquals(new SelectStatement(star(), TableName.of("docs"), null, null, List.of(), List.of(), null, null),
                 Parser.parse("SELECT * FROM docs"));
     }
 
@@ -135,8 +135,7 @@ class ParserTest {
 
     @Test
     void readsKeywordsInAnyCaseAndKeepsTheCaseOfNames() throws SQLSyntaxErrorException {
-        assertEquals(new SelectStatement(List.of(column("Name")), TableName.of("MyDocs"), null, eq("lang", "en"),
-                        List.of(), 5L, null),
+        assertEquals(new SelectStatement(List.of(column("Name")), TableName.of("MyDocs"), null, eq("lang", "en"), List.of(), List.of(), 5L, null),
                 Parser.parse("select Name from MyDocs Where lang = 'en' limit 5"));
     }
 
@@ -262,17 +261,25 @@ class ParserTest {
     }
 
     @Test
-    void rejectsGroupBy() {
-        SQLSyntaxErrorException error = assertThrows(SQLSyntaxErrorException.class,
-                () -> Parser.parse("SELECT lang, COUNT(*) FROM docs GROUP BY lang"));
+    void parsesGroupBy() throws SQLSyntaxErrorException {
+        assertEquals(List.of(Column.of("lang")),
+                select("SELECT lang, COUNT(*) FROM docs GROUP BY lang LIMIT 5").groupBy());
+        assertEquals(List.of(new Column("t", "lang")),
+                select("SELECT COUNT(*) FROM docs t GROUP BY t.lang LIMIT 5").groupBy());
+        assertEquals(List.of(Column.of("lang"), Column.of("year")),
+                select("SELECT COUNT(*) FROM docs GROUP BY lang, year LIMIT 5").groupBy());
+        // Which of the two a dotted name is, the planner decides, as in a select list
+        assertEquals(List.of(new Column("specs", "color")),
+                select("SELECT COUNT(*) FROM docs GROUP BY specs.color LIMIT 5").groupBy());
+        assertEquals(List.of(), select("SELECT * FROM docs").groupBy());
+    }
 
-        assertEquals("GROUP BY isn't supported yet: a count per group comes from Qdrant's facet "
-                + "API at line 1, column 33", error.getMessage());
-        assertEquals("42000", error.getSQLState());
-
-        assertError("GROUP BY isn't supported yet: a count per group comes from Qdrant's facet "
-                        + "API at line 1, column 45",
-                "SELECT COUNT(*) FROM docs WHERE lang = 'en' GROUP BY lang");
+    @Test
+    void rejectsAGroupWithoutBy() {
+        assertError("Expected BY, found 'lang' at line 1, column 39",
+                "SELECT lang, COUNT(*) FROM docs GROUP lang");
+        assertError("Expected a name, found the end of the statement at line 1, column 41",
+                "SELECT lang, COUNT(*) FROM docs GROUP BY");
     }
 
     // SELECT without FROM
@@ -280,7 +287,7 @@ class ParserTest {
     @Test
     void parsesASelectOfConstantsWithoutFrom() throws SQLSyntaxErrorException {
         assertEquals(new SelectStatement(List.of(new SelectItem(new Literal("keep alive"), null)), null, null,
-                        null, List.of(), null, null),
+                        null, List.of(), List.of(), null, null),
                 Parser.parse("select 'keep alive'"));
         assertEquals(List.of(new SelectItem(new Literal(1L), null), new SelectItem(new Literal(2.5), null),
                         new SelectItem(new Literal(true), null)),
@@ -393,7 +400,7 @@ class ParserTest {
     void parsesEveryClauseTogether() throws SQLSyntaxErrorException {
         assertEquals(
                 new SelectStatement(List.of(column("name")), TableName.of("docs"), null,
-                        eq("lang", "en"), List.of(new OrderItem(Column.of("price"), true)), 10L,
+                        eq("lang", "en"), List.of(), List.of(new OrderItem(Column.of("price"), true)), 10L,
                         5L),
                 Parser.parse("SELECT name FROM docs WHERE lang = 'en' ORDER BY price DESC LIMIT 10 OFFSET 5"));
     }

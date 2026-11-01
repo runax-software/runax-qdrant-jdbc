@@ -68,6 +68,16 @@ final class RestModels {
         return List.copyOf(points);
     }
 
+    static List<FacetHit> facetHits(JsonNode result) {
+        List<FacetHit> hits = new ArrayList<>();
+
+        for (JsonNode hit : result.path("hits")) {
+            hits.add(new FacetHit(present(hit.get("value")), hit.path("count").asLong(0)));
+        }
+
+        return List.copyOf(hits);
+    }
+
     private static VectorField vectorField(String name, JsonNode config) {
         VectorKind kind = config.path("multivector_config").isObject() ? VectorKind.MULTIVECTOR : VectorKind.DENSE;
         return new VectorField(name, kind, config.path("size")

@@ -18,6 +18,8 @@ import com.runaxsoftware.qdrant.jdbc.schema.TableSchema;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.Parser;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConstantPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CountPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetColumn;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
@@ -70,13 +72,17 @@ class PlannerTest {
                     "price", PayloadIndexType.FLOAT,
                     "year", PayloadIndexType.INTEGER,
                     "created_at", PayloadIndexType.DATETIME,
-                    "name", PayloadIndexType.KEYWORD)),
+                    "name", PayloadIndexType.KEYWORD,
+                    "tags", PayloadIndexType.KEYWORD,
+                    "in_stock", PayloadIndexType.BOOL)),
             List.of(
                     new ColumnDefinition("_id", ColumnKind.ID, ColumnType.TEXT, 0, null, ""),
                     new ColumnDefinition("name", ColumnKind.PAYLOAD_FIELD, ColumnType.TEXT, 0, "name", ""),
                     new ColumnDefinition("year", ColumnKind.PAYLOAD_FIELD, ColumnType.INTEGER, 0, "year", ""),
                     new ColumnDefinition("price", ColumnKind.PAYLOAD_FIELD, ColumnType.FLOAT, 0, "price", ""),
                     new ColumnDefinition("created_at", ColumnKind.PAYLOAD_FIELD, ColumnType.DATETIME, 0, "created_at", ""),
+                    new ColumnDefinition("tags", ColumnKind.PAYLOAD_FIELD, ColumnType.JSON, 0, "tags", ""),
+                    new ColumnDefinition("in_stock", ColumnKind.PAYLOAD_FIELD, ColumnType.BOOLEAN, 0, "in_stock", ""),
                     new ColumnDefinition("_payload", ColumnKind.PAYLOAD, ColumnType.JSON, 0, null, "")));
 
     private static final Catalog CATALOG = name -> {
@@ -198,6 +204,113 @@ class PlannerTest {
             "SELECT 1 FROM docs"})
     void rejectsWhatASelectWithFromCantDoYet(String sql) {
         assertThrows(SQLFeatureNotSupportedException.class, () -> plan(sql, CATALOG));
+    }
+
+    // Grouping
+
+    @Test
+    void groupsByAFieldQdrantCanCountTheValuesOf() throws SQLException {
+        FacetPlan plan = facet("SELECT name, COUNT(*) FROM indexed GROUP BY name LIMIT 20");
+
+        assertEquals("indexed", plan.collection());
+        assertEquals("name", plan.key());
+        assertEquals(20L, plan.limit());
+        assertEquals(null, plan.filter());
+        assertEquals(List.of("name", "count"), names(plan));
+        assertEquals(List.of(ColumnType.TEXT, ColumnType.INTEGER), types(plan));
+        assertEquals(List.of(false, true), counting(plan));
+    }
+
+    @Test
+    void groupsByAWholeNumberAndABoolean() throws SQLException {
+        assertEquals(List.of(ColumnType.INTEGER, ColumnType.INTEGER),
+                types(facet("SELECT year, COUNT(*) FROM indexed GROUP BY year LIMIT 5")));
+        assertEquals(List.of(ColumnType.BOOLEAN, ColumnType.INTEGER),
+                types(facet("SELECT in_stock, COUNT(*) FROM indexed GROUP BY in_stock LIMIT 5")));
+    }
+
+    /**
+     * An array field is a JSON column, but Qdrant counts the values its index holds, so each
+     * group of it is one keyword.
+     */
+    @Test
+    void groupsByTheValuesAnIndexHoldsRatherThanTheColumnsType() throws SQLException {
+        assertEquals(List.of(ColumnType.TEXT, ColumnType.INTEGER),
+                types(facet("SELECT tags, COUNT(*) FROM indexed GROUP BY tags LIMIT 5")));
+    }
+
+    @Test
+    void readsTheGroupsAndTheCountInTheStatementsOrder() throws SQLException {
+        assertEquals(List.of("count", "name"),
+                names(facet("SELECT COUNT(*), name FROM indexed GROUP BY name LIMIT 5")));
+        assertEquals(List.of("n", "group"),
+                names(facet("SELECT COUNT(*) AS n, name AS \"group\" FROM indexed "
+                        + "GROUP BY name LIMIT 5")));
+        assertEquals(List.of("count"),
+                names(facet("SELECT COUNT(*) FROM indexed GROUP BY name LIMIT 5")));
+    }
+
+    /**
+     * A GROUP BY without a count reads the values themselves, which is what the facet answers
+     * and what the SQL asks for.
+     */
+    @Test
+    void groupsWithoutCountingTheGroups() throws SQLException {
+        FacetPlan plan = facet("SELECT name FROM indexed GROUP BY name LIMIT 5");
+
+        assertEquals(List.of("name"), names(plan));
+        assertEquals(List.of(false), counting(plan));
+    }
+
+    @Test
+    void groupsUnderTheTablesName() throws SQLException {
+        assertEquals("name", facet("SELECT t.name, COUNT(*) FROM indexed t GROUP BY t.name "
+                + "LIMIT 5").key());
+    }
+
+    @Test
+    void filtersTheGroupedPoints() throws SQLException {
+        FacetPlan plan = facet("SELECT name, COUNT(*) FROM indexed WHERE year = 2024 "
+                + "GROUP BY name LIMIT 5");
+
+        assertEquals("{\"must\":[{\"key\":\"year\",\"match\":{\"value\":2024}}]}",
+                plan.filter().toString());
+    }
+
+    @Test
+    void rejectsGroupingByAFieldQdrantCantCountTheValuesOf() {
+        SQLException number = assertThrows(SQLFeatureNotSupportedException.class,
+                () -> plan("SELECT price, COUNT(*) FROM indexed GROUP BY price LIMIT 5", CATALOG));
+        assertTrue(number.getMessage().contains("indexed as float"), number.getMessage());
+
+        SQLException missing = assertThrows(SQLFeatureNotSupportedException.class,
+                () -> plan("SELECT title, COUNT(*) FROM docs GROUP BY title LIMIT 5", CATALOG));
+        assertTrue(missing.getMessage().contains("not indexed"), missing.getMessage());
+
+        for (String column : List.of("_id", "_payload")) {
+            assertThrows(SQLFeatureNotSupportedException.class, () -> plan("SELECT COUNT(*) FROM "
+                    + "indexed GROUP BY " + column + " LIMIT 5", CATALOG), column);
+        }
+    }
+
+    @Test
+    void rejectsAnUngroupedColumnBesideTheCount() {
+        SQLSyntaxErrorException error = assertThrows(SQLSyntaxErrorException.class,
+                () -> plan("SELECT year, COUNT(*) FROM indexed GROUP BY name LIMIT 5", CATALOG));
+
+        assertEquals("Column 'year' of indexed isn't grouped: a grouped statement selects the "
+                + "field it groups by, 'name', and COUNT(*)", error.getMessage());
+        assertEquals("42S22", error.getSQLState());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "SELECT COUNT(*) FROM indexed GROUP BY name, year LIMIT 5",
+            "SELECT name, COUNT(*) FROM indexed GROUP BY name ORDER BY name LIMIT 5",
+            "SELECT * FROM indexed GROUP BY name LIMIT 5",
+            "SELECT name, COUNT(*) FROM indexed GROUP BY name LIMIT 5 OFFSET 2"})
+    void rejectsWhatAGroupedStatementCantDoYet(String sql) {
+        assertThrows(SQLException.class, () -> plan(sql, CATALOG), sql);
     }
 
     // Ordering
@@ -476,7 +589,8 @@ class PlannerTest {
                 () -> plan("SELECT " + items + " FROM docs", CATALOG), items);
 
             assertEquals("COUNT(*) is a row of its own: a statement that counts a collection's "
-                + "points selects nothing besides it", error.getMessage());
+                + "points selects nothing besides it, unless it groups them with GROUP BY",
+                error.getMessage());
         }
     }
 
@@ -496,7 +610,6 @@ class PlannerTest {
 
     @ParameterizedTest
     @ValueSource(strings = {
-        "SELECT COUNT(*) FROM docs WHERE price > 1",
         "SELECT COUNT(*) FROM docs OFFSET 5",
         "SELECT COUNT(*) FROM docs ORDER BY price",
         "SELECT COUNT(*) FROM docs ORDER BY similarity(_vector, [0.1, 0.2, 0.3, 0.4]) DESC"})
@@ -715,6 +828,22 @@ class PlannerTest {
 
     private ScrollPlan scroll(String sql) throws SQLException {
         return (ScrollPlan) plan(sql, CATALOG);
+    }
+
+    private FacetPlan facet(String sql) throws SQLException {
+        return (FacetPlan) plan(sql, CATALOG);
+    }
+
+    private static List<String> names(FacetPlan plan) {
+        return plan.columns().stream().map(FacetColumn::name).toList();
+    }
+
+    private static List<ColumnType> types(FacetPlan plan) {
+        return plan.columns().stream().map(FacetColumn::type).toList();
+    }
+
+    private static List<Boolean> counting(FacetPlan plan) {
+        return plan.columns().stream().map(FacetColumn::counting).toList();
     }
 
     private QueryPlan query(String sql) throws SQLException {

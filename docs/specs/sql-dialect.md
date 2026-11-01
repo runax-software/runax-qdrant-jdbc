@@ -234,16 +234,30 @@ LIMIT 10;
 | `query_groups(…, lookup => 'docs')` | `with_lookup`: adds each group's record from `docs` as `_lookup` |
 | `SELECT * FROM distance_matrix(docs, dense, 100, 5)` | Search matrix pairs: 100 sampled points, their 5 nearest neighbours, as rows `(_a, _b, _score)` |
 
-**What runs today:** `SELECT COUNT(*) FROM docs`, as one count call, exact, answering one
-`BIGINT` column called `count` or whatever the statement calls it. Counting reads neither points
-nor columns, so a count of a collection that doesn't exist is Qdrant's answer to the count rather
-than a check before it. `LIMIT 0` returns no row and counts nothing, as it does for a `SELECT`
-without `FROM`; a count is one row, so no other limit changes it. A count with a `WHERE`, the
+**What runs today:** `SELECT COUNT(*) FROM docs [WHERE …]`, as one count call, exact,
+answering one `BIGINT` column called `count` or whatever the statement calls it. Counting a
+whole collection reads neither points nor columns, so a count of a collection that doesn't
+exist is Qdrant's answer to the count rather than a check before it; a count with a `WHERE`
+reads the columns the condition names. `LIMIT 0` returns no row and counts nothing, as it does
+for a `SELECT` without `FROM`; a count is one row, so no other limit changes it.
+
+`SELECT lang, COUNT(*) FROM docs [WHERE …] GROUP BY lang LIMIT 20` also runs, as one facet
+call. The field needs an index Qdrant can count the values of — `keyword`, `integer`, `bool`,
+or `uuid`, which the driver checks against the collection's indexes first — and the statement
+needs a `LIMIT`, or its maximum rows: Qdrant counts the ten most common values when a request
+gives none, and returns no cursor to read the rest, so a statement says how many groups it
+wants. The groups come back most common first. A grouped statement selects the grouped field
+and `COUNT(*)`, in either order and under any names, and one without the count reads the
+field's values themselves, which is what `SELECT DISTINCT` asks for. An array field counts once
+per element, so `GROUP BY tags` counts the points under each tag, and a group's type follows
+the index rather than the column, so the groups of a JSON column of keywords are text.
+
+`HAVING`, ordering the groups by anything but their count, grouping by more than one field, the
 `exact=false` hint, and the rest of this section are still the target.
 
 Other aggregates (`SUM`, `AVG`, …) are errors: Qdrant has no way to compute them. So are `COUNT`
-of a column, `COUNT(DISTINCT …)`, and `COUNT(*)` beside other select items, which Qdrant's count
-API has no answer for.
+of a column, `COUNT(DISTINCT …)`, and, outside a `GROUP BY`, `COUNT(*)` beside other select
+items, which Qdrant's count API has no answer for.
 
 ## Writing points
 
