@@ -1,5 +1,6 @@
 package com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement;
 
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Column;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Expression;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.OrderItem;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.SelectItem;
@@ -17,6 +18,7 @@ import java.util.List;
  * @param alias   the name the statement gives that table, as in {@code FROM docs t}, or
  *                {@code null}
  * @param where   the WHERE condition, or {@code null}
+ * @param groupBy the GROUP BY columns, in order, empty when absent
  * @param orderBy the ORDER BY columns, in order, empty when absent
  * @param limit   the LIMIT, or {@code null}
  * @param offset  the OFFSET, or {@code null}
@@ -26,6 +28,7 @@ public record SelectStatement(
     TableName table,
     String alias,
     Expression where,
+    List<Column> groupBy,
     List<OrderItem> orderBy,
     Long limit,
     Long offset

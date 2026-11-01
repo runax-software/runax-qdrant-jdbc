@@ -10,6 +10,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetHit;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.Ordering;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.Point;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QueryRequest;
@@ -24,6 +26,8 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.Parser;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.Planner;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConstantPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CountPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetColumn;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.SystemTablePlan;
@@ -66,9 +70,9 @@ class ExecutorTest {
         throw new AssertionError("Scrolled " + request.collection());
     }, query -> {
         throw new AssertionError("Searched " + query.collection());
-    }, collection -> {
+    }, (collection, filter) -> {
         throw new AssertionError("Counted " + collection);
-    }, table -> switch (table) {
+    }, facet -> List.of(), table -> switch (table) {
         case ALIASES -> List.of(
             new Object[]{"best", "articles"}, new Object[]{"current", "products"});
         case COLLECTIONS -> List.of(
@@ -339,6 +343,101 @@ class ExecutorTest {
         }
     }
 
+    // Facet plans
+
+    @Test
+    void runsAFacetPlanAsGroupedRowsOwnedByTheStatement() throws SQLException {
+        var requests = new ArrayList<FacetRequest>();
+        ExecutionResult result = faceting(requests).execute(new FacetPlan("docs", "lang",
+            List.of(new FacetColumn("lang", ColumnType.TEXT, false),
+                new FacetColumn("n", ColumnType.INTEGER, true)), null, 5L), STATEMENT);
+
+        assertTrue(result.hasResultSet());
+        assertEquals(-1, result.updateCount());
+        assertEquals("docs", requests.get(0).collection());
+        assertEquals("lang", requests.get(0).key());
+        assertEquals(5L, requests.get(0).limit());
+
+        try (ResultSet rows = result.resultSet()) {
+            assertSame(STATEMENT, rows.getStatement());
+            assertEquals(Types.VARCHAR, rows.getMetaData().getColumnType(1));
+            assertEquals(Types.BIGINT, rows.getMetaData().getColumnType(2));
+            assertEquals("docs", rows.getMetaData().getTableName(1));
+            assertEquals(ResultSetMetaData.columnNoNulls, rows.getMetaData().isNullable(2));
+
+            assertTrue(rows.next());
+            assertEquals("en", rows.getString("lang"));
+            assertEquals(3L, rows.getLong("n"));
+            assertTrue(rows.next());
+            assertEquals("de", rows.getString("lang"));
+            assertEquals(1L, rows.getLong("n"));
+            assertFalse(rows.next());
+        }
+    }
+
+    @Test
+    void readsAGroupedValueAsItsOwnType() throws SQLException {
+        assertEquals(2024L, grouped(JSON.getNodeFactory().numberNode(2024), ColumnType.INTEGER));
+        assertEquals(true, grouped(JSON.getNodeFactory().booleanNode(true), ColumnType.BOOLEAN));
+        assertEquals("en", grouped(JSON.getNodeFactory().textNode("en"), ColumnType.TEXT));
+    }
+
+    @Test
+    void asksQdrantForAsManyGroupsAsTheStatementReads() throws SQLException {
+        var requests = new ArrayList<FacetRequest>();
+
+        faceting(requests).execute(facet(3L), statement(0, 0)).resultSet().close();
+        faceting(requests).execute(facet(null), statement(7, 0)).resultSet().close();
+        faceting(requests).execute(facet(9L), statement(4, 0)).resultSet().close();
+
+        assertEquals(List.of(3L, 7L, 4L), requests.stream().map(FacetRequest::limit).toList());
+    }
+
+    @Test
+    void groupsNothingForALimitOfNoRows() throws SQLException {
+        var requests = new ArrayList<FacetRequest>();
+
+        try (ResultSet rows = faceting(requests).execute(facet(0L), STATEMENT).resultSet()) {
+            assertFalse(rows.next());
+        }
+
+        assertEquals(List.of(), requests, "no call counts no groups");
+    }
+
+    @Test
+    void rejectsAGroupedStatementThatSaysNoLimit() {
+        SQLException error = assertThrows(SQLException.class,
+            () -> faceting(new ArrayList<>()).execute(facet(null), STATEMENT));
+
+        assertEquals("42000", error.getSQLState());
+        assertTrue(error.getMessage().contains("GROUP BY needs a LIMIT"), error.getMessage());
+    }
+
+    @Test
+    void sendsTheFilterOfAGroupedStatement() throws SQLException {
+        JsonNode filter = JSON.createObjectNode().put("key", "lang");
+        var requests = new ArrayList<FacetRequest>();
+
+        faceting(requests).execute(new FacetPlan("docs", "lang",
+            List.of(new FacetColumn("n", ColumnType.INTEGER, true)), filter, 5L), STATEMENT)
+            .resultSet().close();
+
+        assertSame(filter, requests.get(0).filter());
+    }
+
+    @Test
+    void reportsWhatCountingTheGroupsReported() {
+        SQLException failure = new SQLException("Qdrant: Not found", "42S02");
+        Executor failing = new Executor(request -> {
+            throw new AssertionError("Scrolled " + request.collection());
+        }, query -> List.of(), (collection, filter) -> 0, facet -> {
+            throw failure;
+        }, table -> List.of());
+
+        assertSame(failure, assertThrows(SQLException.class,
+            () -> failing.execute(facet(5L), STATEMENT)));
+    }
+
     // Ordered scroll plans
 
     @Test
@@ -463,9 +562,9 @@ class ExecutorTest {
             throw new AssertionError("Scrolled " + request.collection());
         }, query -> {
             throw failure;
-        }, collection -> {
+        }, (collection, filter) -> {
             throw new AssertionError("Counted " + collection);
-        }, table -> List.of());
+        }, facet -> List.of(), table -> List.of());
 
         assertSame(failure, assertThrows(SQLException.class,
             () -> failing.execute(plan(5L), STATEMENT)));
@@ -477,7 +576,7 @@ class ExecutorTest {
     void runsACountPlanAsOneRowOwnedByTheStatement() throws SQLException {
         var counted = new ArrayList<String>();
         ExecutionResult result = counting(counted, 42)
-            .execute(new CountPlan("docs", "count", null), STATEMENT);
+            .execute(new CountPlan("docs", "count", null, null), STATEMENT);
 
         assertTrue(result.hasResultSet());
         assertEquals(-1, result.updateCount());
@@ -503,7 +602,7 @@ class ExecutorTest {
     @Test
     void namesTheCountColumnAsThePlanAsks() throws SQLException {
         try (ResultSet rows = counting(new ArrayList<>(), 7)
-            .execute(new CountPlan("docs", "total", null), STATEMENT).resultSet()) {
+            .execute(new CountPlan("docs", "total", null, null), STATEMENT).resultSet()) {
             assertEquals("total", rows.getMetaData().getColumnLabel(1));
             assertTrue(rows.next());
             assertEquals(7L, rows.getLong("total"));
@@ -515,7 +614,7 @@ class ExecutorTest {
         var counted = new ArrayList<String>();
 
         try (ResultSet rows = counting(counted, 42)
-            .execute(new CountPlan("docs", "count", 0L), STATEMENT).resultSet()) {
+            .execute(new CountPlan("docs", "count", null, 0L), STATEMENT).resultSet()) {
             assertEquals(1, rows.getMetaData().getColumnCount());
             assertFalse(rows.next());
         }
@@ -540,12 +639,12 @@ class ExecutorTest {
             throw new AssertionError("Scrolled " + request.collection());
         }, query -> {
             throw new AssertionError("Searched " + query.collection());
-        }, collection -> {
+        }, (collection, filter) -> {
             throw failure;
-        }, table -> List.of());
+        }, facet -> List.of(), table -> List.of());
 
         assertSame(failure, assertThrows(SQLException.class,
-            () -> failing.execute(new CountPlan("docs", "count", null), STATEMENT)));
+            () -> failing.execute(new CountPlan("docs", "count", null, null), STATEMENT)));
     }
 
     // System table plans
@@ -624,9 +723,9 @@ class ExecutorTest {
             throw new AssertionError("Scrolled " + request.collection());
         }, query -> {
             throw new AssertionError("Searched " + query.collection());
-        }, collection -> {
+        }, (collection, filter) -> {
             throw new AssertionError("Counted " + collection);
-        }, table -> {
+        }, facet -> List.of(), table -> {
             throw failure;
         });
 
@@ -664,9 +763,9 @@ class ExecutorTest {
                     JSON.createObjectNode().put("name", "Lamp"), null), 0.9),
                 new ScoredPoint(new Point(JSON.getNodeFactory().numberNode(2), null, null), 0.5))
                 .subList(0, (int) Math.min(2, query.limit()));
-        }, collection -> {
+        }, (collection, filter) -> {
             throw new AssertionError("Counted " + collection);
-        }, table -> List.of());
+        }, facet -> List.of(), table -> List.of());
     }
 
     /**
@@ -678,17 +777,17 @@ class ExecutorTest {
             throw new AssertionError("Scrolled " + request.collection());
         }, query -> {
             throw new AssertionError("Searched " + query.collection());
-        }, collection -> {
+        }, (collection, filter) -> {
             counted.add(collection);
 
             return count;
-        }, table -> List.of());
+        }, facet -> List.of(), table -> List.of());
     }
 
     // The counts a plan's rows hold
     private static List<Long> counts(Executor executor, Long limit, Statement statement)
         throws SQLException {
-        try (ResultSet rows = executor.execute(new CountPlan("docs", "count", limit), statement)
+        try (ResultSet rows = executor.execute(new CountPlan("docs", "count", null, limit), statement)
             .resultSet()) {
             return longs(rows);
         }
@@ -702,7 +801,43 @@ class ExecutorTest {
             requests.add(request);
 
             return new ScrollPage(List.of(), null);
-        }, query -> List.of(), collection -> 0, table -> List.of());
+        }, query -> List.of(), (collection, filter) -> 0, facet -> List.of(), table -> List.of());
+    }
+
+    /**
+     * An executor whose facets count two groups, recording what they were asked for.
+     */
+    private static Executor faceting(List<FacetRequest> requests) {
+        return new Executor(request -> {
+            throw new AssertionError("Scrolled " + request.collection());
+        }, query -> List.of(), (collection, filter) -> 0, facet -> {
+            requests.add(facet);
+
+            return List.of(new FacetHit(JSON.getNodeFactory().textNode("en"), 3),
+                new FacetHit(JSON.getNodeFactory().textNode("de"), 1));
+        }, table -> List.of());
+    }
+
+    /**
+     * The one value a facet of this hit reads, as a column of this type.
+     */
+    private static Object grouped(JsonNode value, ColumnType type) throws SQLException {
+        Executor executor = new Executor(request -> {
+            throw new AssertionError("Scrolled " + request.collection());
+        }, query -> List.of(), (collection, filter) -> 0,
+            facet -> List.of(new FacetHit(value, 1)), table -> List.of());
+
+        try (ResultSet rows = executor.execute(new FacetPlan("docs", "field",
+            List.of(new FacetColumn("field", type, false)), null, 5L), STATEMENT).resultSet()) {
+            assertTrue(rows.next());
+
+            return rows.getObject(1);
+        }
+    }
+
+    private static FacetPlan facet(Long limit) {
+        return new FacetPlan("docs", "lang",
+            List.of(new FacetColumn("count", ColumnType.INTEGER, true)), null, limit);
     }
 
     private static ScrollPlan ordered(Long limit) {

@@ -2,6 +2,7 @@ package com.runaxsoftware.qdrant.jdbc.support;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadPath;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
@@ -107,6 +108,11 @@ public final class FakeQdrantServer implements AutoCloseable {
          * {@code POST /collections/{name}/points/count}.
          */
         COUNT,
+
+        /**
+         * {@code POST /collections/{name}/facet}.
+         */
+        FACET,
 
         /**
          * {@code GET /aliases}.
@@ -663,6 +669,7 @@ public final class FakeQdrantServer implements AutoCloseable {
                 case SCROLL -> scroll(exchange, segments[2], body);
                 case QUERY -> query(exchange, segments[2], body);
                 case COUNT -> count(exchange, segments[2]);
+                case FACET -> facet(exchange, segments[2], body);
                 case ALIASES -> ok(exchange, Json.object("aliases", aliasList()));
                 case SNAPSHOTS -> ok(exchange, Json.array(storageSnapshots.toArray()));
                 case COLLECTION_SNAPSHOTS -> collectionSnapshots(exchange, segments[2]);
@@ -721,6 +728,10 @@ public final class FakeQdrantServer implements AutoCloseable {
         if (method.equals("POST") && segments.length == 5 && segments[3].equals("points")
             && segments[4].equals("count")) {
             return Endpoint.COUNT;
+        }
+
+        if (method.equals("POST") && segments.length == 4 && segments[3].equals("facet")) {
+            return Endpoint.FACET;
         }
 
         if (method.equals("GET") && segments.length == 4) {
@@ -915,6 +926,53 @@ public final class FakeQdrantServer implements AutoCloseable {
         }
 
         ok(exchange, Json.object("count", points.get(resolve(name)).size()));
+    }
+
+    /**
+     * Counts the values of a payload field the way Qdrant's facet API does: a point counts once
+     * per value, so an array field counts under each of its elements, and the most common value
+     * comes first, ties broken by the value itself. The request's limit cuts the list, as
+     * Qdrant's does. The filter is recorded but not applied — which points a filter matches is
+     * Qdrant's own business, so a test asserts the filter that was sent and leaves the matching
+     * to an integration test.
+     */
+    private void facet(HttpExchange exchange, String name, JsonNode request) throws IOException {
+        if (find(name) == null) {
+            notFound(exchange, name);
+            return;
+        }
+
+        String key = request == null ? "" : request.path("key").asText("");
+        int limit = request == null ? 10 : request.path("limit").asInt(10);
+        Map<JsonNode, Long> counts = new LinkedHashMap<>();
+
+        for (ObjectNode point : points.get(resolve(name))) {
+            JsonNode value = PayloadPath.valueAt(point.get("payload"), key);
+            if (value == null || value.isNull()) continue;
+
+            for (JsonNode each : value.isArray() ? value : List.of(value)) {
+                counts.merge(each, 1L, Long::sum);
+            }
+        }
+
+        List<JsonNode> hits = counts.entrySet().stream()
+            .sorted(Map.Entry.<JsonNode, Long>comparingByValue().reversed()
+                .thenComparing(entry -> entry.getKey().asText()))
+            .limit(limit)
+            .map(entry -> (JsonNode) Json.object("value", entry.getKey(), "count", entry.getValue()))
+            .toList();
+
+        ok(exchange, Json.object("hits", hits));
+    }
+
+    /**
+     * The bodies of the facets received, in order.
+     */
+    public List<JsonNode> facetRequests() {
+        return requests.stream()
+            .filter(request -> request.path().endsWith("/facet"))
+            .map(Request::body)
+            .toList();
     }
 
     // 1, 1.0 and a BigInteger 1 are the same point ID

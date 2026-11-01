@@ -115,7 +115,7 @@ FROM system.collections
 | `OFFSET n` | Scroll | Qdrant pages with a cursor, so the driver skips `n` points |
 | `ORDER BY field` | Scroll `order_by` | Needs a range index on the field, and a `LIMIT` |
 | `COUNT(*)` | Count API | |
-| `GROUP BY field` + `COUNT(*)` | Facet API | Needs a keyword index on the field |
+| `GROUP BY field` + `COUNT(*)` | Facet API | Needs a keyword, integer, bool, or uuid index, and a `LIMIT` |
 | `ORDER BY similarity(v, [0.1, ...]) DESC` | Query API | Score returned as `_score`; needs a `LIMIT` |
 | `FROM system.collections`, `system.aliases` | Collection and alias APIs | Read-only system tables |
 | `DELETE FROM docs WHERE …` | Delete points by filter | Returns the number deleted; needs a `WHERE` |

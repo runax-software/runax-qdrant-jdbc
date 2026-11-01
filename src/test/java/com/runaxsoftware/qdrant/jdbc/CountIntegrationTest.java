@@ -134,6 +134,22 @@ class CountIntegrationTest {
     }
 
     @Test
+    void countsOnlyThePointsAFilterMatches() throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            for (String condition : List.of("price > 100", "name = 'Desk lamp'",
+                "tags = 'office'", "in_stock = false")) {
+                try (ResultSet rows = statement.executeQuery("SELECT COUNT(*) FROM " + PREFIX
+                    + "products WHERE " + condition)) {
+                    assertTrue(rows.next(), condition);
+                    long counted = rows.getLong(1);
+
+                    assertTrue(counted > 0 && counted < 5, condition + " counted " + counted);
+                }
+            }
+        }
+    }
+
+    @Test
     void reportsWhatQdrantWontCount() throws SQLException {
         try (Statement statement = connection.createStatement()) {
             // A collection that doesn't exist, which the count call itself reports
@@ -146,9 +162,7 @@ class CountIntegrationTest {
                 "SELECT COUNT(name) FROM " + PREFIX + "products",
                 "SELECT COUNT(DISTINCT name) FROM " + PREFIX + "products",
                 "SELECT COUNT(*), name FROM " + PREFIX + "products",
-                "SELECT name, COUNT(*) FROM " + PREFIX + "products GROUP BY name",
-                "SELECT COUNT(*) FROM system.collections",
-                "SELECT COUNT(*) FROM " + PREFIX + "products WHERE price > 100");
+                "SELECT COUNT(*) FROM system.collections");
 
             for (String sql : rejected) {
                 assertThrows(SQLException.class, () -> statement.executeQuery(sql), sql);

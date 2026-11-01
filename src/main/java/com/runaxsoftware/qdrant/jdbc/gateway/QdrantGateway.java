@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetHit;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantCollection;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QueryRequest;
@@ -137,7 +139,8 @@ public class QdrantGateway implements AutoCloseable {
     }
 
     /**
-     * How many points a collection holds, through Qdrant's count API. The count is exact:
+     * How many points a collection holds, or how many match a filter, through Qdrant's count
+     * API. The count is exact:
      * Qdrant's estimate is a different number from one call to the same SQL to the next, and a
      * count is the whole answer rather than a hint about one.
      */
@@ -206,6 +209,24 @@ public class QdrantGateway implements AutoCloseable {
         ObjectNode body = JSON.createObjectNode().put("field_name", field).put("field_schema", type);
 
         request(HttpMethod.PUT, "/collections/" + segment(collection) + "/index?wait=true", body);
+    }
+
+    /**
+     * How many points hold each value of a payload field, through Qdrant's facet API, the most
+     * common value first. The field needs an index Qdrant can facet on; the request's limit
+     * says how many values to count, since Qdrant counts the ten most common and returns no
+     * cursor when a request gives none.
+     */
+    public List<FacetHit> facet(FacetRequest facet) throws SQLException {
+        ObjectNode body = JSON.createObjectNode()
+            .put("key", facet.key())
+            .put("limit", facet.limit())
+            .put("exact", true);
+
+        if (facet.filter() != null) body.set("filter", facet.filter());
+
+        return RestModels.facetHits(request(HttpMethod.POST,
+            "/collections/" + segment(facet.collection()) + "/facet", body));
     }
 
     /**

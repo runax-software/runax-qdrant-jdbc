@@ -2,16 +2,21 @@ package com.runaxsoftware.qdrant.jdbc.sql.executor;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetHit;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QueryRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScoredPoint;
 import com.runaxsoftware.qdrant.jdbc.resultset.ListResultSet;
 import com.runaxsoftware.qdrant.jdbc.resultset.ResultColumn;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
+import com.runaxsoftware.qdrant.jdbc.schema.ColumnType;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConstantPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CountPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DeletePointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropCollectionPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetColumn;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
@@ -48,16 +53,17 @@ public final class Executor {
     private final Scroller scroller;
     private final Searcher searcher;
     private final Counter counter;
+    private final Faceter faceter;
     private final SystemTableReader systemTables;
     private final Writer writer;
 
     /**
-     * @param gateway where scroll plans read points, query plans rank them, count plans count
-     *                them, and system table plans read the server's own state from
+     * @param gateway where scroll plans read points, query plans rank them, count and facet
+     *                plans count them, and system table plans read the server's own state from
      */
     public Executor(QdrantGateway gateway) {
-        this(gateway::scroll, gateway::query, gateway::count, new QdrantSystemTables(gateway),
-            writer(gateway));
+        this(gateway::scroll, gateway::query, gateway::count, gateway::facet,
+            new QdrantSystemTables(gateway), writer(gateway));
     }
 
     /**
@@ -65,22 +71,24 @@ public final class Executor {
      * rows, for plans that read none of the three.
      */
     Executor(Scroller scroller) {
-        this(scroller, query -> List.of(), collection -> 0, table -> List.of());
+        this(scroller, query -> List.of(), (collection, filter) -> 0, facet -> List.of(),
+            table -> List.of());
     }
 
     /**
      * An executor that runs no write plans.
      */
-    Executor(Scroller scroller, Searcher searcher, Counter counter,
+    Executor(Scroller scroller, Searcher searcher, Counter counter, Faceter faceter,
              SystemTableReader systemTables) {
-        this(scroller, searcher, counter, systemTables, null);
+        this(scroller, searcher, counter, faceter, systemTables, null);
     }
 
-    Executor(Scroller scroller, Searcher searcher, Counter counter,
+    Executor(Scroller scroller, Searcher searcher, Counter counter, Faceter faceter,
              SystemTableReader systemTables, Writer writer) {
         this.writer = writer;
         this.scroller = scroller;
         this.searcher = searcher;
+        this.faceter = faceter;
         this.counter = counter;
         this.systemTables = systemTables;
     }
@@ -131,6 +139,13 @@ public final class Executor {
 
             return ExecutionResult.rows(new ListResultSet(List.of(column),
                 countRows(count, limit(count.limit(), maxRows)), statement));
+        }
+
+        if (plan instanceof FacetPlan facet) {
+            long limit = groupLimit(facet, maxRows);
+
+            return ExecutionResult.rows(new ListResultSet(resultColumns(facet),
+                limit == 0 ? List.of() : facetRows(facet, limit), statement));
         }
 
         if (plan instanceof DeletePointsPlan delete) {
@@ -267,6 +282,71 @@ public final class Executor {
     }
 
     /**
+     * The groups' rows, the most common value first, holding the value and the count in the
+     * statement's order. One call answers the whole GROUP BY, so the rows are read at once.
+     */
+    private List<Object[]> facetRows(FacetPlan plan, long limit) throws SQLException {
+        List<FacetHit> hits = faceter.facet(new FacetRequest(plan.collection(), plan.key(),
+            limit, plan.filter()));
+        List<FacetColumn> columns = plan.columns();
+        var rows = new ArrayList<Object[]>(hits.size());
+
+        for (FacetHit hit : hits) {
+            Object[] row = new Object[columns.size()];
+
+            for (int i = 0; i < row.length; i++) {
+                FacetColumn column = columns.get(i);
+                row[i] = column.counting() ? hit.count() : value(hit.value(), column.type());
+            }
+
+            rows.add(row);
+        }
+
+        return rows;
+    }
+
+    /**
+     * A grouped value, as the column's type. Qdrant counts the values of a field indexed as a
+     * keyword, a whole number, a bool, or a UUID, so each is one of those three kinds of JSON.
+     */
+    private static Object value(JsonNode value, ColumnType type) {
+        if (value == null || value.isNull()) {
+            return null;
+        }
+
+        return switch (type) {
+            case INTEGER -> value.longValue();
+            case BOOLEAN -> value.booleanValue();
+            default -> value.asText();
+        };
+    }
+
+    /**
+     * How many groups a GROUP BY reads. Qdrant counts the most common values and returns no
+     * cursor, so a statement says how many: its LIMIT, or its maximum rows. One that gives
+     * neither is an error rather than the ten Qdrant counts by default.
+     */
+    private static long groupLimit(FacetPlan plan, long maxRows) throws SQLException {
+        Long limit = limit(plan.limit(), maxRows);
+
+        if (limit == null) {
+            throw new SQLSyntaxErrorException("GROUP BY needs a LIMIT: Qdrant counts the most "
+                + "common values of a field in one call, so a statement says how many groups to "
+                + "read", "42000");
+        }
+
+        return Math.max(limit, 0);
+    }
+
+    private static List<ResultColumn> resultColumns(FacetPlan plan) {
+        return plan.columns().stream()
+            .map(x -> new ResultColumn(x.name(), x.type().sqlType(), x.type().typeName(),
+                plan.collection(), 0,
+                x.nullable() ? ResultSetMetaData.columnNullable : ResultSetMetaData.columnNoNulls))
+            .toList();
+    }
+
+    /**
      * The search's rows, one per point Qdrant ranked, best first. One call answers the whole
      * search, so the rows are read at once rather than paged.
      */
@@ -316,7 +396,7 @@ public final class Executor {
             return List.of();
         }
 
-        return List.<Object[]>of(new Object[]{counter.count(plan.collection())});
+        return List.<Object[]>of(new Object[]{counter.count(plan.collection(), plan.filter())});
     }
 
     /**

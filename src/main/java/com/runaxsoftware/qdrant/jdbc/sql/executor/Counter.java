@@ -1,5 +1,7 @@
 package com.runaxsoftware.qdrant.jdbc.sql.executor;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 import java.sql.SQLException;
 
 /**
@@ -9,5 +11,5 @@ import java.sql.SQLException;
 @FunctionalInterface
 interface Counter {
 
-    long count(String collection) throws SQLException;
+    long count(String collection, JsonNode filter) throws SQLException;
 }

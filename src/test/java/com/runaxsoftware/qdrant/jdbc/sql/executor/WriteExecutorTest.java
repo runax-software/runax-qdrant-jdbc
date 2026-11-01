@@ -35,8 +35,11 @@ class WriteExecutorTest {
         query -> {
             throw new AssertionError("Searched");
         },
-        collection -> {
+        (collection, filter) -> {
             throw new AssertionError("Counted " + collection);
+        },
+        facet -> {
+            throw new AssertionError("Counted the values of " + facet.key());
         },
         table -> {
             throw new AssertionError("Read " + table);

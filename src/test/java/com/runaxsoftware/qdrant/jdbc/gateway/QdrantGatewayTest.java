@@ -12,6 +12,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadIndexType;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.Point;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetHit;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.Ordering;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantCollection;
@@ -395,7 +397,7 @@ class QdrantGatewayTest {
     void countsThePointsOfACollection() throws SQLException {
         server.collection("events", plainCollection(), points(3));
 
-        assertEquals(3L, gateway.count("events"));
+        assertEquals(3L, gateway.count("events", null));
 
         assertEquals(List.of(Json.object("exact", true)), server.countRequests(),
             "an exact count, since an estimate answers a different number each time");
@@ -409,19 +411,72 @@ class QdrantGatewayTest {
     void countsACollectionWithoutPoints() throws SQLException {
         server.collection("empty", plainCollection(), List.of());
 
-        assertEquals(0L, gateway.count("empty"));
+        assertEquals(0L, gateway.count("empty", null));
     }
 
     @Test
     void countsACollectionUnderAnAliassName() throws SQLException {
         server.collection("events", plainCollection(), points(3)).alias("current", "events");
 
-        assertEquals(3L, gateway.count("current"));
+        assertEquals(3L, gateway.count("current", null));
     }
 
     @Test
     void reportsCountingAMissingCollection() {
-        SQLException error = assertThrows(SQLException.class, () -> gateway.count("missing"));
+        SQLException error = assertThrows(SQLException.class, () -> gateway.count("missing", null));
+
+        assertEquals("42S02", error.getSQLState());
+    }
+
+    // Faceting
+
+    @Test
+    void sendsTheFacetAsAsked() throws SQLException {
+        server.collection("events", plainCollection(), points(3));
+        JsonNode filter = Json.object("must", Json.array(
+            Json.object("key", "lang", "match", Json.object("value", "en"))));
+
+        gateway.facet(new FacetRequest("events", "lang", 5, null));
+        gateway.facet(new FacetRequest("events", "lang", 7, filter));
+
+        List<JsonNode> requests = server.facetRequests();
+        assertEquals(Json.object("key", "lang", "limit", 5, "exact", true), requests.get(0));
+        assertEquals(Json.object("key", "lang", "limit", 7, "exact", true, "filter", filter),
+            requests.get(1));
+
+        Request request = server.requests().get(0);
+        assertEquals("POST", request.method());
+        assertEquals("/collections/events/facet", request.path());
+    }
+
+    @Test
+    void readsTheCountedValuesOfAFacet() throws SQLException {
+        server.collection("events", plainCollection(), List.of(
+            FakeQdrantServer.point(1, Json.object("lang", "en")),
+            FakeQdrantServer.point(2, Json.object("lang", "en")),
+            FakeQdrantServer.point(3, Json.object("lang", "de")),
+            FakeQdrantServer.point(4, Json.object())));
+
+        List<FacetHit> hits = gateway.facet(new FacetRequest("events", "lang", 10, null));
+
+        assertEquals(2, hits.size());
+        assertEquals("en", hits.get(0).value().asText());
+        assertEquals(2, hits.get(0).count());
+        assertEquals("de", hits.get(1).value().asText());
+        assertEquals(1, hits.get(1).count(), "the point without the field is in no group");
+    }
+
+    @Test
+    void readsAFacetThatCountedNothing() throws SQLException {
+        server.collection("empty", plainCollection(), List.of());
+
+        assertEquals(List.of(), gateway.facet(new FacetRequest("empty", "lang", 10, null)));
+    }
+
+    @Test
+    void reportsFacetingAMissingCollection() {
+        SQLException error = assertThrows(SQLException.class,
+            () -> gateway.facet(new FacetRequest("missing", "lang", 10, null)));
 
         assertEquals("42S02", error.getSQLState());
     }

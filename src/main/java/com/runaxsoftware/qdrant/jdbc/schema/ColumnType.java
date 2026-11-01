@@ -96,7 +96,7 @@ public enum ColumnType {
      * The column type a payload index implies, or {@code null} when it says nothing and the
      * sampled values decide.
      */
-    static ColumnType forIndex(PayloadIndexType index) {
+    public static ColumnType forIndex(PayloadIndexType index) {
         if (index == null) return null;
 
         return switch (index) {

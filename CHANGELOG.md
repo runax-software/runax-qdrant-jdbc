@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `GROUP BY` with `COUNT(*)`, through Qdrant's facet API: `SELECT lang, COUNT(*) FROM docs
+  GROUP BY lang LIMIT 20` counts the points per value of one payload field, the most common
+  first. The field needs an index Qdrant can count the values of (`keyword`, `integer`,
+  `bool`, or `uuid`), which the driver checks against the collection's own indexes before
+  counting, and a `LIMIT` or the statement's maximum rows, because Qdrant counts the ten most
+  common values and returns no cursor when a request gives none. A grouped statement selects
+  the grouped field and `COUNT(*)`, in either order and under any names; one without the count
+  reads the field's values themselves. An array field counts once per element, so
+  `GROUP BY tags` counts the points under each tag, and a group's type follows the index rather
+  than the column, so the groups of a JSON column of keywords are text. A `WHERE` condition
+  filters the counted points. ([#22])
+- `COUNT(*)` with a `WHERE`, which Qdrant's count API takes the same filter for as a read:
+  `SELECT COUNT(*) FROM docs WHERE lang = 'en'`. A count of a whole collection still reads
+  none of its columns. ([#22])
+
 - `ORDER BY` a payload field, mapped to Qdrant's scroll `order_by`: it needs a range index on
   the field (`integer`, `float`, or `datetime`), which the driver checks against the
   collection's own indexes before reading, and a `LIMIT` or the statement's maximum rows,
@@ -89,7 +104,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nor the collection's columns, so the statement is one call to Qdrant. The column is called
   `count`, as PostgreSQL names it, or whatever the statement names it (`COUNT(*) AS total`), and
   `LIMIT 0` returns no row and counts nothing. `COUNT` of a column, `COUNT(DISTINCT ...)`, other
-  aggregates, `COUNT(*)` beside other select items, counting a `system` table, and `GROUP BY` say
+  aggregates, `COUNT(*)` beside other select items outside a `GROUP BY`, and counting a
+  `system` table say
   what they are instead of scanning the collection in the driver. Counting the points a `WHERE`
   matches isn't supported yet: Qdrant's count API takes the same filter a read does, and the
   count doesn't send one. ([#17])
@@ -140,3 +156,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#19]: https://github.com/runax-software/runax-qdrant-jdbc/pull/19
 [#20]: https://github.com/runax-software/runax-qdrant-jdbc/pull/20
 [#21]: https://github.com/runax-software/runax-qdrant-jdbc/pull/21
+[#22]: https://github.com/runax-software/runax-qdrant-jdbc/pull/22
