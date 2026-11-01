@@ -12,9 +12,11 @@ Planned work, roughly in the order it will land. The SQL each item accepts is sp
   columns: `_id` (text, since Qdrant IDs are unsigned 64-bit integers or UUIDs), `_payload`
   (the whole payload as JSON), and `_vector` or the vector's name for named, sparse, and
   multi-vectors.
-- [ ] **SELECT** — `WHERE` mapped to Qdrant filters, `LIMIT`, and result sets that page
+- [x] **SELECT** — `WHERE` mapped to Qdrant filters, `LIMIT`, and result sets that page
   through Qdrant's scroll cursor instead of loading everything. Vectors are fetched only
-  when a query names their column.
+  when a query names their column. `WHERE` takes comparisons, `IN`, `IS NULL`, `AND`, `OR`
+  and `NOT`; `LIKE`, `BETWEEN`, and the filter functions in the dialect spec (full text,
+  geo, nested arrays) come later.
 - [ ] **COUNT(\*)** through the count API.
 - [x] **Similarity search with vector literals** —
   `ORDER BY similarity(vector, [0.1, ...]) DESC` through the Query API, with a `_score`
@@ -24,7 +26,7 @@ Planned work, roughly in the order it will land. The SQL each item accepts is sp
   `Statement` methods DataGrip calls on every connection, and support for the SQL it
   generates when opening, filtering, and sorting a table. The defaults and the statement
   that opens a table (`SELECT t.* FROM collections.docs t`, through table aliases and
-  qualified names) are done; filtering and sorting need `WHERE` and `ORDER BY`.
+  qualified names) and filtering through `WHERE` are done; sorting needs `ORDER BY`.
 - [x] **Integration tests** against Qdrant in Docker, run by CI on every pull request.
 - [ ] **Packaging** — one self-contained jar, a DataGrip setup guide, and publishing to
   Maven Central as `com.runaxsoftware:qdrant-jdbc`. The jar (`./gradlew shadowJar`) and

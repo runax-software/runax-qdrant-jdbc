@@ -311,6 +311,18 @@ class QdrantGatewayTest {
     // Searching
 
     @Test
+    void sendsTheFilterOfAScrollAndASearch() throws SQLException {
+        server.collection("events", plainCollection(), points(3));
+        JsonNode filter = Json.object("must", Json.array(Json.object("has_id", Json.array(1))));
+
+        gateway.scroll(new ScrollRequest("events", 2, null, false, false, filter));
+        gateway.query(new QueryRequest("events", "", List.of(0.1), 2, false, false, filter));
+
+        assertEquals(filter, server.scrollRequests().get(0).get("filter"));
+        assertEquals(filter, server.queryRequests().get(0).get("filter"));
+    }
+
+    @Test
     void sendsTheSearchAsAsked() throws SQLException {
         server.collection("events", plainCollection(), points(3));
 

@@ -42,6 +42,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   single unnamed one — and the driver checks its dimensions against the vector in the
   statement before anything runs. A search says how many points to rank, through `LIMIT` or
   the statement's maximum rows, rather than the driver picking a number. ([#15])
+- `WHERE` mapped to a Qdrant filter, for reading a collection and for a similarity search:
+  `AND`, `OR` and `NOT` become `must`, `should` and `must_not`; `=`, `<>`, `<`, `<=`, `>`,
+  `>=`, `IN` and `NOT IN` become `match` and `range` conditions (a date-time field compares by
+  time); `IS NULL` becomes `is_empty`; `_id = 7` and `_id IN (...)` become `has_id`; and a
+  named vector `IS NOT NULL` becomes `has_vector`. As in SQL, a negated condition is never
+  true for a point whose field is missing or null, so `lang <> 'en'` matches only points with
+  a `lang`. Conditions Qdrant can't run, such as `price = ?`, `lower(name) = 'x'` or
+  `name > 'm'`, fail with an `SQLFeatureNotSupportedException` instead of being checked by the
+  driver; a filtered read still pages through the scroll cursor. ([#16])
 - Table aliases and qualified names: `FROM docs t` (with or without `AS`), and `t.*`,
   `t.name`, `t.price AS cost`, `WHERE t.lang = 'en'` and `ORDER BY t.price` under that name
   or under the table's own name, as SQL does — a name given to the table replaces its own.
@@ -89,4 +98,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#13]: https://github.com/runax-software/runax-qdrant-jdbc/pull/13
 [#14]: https://github.com/runax-software/runax-qdrant-jdbc/pull/14
 [#15]: https://github.com/runax-software/runax-qdrant-jdbc/pull/15
+[#16]: https://github.com/runax-software/runax-qdrant-jdbc/pull/16
 [#20]: https://github.com/runax-software/runax-qdrant-jdbc/pull/20

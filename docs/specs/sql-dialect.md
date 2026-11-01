@@ -98,6 +98,16 @@ Objects and arrays use PostgreSQL's JSON operators and functions:
 Every condition compares a column with constants; comparing two columns, or applying other
 functions to a column, is an error.
 
+**What runs today:** `AND`, `OR`, `NOT`; `=`, `<>`, `!=`, `<`, `<=`, `>`, `>=`; `IN` and
+`NOT IN`; `IS NULL` and `IS NOT NULL`, on payload fields, `_id`, and named vectors, in a scroll
+and in a search. A column comes first and a constant second. Text, whole numbers, and booleans
+are matched exactly; a decimal number, a number in a `DOUBLE` field, and a date-time are a
+range from the value to itself, which is how Qdrant compares those. A comparison is never true
+for a point whose field is missing or null, and neither is its negation, as in SQL:
+`lang <> 'en'` and `NOT (price > 5)` match only points that have the field, so the driver
+adds `is_empty` to each negated condition. `LIKE`, `BETWEEN`, `at_least`, the text, geo, and
+array functions, and `EXISTS` are still the target.
+
 | SQL | Qdrant condition |
 | --- | --- |
 | `AND`, `OR`, `NOT` | `must`, `should`, `must_not` |
@@ -137,7 +147,8 @@ search has, and `*` doesn't include it. A search says how many points to rank, t
 or the statement's maximum rows: Qdrant ranks the points nearest the vector rather than
 reading the whole collection, so a search without either is an error rather than a number the
 driver picked. `ASC` is an error too, since Qdrant returns the closest points first. The rest
-of this section, `WHERE` and `OFFSET` included, is still the target.
+of this section, `OFFSET` included, is still the target; a `WHERE` filters the points
+Qdrant ranks, as in a scroll.
 
 ```sql
 SELECT _id, _score, title

@@ -1,5 +1,6 @@
 package com.runaxsoftware.qdrant.jdbc.sql.planner.plan;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
 
 import java.util.List;
@@ -18,6 +19,7 @@ import java.util.List;
  * @param withVector  whether any column needs a vector
  * @param limit       the maximum number of rows, or {@code null} when the statement gave none
  *                    and the statement's maximum rows decide
+ * @param filter      the statement's WHERE as a Qdrant filter, or {@code null} when it has none
  */
 public record QueryPlan(
     String collection,
@@ -26,11 +28,13 @@ public record QueryPlan(
     List<Double> query,
     boolean withPayload,
     boolean withVector,
-    Long limit
+    Long limit,
+    JsonNode filter
 ) implements Plan {
 
     public QueryPlan(String collection, List<ColumnDefinition> columns, String vector,
-                     List<Double> query, boolean withPayload, boolean withVector, Long limit) {
+                     List<Double> query, boolean withPayload, boolean withVector, Long limit,
+                     JsonNode filter) {
         this.collection = collection;
         this.columns = List.copyOf(columns);
         this.vector = vector;
@@ -38,5 +42,14 @@ public record QueryPlan(
         this.withPayload = withPayload;
         this.withVector = withVector;
         this.limit = limit;
+        this.filter = filter;
+    }
+
+    /**
+     * A search of every point, unfiltered.
+     */
+    public QueryPlan(String collection, List<ColumnDefinition> columns, String vector,
+                     List<Double> query, boolean withPayload, boolean withVector, Long limit) {
+        this(collection, columns, vector, query, withPayload, withVector, limit, null);
     }
 }
