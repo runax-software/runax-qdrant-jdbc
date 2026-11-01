@@ -60,8 +60,10 @@ public final class Parameters {
                 orderBy.add(new OrderItem(bind(item.expression(), values), item.descending()));
             }
 
+            // GROUP BY names columns only, so it holds no placeholder
             return new SelectStatement(items, select.table(), select.alias(),
-                bind(select.where(), values), orderBy, select.limit(), select.offset());
+                bind(select.where(), values), select.groupBy(), orderBy, select.limit(),
+                select.offset());
         }
         if (statement instanceof DeleteStatement delete) {
             return new DeleteStatement(delete.table(), delete.alias(), bind(delete.where(), values));

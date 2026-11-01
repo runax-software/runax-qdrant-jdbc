@@ -39,6 +39,13 @@ class ParametersTest {
     }
 
     @Test
+    void keepsTheGroupByOfAGroupedCount() throws SQLSyntaxErrorException {
+        assertEquals(Parser.parse("SELECT lang, COUNT(*) FROM docs WHERE year > 2020 GROUP BY lang LIMIT 5"),
+                Parameters.bind(Parser.parse("SELECT lang, COUNT(*) FROM docs WHERE year > ? GROUP BY lang LIMIT 5"),
+                        index -> new Literal(2020L)));
+    }
+
+    @Test
     void bindsTheConditionOfADelete() throws SQLSyntaxErrorException {
         assertEquals(Parser.parse("DELETE FROM docs WHERE _id = 'a' OR lang IS NULL"),
                 Parameters.bind(Parser.parse("DELETE FROM docs WHERE _id = ? OR lang IS NULL"),
