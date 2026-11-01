@@ -12,6 +12,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 
@@ -27,6 +28,73 @@ class SystemTableTest {
             "indexed_vectors_count", "segments_count", "shard_number", "replication_factor",
             "write_consistency_factor", "on_disk_payload", "vectors", "sparse_vectors",
             "payload_indexes"), names(SystemTable.COLLECTIONS));
+    }
+
+    @Test
+    void namesTheTablesThatDescribeTheServersStorageAndShards() {
+        assertEquals("snapshots", SystemTable.SNAPSHOTS.tableName());
+        assertEquals("shard_keys", SystemTable.SHARD_KEYS.tableName());
+        assertEquals("shards", SystemTable.SHARDS.tableName());
+
+        assertEquals(List.of("collection_name", "name", "creation_time", "size", "checksum"),
+            names(SystemTable.SNAPSHOTS));
+        assertEquals(List.of("collection_name", "shard_key"), names(SystemTable.SHARD_KEYS));
+        assertEquals(List.of("collection_name", "shard_id", "shard_key", "placement", "peer_id",
+            "state", "points_count"), names(SystemTable.SHARDS));
+    }
+
+    @Test
+    void namesTheTablesThatDescribeTheCluster() {
+        assertEquals("cluster", SystemTable.CLUSTER.tableName());
+        assertEquals("peers", SystemTable.PEERS.tableName());
+
+        assertEquals(List.of("status", "peer_id", "peer_count", "raft_term", "raft_commit",
+            "raft_pending_operations", "raft_leader", "raft_role", "raft_is_voter",
+            "consensus_thread_status", "consensus_thread_updated", "consensus_thread_error",
+            "message_send_failures"), names(SystemTable.CLUSTER));
+        assertEquals(List.of("peer_id", "uri", "is_this_peer", "is_leader"),
+            names(SystemTable.PEERS));
+    }
+
+    @Test
+    void namesTheTablesProjectedFromWhatIsntTabular() {
+        assertEquals("telemetry", SystemTable.TELEMETRY.tableName());
+        assertEquals("metrics", SystemTable.METRICS.tableName());
+        assertEquals("issues", SystemTable.ISSUES.tableName());
+
+        assertEquals(List.of("path", "value", "value_type"), names(SystemTable.TELEMETRY));
+        assertEquals(List.of("name", "labels", "value", "type", "help"),
+            names(SystemTable.METRICS));
+        assertEquals(List.of("id", "description", "related_collection", "timestamp", "solution"),
+            names(SystemTable.ISSUES));
+    }
+
+    @Test
+    void namesEveryTableOnlyOnce() {
+        assertEquals(SystemTable.values().length,
+            Arrays.stream(SystemTable.values()).map(SystemTable::tableName).distinct().count());
+
+        for (SystemTable table : SystemTable.values()) {
+            assertEquals(Optional.of(table), SystemTable.named(table.tableName()));
+            assertEquals(table.columns().size(),
+                table.columns().stream().map(SystemColumn::name).distinct().count(),
+                table.tableName());
+        }
+    }
+
+    @Test
+    void givesEveryColumnTheTypeOfWhatQdrantSendsInIt() {
+        assertEquals(ColumnType.DATETIME, type(SystemTable.SNAPSHOTS, "creation_time"));
+        assertEquals(ColumnType.INTEGER, type(SystemTable.SNAPSHOTS, "size"));
+        assertEquals(ColumnType.INTEGER, type(SystemTable.SHARDS, "shard_id"));
+        assertEquals(ColumnType.TEXT, type(SystemTable.SHARDS, "shard_key"));
+        assertEquals(ColumnType.BOOLEAN, type(SystemTable.CLUSTER, "raft_is_voter"));
+        assertEquals(ColumnType.JSON, type(SystemTable.CLUSTER, "message_send_failures"));
+        assertEquals(ColumnType.BOOLEAN, type(SystemTable.PEERS, "is_leader"));
+        assertEquals(ColumnType.FLOAT, type(SystemTable.METRICS, "value"));
+        assertEquals(ColumnType.JSON, type(SystemTable.METRICS, "labels"));
+        assertEquals(ColumnType.DATETIME, type(SystemTable.ISSUES, "timestamp"));
+        assertEquals(ColumnType.JSON, type(SystemTable.ISSUES, "solution"));
     }
 
     @ParameterizedTest
@@ -50,7 +118,8 @@ class SystemTableTest {
 
     @Test
     void findsNoTableForOtherNames() {
-        assertEquals(Optional.empty(), SystemTable.named("telemetry"));
+        assertEquals(Optional.empty(), SystemTable.named("queries"));
+        assertEquals(Optional.empty(), SystemTable.named("shard_key"));
         assertEquals(Optional.empty(), SystemTable.named(""));
         assertEquals(Optional.empty(), SystemTable.named(null));
     }
@@ -113,5 +182,9 @@ class SystemTableTest {
 
     private static List<String> names(SystemTable table) {
         return table.columns().stream().map(SystemColumn::name).toList();
+    }
+
+    private static ColumnType type(SystemTable table, String column) {
+        return table.column(column).orElseThrow().type();
     }
 }

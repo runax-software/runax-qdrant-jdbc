@@ -20,6 +20,10 @@ import java.util.Optional;
  * <p>Objects Qdrant answers with, such as a collection's vector parameters, are JSON columns
  * holding what Qdrant sent, rather than columns per field: their shape depends on the Qdrant
  * version and on how the collection was created.
+ *
+ * <p>Two of these aren't tabular at Qdrant's end and are projected rather than mapped:
+ * {@link #TELEMETRY} is a tree, so each row is one leaf of it named by its path, and
+ * {@link #METRICS} comes from Qdrant's Prometheus endpoint, so each row is one sample.
  */
 public enum SystemTable {
 
@@ -64,7 +68,151 @@ public enum SystemTable {
             SystemColumn.of("alias_name", ColumnType.TEXT,
                 "The alias name"),
             SystemColumn.of("collection_name", ColumnType.TEXT,
-                "The collection the alias points at")));
+                "The collection the alias points at"))),
+
+    /**
+     * Every snapshot, a collection's and the whole storage's together: Qdrant describes both
+     * the same way, so one table holds them, and {@code collection_name} says which is which.
+     */
+    SNAPSHOTS("snapshots", "Every snapshot, of a collection or of the whole storage",
+        List.of(
+            SystemColumn.of("collection_name", ColumnType.TEXT,
+                "The collection the snapshot is of, or null for a whole-storage snapshot"),
+            SystemColumn.of("name", ColumnType.TEXT,
+                "The snapshot file name, which names it in the snapshot API"),
+            SystemColumn.of("creation_time", ColumnType.DATETIME,
+                "When Qdrant took the snapshot, in UTC"),
+            SystemColumn.of("size", ColumnType.INTEGER,
+                "The snapshot file's size in bytes"),
+            SystemColumn.of("checksum", ColumnType.TEXT,
+                "The snapshot file's SHA-256 checksum"))),
+
+    /**
+     * Every shard key of every collection. Only a collection created with custom sharding has
+     * any, and Qdrant only lets one be created when it runs as a cluster, so this is empty on
+     * a standalone server.
+     */
+    SHARD_KEYS("shard_keys", "Every collection's shard keys, for custom sharding",
+        List.of(
+            SystemColumn.of("collection_name", ColumnType.TEXT,
+                "The collection the shard key belongs to"),
+            SystemColumn.of("shard_key", ColumnType.TEXT,
+                "The key, as text; Qdrant takes a string or a whole number"))),
+
+    /**
+     * Every shard of every collection, each copy of it its own row: where it is, which peer
+     * holds it, and what state that copy is in.
+     */
+    SHARDS("shards", "Every shard of every collection, and the peer holding each copy",
+        List.of(
+            SystemColumn.of("collection_name", ColumnType.TEXT,
+                "The collection the shard belongs to"),
+            SystemColumn.of("shard_id", ColumnType.INTEGER,
+                "The shard's id within the collection"),
+            SystemColumn.of("shard_key", ColumnType.TEXT,
+                "The shard key the shard holds, or null unless the collection is custom-sharded"),
+            SystemColumn.of("placement", ColumnType.TEXT,
+                "local for a copy on the peer the driver is connected to, remote for one elsewhere"),
+            SystemColumn.of("peer_id", ColumnType.INTEGER,
+                "The peer holding this copy"),
+            SystemColumn.of("state", ColumnType.TEXT,
+                "The replica state Qdrant reports, such as Active, Dead, or Partial"),
+            SystemColumn.of("points_count", ColumnType.INTEGER,
+                "Points in the shard; Qdrant only counts them for a local copy"))),
+
+    /**
+     * The cluster as the peer the driver is connected to sees it, always one row: a standalone
+     * server answers with a status of {@code disabled} and nothing else, so the rest is null.
+     */
+    CLUSTER("cluster", "The cluster as the connected peer sees it, in one row",
+        List.of(
+            SystemColumn.of("status", ColumnType.TEXT,
+                "enabled when the server runs as a cluster, disabled when standalone"),
+            SystemColumn.of("peer_id", ColumnType.INTEGER,
+                "The id of the peer the driver is connected to"),
+            SystemColumn.of("peer_count", ColumnType.INTEGER,
+                "Peers in the cluster, as rows in system.peers"),
+            SystemColumn.of("raft_term", ColumnType.INTEGER,
+                "The current Raft term"),
+            SystemColumn.of("raft_commit", ColumnType.INTEGER,
+                "The last committed Raft operation this peer knows of"),
+            SystemColumn.of("raft_pending_operations", ColumnType.INTEGER,
+                "Consensus operations still to be applied on this peer"),
+            SystemColumn.of("raft_leader", ColumnType.INTEGER,
+                "The peer leading the current term"),
+            SystemColumn.of("raft_role", ColumnType.TEXT,
+                "This peer's role in the current term, such as Leader or Follower"),
+            SystemColumn.of("raft_is_voter", ColumnType.BOOLEAN,
+                "Whether this peer votes in elections rather than only learning"),
+            SystemColumn.of("consensus_thread_status", ColumnType.TEXT,
+                "working, stopped, or stopped_with_err"),
+            SystemColumn.of("consensus_thread_updated", ColumnType.DATETIME,
+                "When the consensus thread last made progress"),
+            SystemColumn.of("consensus_thread_error", ColumnType.TEXT,
+                "Why the consensus thread stopped, when it stopped with an error"),
+            SystemColumn.of("message_send_failures", ColumnType.JSON,
+                "Consecutive consensus message failures by peer address, as Qdrant sends them"))),
+
+    /**
+     * Every peer of the cluster, by id. Empty on a standalone server, which has no peers at
+     * all rather than one of itself.
+     */
+    PEERS("peers", "Every peer of the cluster, with its address",
+        List.of(
+            SystemColumn.of("peer_id", ColumnType.INTEGER,
+                "The peer's id"),
+            SystemColumn.of("uri", ColumnType.TEXT,
+                "The peer's internal address, which the peers talk to each other on"),
+            SystemColumn.of("is_this_peer", ColumnType.BOOLEAN,
+                "Whether this is the peer the driver is connected to"),
+            SystemColumn.of("is_leader", ColumnType.BOOLEAN,
+                "Whether this peer leads the current Raft term"))),
+
+    /**
+     * Qdrant's telemetry, one row per value in it: it is a tree whose shape depends on the
+     * Qdrant version, so the rows are leaves named by their path rather than fixed columns.
+     */
+    TELEMETRY("telemetry", "Qdrant's telemetry, as one row per value in it",
+        List.of(
+            SystemColumn.of("path", ColumnType.TEXT,
+                "Where the value sits in the telemetry, as dotted keys, such as app.version"),
+            SystemColumn.of("value", ColumnType.TEXT,
+                "The value as text, whatever JSON type it has"),
+            SystemColumn.of("value_type", ColumnType.TEXT,
+                "string, number, boolean, or null: how to read the value"))),
+
+    /**
+     * Qdrant's Prometheus metrics, one row per sample. The only table read from a text answer
+     * rather than JSON.
+     */
+    METRICS("metrics", "Qdrant's Prometheus metrics, as one row per sample",
+        List.of(
+            SystemColumn.of("name", ColumnType.TEXT,
+                "The metric name, as Prometheus names it"),
+            SystemColumn.of("labels", ColumnType.JSON,
+                "The sample's labels as a JSON object, or null when it has none"),
+            SystemColumn.of("value", ColumnType.FLOAT,
+                "The sample's value"),
+            SystemColumn.of("type", ColumnType.TEXT,
+                "The metric's declared type: counter, gauge, histogram, or summary"),
+            SystemColumn.of("help", ColumnType.TEXT,
+                "The metric's declared description"))),
+
+    /**
+     * The performance problems and configuration suggestions Qdrant has collected, by id.
+     */
+    ISSUES("issues", "The problems and suggestions Qdrant reports about itself",
+        List.of(
+            SystemColumn.of("id", ColumnType.TEXT,
+                "Qdrant's id for the issue, which starts with its code, such as UNINDEXED_FIELD"),
+            SystemColumn.of("description", ColumnType.TEXT,
+                "What Qdrant found"),
+            SystemColumn.of("related_collection", ColumnType.TEXT,
+                "The collection the issue is about, when it is about one"),
+            SystemColumn.of("timestamp", ColumnType.DATETIME,
+                "When Qdrant raised the issue"),
+            SystemColumn.of("solution", ColumnType.JSON,
+                "What Qdrant suggests doing about it, as Qdrant sends it")));
 
     /**
      * The schema every system table is in.

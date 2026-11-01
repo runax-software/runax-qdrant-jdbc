@@ -364,10 +364,21 @@ their names can't clash with a collection's. `DatabaseMetaData` lists them as
 | --- | --- | --- |
 | `system.collections` | `GET /collections`, then `GET /collections/{name}` for each | `name`, `status`, `optimizer_status`, `points_count`, `indexed_vectors_count`, `segments_count`, `shard_number`, `replication_factor`, `write_consistency_factor`, `on_disk_payload`, `vectors`, `sparse_vectors`, `payload_indexes` |
 | `system.aliases` | `GET /aliases` | `alias_name`, `collection_name` |
+| `system.snapshots` | `GET /snapshots`, then `GET /collections/{name}/snapshots` for each | `collection_name` (null for a whole-storage snapshot), `name`, `creation_time`, `size`, `checksum` |
+| `system.shard_keys` | `GET /collections/{name}/shards` for each | `collection_name`, `shard_key` |
+| `system.shards` | `GET /collections/{name}/cluster` for each | `collection_name`, `shard_id`, `shard_key`, `placement` (`local`/`remote`), `peer_id`, `state`, `points_count` |
+| `system.cluster` | `GET /cluster` | `status`, `peer_id`, `peer_count`, `raft_term`, `raft_commit`, `raft_pending_operations`, `raft_leader`, `raft_role`, `raft_is_voter`, `consensus_thread_status`, `consensus_thread_updated`, `consensus_thread_error`, `message_send_failures` |
+| `system.peers` | `GET /cluster` | `peer_id`, `uri`, `is_this_peer`, `is_leader` |
+| `system.telemetry` | `GET /telemetry` | `path`, `value`, `value_type` |
+| `system.metrics` | `GET /metrics` | `name`, `labels`, `value`, `type`, `help` |
+| `system.issues` | `GET /issues` | `id`, `description`, `related_collection`, `timestamp`, `solution` |
 
 ```sql
 SELECT name, status, points_count FROM system.collections;
 SELECT alias_name, collection_name FROM qdrant.system.aliases;
+SELECT collection_name, name, size FROM system.snapshots;
+SELECT value FROM system.telemetry;        -- one row per value, by path
+SELECT name, labels, value FROM system.metrics;
 ```
 
 Values Qdrant leaves out of its answer, such as the counts of a collection that isn't ready,
@@ -377,23 +388,45 @@ rather than a column per field. A collection name is matched exactly, as Qdrant 
 but the driver's own names — the catalog, the two schemas, and the system tables and their
 columns — are matched whatever the case.
 
-`system.collections` reads one collection at a time, because Qdrant describes them only one
-at a time: it costs one call per collection. Nothing read here is cached; every statement
-sees the server as it is now.
+`system.collections`, `system.snapshots`, `system.shard_keys`, and `system.shards` read one
+collection at a time, because Qdrant describes a collection only one at a time: each costs
+one call per collection, and a collection deleted between the listing and its read is left
+out rather than failing the statement. Nothing read here is cached; every statement sees the
+server as it is now. Rows are sorted by the driver, by name or id, so what a statement
+returns doesn't depend on the order Qdrant answers in.
 
-Planned tables, which each describe state Qdrant already exposes: snapshots, shard keys,
-cluster info and peers, telemetry, metrics, and issues. The read-only `CALL` procedures
-below move to these tables as they land. `GET /metrics` answers in Prometheus' text format
-rather than JSON, so it needs more than a new table.
+`system.cluster` is always one row: a standalone server answers `GET /cluster` with nothing
+but a status of `disabled`, which leaves the rest of the row null, and then `system.peers`
+and `system.shard_keys` have no rows — Qdrant only lets a shard key be created when it runs
+as a cluster. A shard key still shows up per shard in `system.shards`, which is where Qdrant
+reports it.
+
+Two of these tables aren't tabular at Qdrant's end and are projected rather than mapped:
+
+- `system.telemetry` is a tree whose shape depends on the Qdrant version, so each row is one
+  leaf of it: `path` names where the value sits, as dotted keys with `[n]` for a list's
+  places, `value` holds it as text, and `value_type` says whether it was a string, a number,
+  a boolean, or null. An object or list with nothing in it is a row of its own, so no path
+  Qdrant sent is missing. This reads the telemetry Qdrant answers with by default; its
+  deeper `?details_level=` levels aren't exposed.
+- `system.metrics` comes from `GET /metrics`, which answers in Prometheus' text format
+  rather than JSON, so the driver reads the text itself: each row is one sample, with its
+  labels as a JSON object and the `type` and `help` Qdrant declared for the metric. A
+  histogram's `_bucket`, `_sum`, and `_count` samples take the type and help declared for
+  the family they belong to. A line the driver can't read is left out rather than failing
+  the statement.
+
+`system.issues` reports what Qdrant collected about itself, such as an `UNINDEXED_FIELD`
+suggestion; `solution` is the JSON Qdrant sent, which is a variant whose shape is its own
+business. The read-only `CALL` procedures below move to these tables as they land.
 
 ## Operations
 
 | SQL | Qdrant |
 | --- | --- |
-| `CALL qdrant.create_snapshot('docs')`, `list_snapshots`, `delete_snapshot` | Collection snapshots |
-| `CALL qdrant.create_full_snapshot()`, `list_full_snapshots`, `delete_full_snapshot` | Full snapshots |
-| `CALL qdrant.create_shard_key('docs', 'eu')`, `delete_shard_key`, `list_shard_keys` | Shard keys |
-| `CALL qdrant.cluster_info('docs')` | Collection cluster info, as rows |
+| `CALL qdrant.create_snapshot('docs')`, `delete_snapshot` | Collection snapshots (listing them is `system.snapshots`) |
+| `CALL qdrant.create_full_snapshot()`, `delete_full_snapshot` | Full snapshots (listing them is `system.snapshots` too) |
+| `CALL qdrant.create_shard_key('docs', 'eu')`, `delete_shard_key` | Shard keys (listing them is `system.shard_keys`) |
 | `CALL qdrant.move_shard(…)`, `replicate_shard(…)`, `abort_shard_transfer(…)` | Cluster setup changes |
 | `CALL qdrant.collection_info('docs')` | Status, optimizer state, segment and point counts, as rows |
 

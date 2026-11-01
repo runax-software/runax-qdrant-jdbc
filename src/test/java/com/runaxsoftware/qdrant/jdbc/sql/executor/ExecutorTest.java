@@ -72,6 +72,7 @@ class ExecutorTest {
             new Object[]{"best", "articles"}, new Object[]{"current", "products"});
         case COLLECTIONS -> List.of(
             collectionRow("articles", 7L), collectionRow("products", 42L));
+        default -> throw new AssertionError("Read " + table);
     });
 
     // Constant plans

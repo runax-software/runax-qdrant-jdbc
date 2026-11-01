@@ -25,6 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SYSTEM TABLE`s with their columns, no primary key and no indexes, and without calling
   Qdrant at all. A `getTables` or `getColumns` call that doesn't filter by schema now returns
   them along with the collections. ([#13])
+- Eight more system tables, all read-only, in the same `system` schema: `snapshots` (a
+  collection's and the whole storage's together, with the whole storage's rows naming no
+  collection), `shard_keys`, `shards` (every copy of every shard, with the peer holding it
+  and the shard key it holds), `cluster` (always one row, `disabled` and otherwise null on a
+  standalone server), `peers`, `telemetry` (one row per value in the telemetry tree, named by
+  its path), `metrics` (one row per Prometheus sample, with its labels as JSON), and `issues`.
+  `DatabaseMetaData` lists all ten system tables with their columns, still without calling
+  Qdrant. `GET /metrics` answers in Prometheus' text format rather than JSON, so the gateway
+  reads a text body as well as a JSON one. ([#20])
 - Similarity search with a vector written out: `SELECT _id, _score, title FROM docs ORDER BY
   similarity(dense, [0.1, 0.2, 0.3, 0.4]) DESC LIMIT 10` runs one call to Qdrant's Query API
   and returns the points it ranked, closest first, with `_score` as a `DOUBLE` column.
@@ -100,3 +109,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#15]: https://github.com/runax-software/runax-qdrant-jdbc/pull/15
 [#16]: https://github.com/runax-software/runax-qdrant-jdbc/pull/16
 [#17]: https://github.com/runax-software/runax-qdrant-jdbc/pull/17
+[#20]: https://github.com/runax-software/runax-qdrant-jdbc/pull/20

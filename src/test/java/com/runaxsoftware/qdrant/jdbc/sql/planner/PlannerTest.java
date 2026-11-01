@@ -414,7 +414,7 @@ class PlannerTest {
 
         // The table's name is still what's reported when there's no such table
         assertEquals("42S02", assertThrows(SQLSyntaxErrorException.class,
-            () -> plan("SELECT COUNT(*) FROM system.telemetry", NO_LOOKUPS)).getSQLState());
+            () -> plan("SELECT COUNT(*) FROM system.queries", NO_LOOKUPS)).getSQLState());
     }
 
     @ParameterizedTest
@@ -581,10 +581,11 @@ class PlannerTest {
     @Test
     void rejectsAnUnknownSystemTable() {
         SQLSyntaxErrorException error = assertThrows(SQLSyntaxErrorException.class,
-            () -> plan("SELECT * FROM system.telemetry", NO_LOOKUPS));
+            () -> plan("SELECT * FROM system.queries", NO_LOOKUPS));
 
-        assertEquals("Unknown table 'system.telemetry': the system schema has aliases, "
-            + "collections", error.getMessage());
+        assertEquals("Unknown table 'system.queries': the system schema has aliases, cluster, "
+            + "collections, issues, metrics, peers, shard_keys, shards, snapshots, telemetry",
+            error.getMessage());
         assertEquals("42S02", error.getSQLState());
     }
 
