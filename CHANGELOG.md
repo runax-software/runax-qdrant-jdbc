@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `WHERE`, the select list, or a search's vector. Values replace placeholders in the parsed
   statement, never in the SQL text. Batches run a `DELETE` once per set of values, and
   `getParameterMetaData()` reports how many placeholders there are. ([#23])
+- `defaultLimit` setting, `1000` by default: how many rows a read returns when the statement
+  gives no `LIMIT` and sets no maximum rows. It applies only to the three reads Qdrant answers
+  in one call and pages no further — an ordered read, a similarity search, and a `GROUP BY` —
+  which until now were errors without a limit. The statement reports an `SQLWarning` (SQLState
+  `01000`) saying how many rows the driver asked for and why, so a bounded answer never passes
+  for the whole one. `defaultLimit=0` keeps asking the statement for its own limit, as before.
+  A plain read still pages through the scroll cursor and needs no limit. ([#25])
+
 - `GROUP BY` with `COUNT(*)`, through Qdrant's facet API: `SELECT lang, COUNT(*) FROM docs
   GROUP BY lang LIMIT 20` counts the points per value of one payload field, the most common
   first. The field needs an index Qdrant can count the values of (`keyword`, `integer`,

@@ -32,6 +32,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CountPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.EmbedText;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetColumn;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.SystemTablePlan;
@@ -440,6 +441,60 @@ class ExecutorTest {
 
         assertSame(failure, assertThrows(SQLException.class,
             () -> failing.execute(facet(5L), STATEMENT)));
+    }
+
+    // The connection's default limit
+
+    @Test
+    void readsTheConnectionsDefaultLimitWhenTheStatementGivesNone() throws SQLException {
+        var scrolls = new ArrayList<ScrollRequest>();
+        var searches = new ArrayList<QueryRequest>();
+        var facets = new ArrayList<FacetRequest>();
+
+        bounded(scrolls, searches, facets, 3)
+            .execute(ordered(null), STATEMENT).resultSet().close();
+        bounded(scrolls, searches, facets, 3)
+            .execute(plan(null), STATEMENT).resultSet().close();
+        bounded(scrolls, searches, facets, 3)
+            .execute(facet(null), STATEMENT).resultSet().close();
+
+        assertEquals(3, scrolls.get(0).limit(), "the ordered read");
+        assertEquals(3L, searches.get(0).limit(), "the search");
+        assertEquals(3L, facets.get(0).limit(), "the groups");
+    }
+
+    @Test
+    void warnsThatItsOwnLimitBoundedTheRead() throws SQLException {
+        for (Plan plan : List.of(ordered(null), plan(null), facet(null))) {
+            ExecutionResult result = bounded(new ArrayList<>(), new ArrayList<>(),
+                new ArrayList<>(), 3).execute(plan, STATEMENT);
+
+            assertTrue(result.warning().contains("at most 3 rows"), result.warning());
+            assertTrue(result.warning().contains("defaultLimit"), result.warning());
+            result.resultSet().close();
+        }
+    }
+
+    @Test
+    void saysNothingWhenTheStatementGaveItsOwnLimit() throws SQLException {
+        Executor executor = bounded(new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), 3);
+
+        assertEquals(null, executor.execute(ordered(2L), STATEMENT).warning());
+        assertEquals(null, executor.execute(plan(2L), STATEMENT).warning());
+        assertEquals(null, executor.execute(facet(2L), STATEMENT).warning());
+        assertEquals(null, executor.execute(ordered(null), statement(2, 0)).warning(),
+            "the maximum rows said how many");
+    }
+
+    @Test
+    void asksForTheLimitWhenTheConnectionHasNoDefault() {
+        for (Plan plan : List.of(ordered(null), plan(null), facet(null))) {
+            SQLException error = assertThrows(SQLException.class, () -> bounded(new ArrayList<>(),
+                new ArrayList<>(), new ArrayList<>(), 0).execute(plan, STATEMENT));
+
+            assertEquals("42000", error.getSQLState());
+            assertTrue(error.getMessage().contains("needs a LIMIT"), error.getMessage());
+        }
     }
 
     // Ordered scroll plans
@@ -932,6 +987,26 @@ class ExecutorTest {
         } catch (SQLException e) {
             throw new AssertionError(e);
         }
+    }
+
+    /**
+     * An executor with a connection default limit, recording every request it sends.
+     */
+    private static Executor bounded(List<ScrollRequest> scrolls, List<QueryRequest> searches,
+                                    List<FacetRequest> facets, int defaultLimit) {
+        return new Executor(request -> {
+            scrolls.add(request);
+
+            return new ScrollPage(List.of(), null);
+        }, query -> {
+            searches.add(query);
+
+            return List.of();
+        }, (collection, filter) -> 0, facet -> {
+            facets.add(facet);
+
+            return List.of();
+        }, table -> List.of(), null, Embedders.none(), defaultLimit);
     }
 
     private static ScrollPlan ordered(Long limit) {

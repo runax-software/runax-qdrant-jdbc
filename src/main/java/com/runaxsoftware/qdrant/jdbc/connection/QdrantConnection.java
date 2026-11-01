@@ -22,6 +22,7 @@ public class QdrantConnection implements Connection {
     private final ServerVersion serverVersion;
     private final SchemaReader schemaReader;
     private final Embedders embedders;
+    private final int defaultLimit;
     private final Properties clientInfo = new Properties();
     private volatile boolean closed;
     private SQLWarning warnings;
@@ -36,6 +37,7 @@ public class QdrantConnection implements Connection {
         this.serverVersion = serverVersion;
         this.schemaReader = new SchemaReader(gateway, settings.sampleSize(), settings.schemaCache());
         this.embedders = new ConnectionEmbedders(settings.embedding(), settings.timeout());
+        this.defaultLimit = settings.defaultLimit();
     }
 
     public static QdrantConnection open(String url, ConnectionSettings settings) throws SQLException {
@@ -93,6 +95,15 @@ public class QdrantConnection implements Connection {
      */
     public Embedders embedders() {
         return embedders;
+    }
+
+    /**
+     * How many rows a read returns when the statement gives no LIMIT and no maximum rows, or 0
+     * when such a statement is an error instead. Only the reads Qdrant answers in one call and
+     * pages no further are bounded this way.
+     */
+    public int defaultLimit() {
+        return defaultLimit;
     }
 
     public void checkOpen() throws SQLException {

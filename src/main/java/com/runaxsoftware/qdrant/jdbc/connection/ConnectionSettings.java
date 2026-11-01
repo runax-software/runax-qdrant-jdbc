@@ -29,6 +29,7 @@ public record ConnectionSettings(
     Duration timeout,
     int sampleSize,
     Duration schemaCache,
+    int defaultLimit,
     Path logFile,
     Embedding embedding
 ) {
@@ -62,6 +63,7 @@ public record ConnectionSettings(
             Duration.ofSeconds(values.wholeNumber(Setting.TIMEOUT, 1, Integer.MAX_VALUE)),
             values.wholeNumber(Setting.SAMPLE_SIZE, 0, 10_000),
             Duration.ofSeconds(values.wholeNumber(Setting.SCHEMA_CACHE, 0, Integer.MAX_VALUE)),
+            values.wholeNumber(Setting.DEFAULT_LIMIT, 0, Integer.MAX_VALUE),
             values.path(Setting.LOG_FILE),
             new Embedding(values.secret(Setting.OPENAI_API_KEY), values.uri(Setting.OPENAI_URL),
                 values.secret(Setting.VOYAGE_API_KEY), values.uri(Setting.VOYAGE_URL))
@@ -76,6 +78,7 @@ public record ConnectionSettings(
         return "ConnectionSettings[host=" + host + ", port=" + port + ", tls=" + tls
             + ", apiKey=" + (apiKey == null ? "none" : "set") + ", timeout=" + timeout.toSeconds() + "s"
             + ", sampleSize=" + sampleSize + ", schemaCache=" + schemaCache.toSeconds() + "s"
+            + ", defaultLimit=" + defaultLimit
             + ", logFile=" + logFile + ", " + embedding + "]";
     }
 }

@@ -88,7 +88,7 @@ Objects and arrays use PostgreSQL's JSON operators and functions:
 | `LIMIT n` | `limit` |
 | `OFFSET n` | Query API `offset` for searches; for plain reads, skip `n` points with the cursor |
 | `ORDER BY _id` | Scroll order (the default) |
-| `ORDER BY price DESC` | `order_by` with direction; needs a range index on `price`, and a limit, since Qdrant answers an ordered read in one page |
+| `ORDER BY price DESC` | `order_by` with direction; needs a range index on `price`, and a limit from the statement or `defaultLimit`, since Qdrant answers an ordered read in one page |
 | `ORDER BY RANDOM()` | Query `sample: random` |
 | `SELECT MIN(price)`, `MAX(price)` | `order_by` on `price` with `limit 1`; needs a range index |
 | `SELECT DISTINCT lang` | Facet on `lang` |
@@ -244,8 +244,8 @@ for a `SELECT` without `FROM`; a count is one row, so no other limit changes it.
 `SELECT lang, COUNT(*) FROM docs [WHERE …] GROUP BY lang LIMIT 20` also runs, as one facet
 call. The field needs an index Qdrant can count the values of — `keyword`, `integer`, `bool`,
 or `uuid`, which the driver checks against the collection's indexes first — and the statement
-needs a `LIMIT`, or its maximum rows: Qdrant counts the ten most common values when a request
-gives none, and returns no cursor to read the rest, so a statement says how many groups it
+needs a limit — its `LIMIT`, its maximum rows, or the connection's `defaultLimit` — because
+Qdrant counts the ten most common values when a request gives none, and returns no cursor to read the rest, so a statement says how many groups it
 wants. The groups come back most common first. A grouped statement selects the grouped field
 and `COUNT(*)`, in either order and under any names, and one without the count reads the
 field's values themselves, which is what `SELECT DISTINCT` asks for. An array field counts once
