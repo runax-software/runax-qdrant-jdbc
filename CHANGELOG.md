@@ -15,10 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   collection doesn't have yet is added, and `_payload` replaces or clears the whole payload.
   Values are read as their column's type, so a cell's text such as `'49.5'` is stored as a
   number. The update count is the matching points; `UPDATE` without `WHERE` is an error, as
-  are changing `_id` and vectors. ([#UPD])
+  are changing `_id` and vectors. ([#28])
 - `NULL` as a value, so `SET lang = NULL` deletes a field and `WHERE lang = NULL` says to use
   `IS NULL`. A point ID written as text that holds a whole number, `_id = '7'`, now matches
-  that point, as DataGrip sends IDs from a text column. ([#UPD])
+  that point, as DataGrip sends IDs from a text column. ([#28])
 - Request options for the connection: `SET qdrant.consistency = majority`, and `ordering`,
   `wait`, `timeout`, `hnsw_ef`, `exact` and `indexed_only`, each sent with the requests it
   applies to: reads take the consistency and timeout, writes whether to wait, the ordering and
@@ -205,3 +205,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#25]: https://github.com/runax-software/runax-qdrant-jdbc/pull/25
 [#26]: https://github.com/runax-software/runax-qdrant-jdbc/pull/26
 [#27]: https://github.com/runax-software/runax-qdrant-jdbc/pull/27
+[#28]: https://github.com/runax-software/runax-qdrant-jdbc/pull/28
