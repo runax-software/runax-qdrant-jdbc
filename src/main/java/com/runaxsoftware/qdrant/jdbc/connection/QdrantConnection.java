@@ -23,6 +23,7 @@ public class QdrantConnection implements Connection {
     private SQLWarning warnings;
     private int holdability = ResultSet.HOLD_CURSORS_OVER_COMMIT;
     private int networkTimeout;
+    private volatile boolean readOnly;
 
     private QdrantConnection(String url, ConnectionSettings settings, QdrantGateway gateway,
                              ServerVersion serverVersion) {
@@ -154,12 +155,13 @@ public class QdrantConnection implements Connection {
     @Override
     public void setReadOnly(boolean readOnly) throws SQLException {
         checkOpen();
+        this.readOnly = readOnly;
     }
 
     @Override
     public boolean isReadOnly() throws SQLException {
         checkOpen();
-        return true;
+        return readOnly;
     }
 
     @Override

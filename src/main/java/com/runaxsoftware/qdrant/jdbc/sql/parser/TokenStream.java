@@ -55,6 +55,24 @@ public final class TokenStream {
         return false;
     }
 
+    /**
+     * Whether the next token is this word, whatever its case. For words such as EXISTS that
+     * mean something only in one place, so they stay usable as names everywhere else.
+     */
+    public boolean peekWord(String word) {
+        return peek().type() == TokenType.IDENTIFIER && peek().text().equalsIgnoreCase(word);
+    }
+
+    /**
+     * Whether the token after the next one is this word, whatever its case.
+     */
+    public boolean peekWordAfterNext(String word) {
+        if (pos + 1 >= tokens.size()) return false;
+
+        Token next = tokens.get(pos + 1);
+        return next.type() == TokenType.IDENTIFIER && next.text().equalsIgnoreCase(word);
+    }
+
     public boolean peekSymbol(String symbol) {
         return peek().type() == TokenType.SYMBOL && peek().text().equals(symbol);
     }

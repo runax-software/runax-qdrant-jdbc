@@ -93,11 +93,7 @@ final class SelectPlanner {
     // A collection, named on its own or in the schema the collections sit in
     private static Plan collection(SelectStatement statement, TableName table, Catalog catalog)
         throws SQLException {
-        if (table.schema() != null && !table.schema().equalsIgnoreCase(COLLECTIONS_SCHEMA)) {
-            throw new SQLSyntaxErrorException("Unknown schema '" + table.schema() + "': this "
-                + "driver has " + COLLECTIONS_SCHEMA + " for the collections and "
-                + SystemTable.SCHEMA + " for the server's own tables", "42S02");
-        }
+        checkCollectionSchema(table);
 
         SelectItem counted = counted(statement.items());
         if (counted != null) {
@@ -350,8 +346,17 @@ final class SelectPlanner {
         return new SystemTablePlan(table, columns, statement.limit());
     }
 
+    // A collection is named on its own or in the schema the collections sit in
+    static void checkCollectionSchema(TableName table) throws SQLException {
+        if (table.schema() != null && !table.schema().equalsIgnoreCase(COLLECTIONS_SCHEMA)) {
+            throw new SQLSyntaxErrorException("Unknown schema '" + table.schema() + "': this "
+                + "driver has " + COLLECTIONS_SCHEMA + " for the collections and "
+                + SystemTable.SCHEMA + " for the server's own tables", "42S02");
+        }
+    }
+
     // Qdrant has no catalogs, so the driver's one catalog is the only name a statement can give
-    private static void checkCatalog(TableName table) throws SQLException {
+    static void checkCatalog(TableName table) throws SQLException {
         if (table.catalog() != null && !table.catalog().equalsIgnoreCase(CATALOG)) {
             throw new SQLSyntaxErrorException("Unknown catalog '" + table.catalog()
                 + "': this driver has only " + CATALOG, "42S02");
@@ -503,7 +508,7 @@ final class SelectPlanner {
      * {@code specs.color} is for the column {@code "specs.color"}, so the whole name is looked
      * up before the qualifier is reported as unknown.
      */
-    private static ColumnDefinition find(TableSchema schema, Column column, String alias,
+    static ColumnDefinition find(TableSchema schema, Column column, String alias,
                                          boolean searching) throws SQLException {
         if (column.qualifier() == null || namesTable(column.qualifier(), alias, schema.name(), false)) {
             if (column.name().equals(SCORE)) {

@@ -118,6 +118,9 @@ FROM system.collections
 | `GROUP BY field` + `COUNT(*)` | Facet API | Needs a keyword index on the field |
 | `ORDER BY similarity(v, [0.1, ...]) DESC` | Query API | Score returned as `_score`; needs a `LIMIT` |
 | `FROM system.collections`, `system.aliases` | Collection and alias APIs | Read-only system tables |
+| `DELETE FROM docs WHERE …` | Delete points by filter | Returns the number deleted; needs a `WHERE` |
+| `TRUNCATE TABLE docs` | Delete every point | The collection and its indexes stay |
+| `DROP TABLE [IF EXISTS] docs` | Delete the collection | |
 | `JOIN`, `SUM`, `AVG`, subqueries | — | Rejected with an error |
 
 The full mapping, covering writes, DDL, aliases, hybrid search, and the rest of Qdrant's API,

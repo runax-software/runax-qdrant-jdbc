@@ -250,6 +250,13 @@ API has no answer for.
 Writes go through the batch update API, wait for Qdrant to apply them (`wait=true`), and
 return the number of points written where Qdrant reports it.
 
+**What runs today:** `DELETE FROM docs WHERE …`, with the filters `SELECT` takes, and
+`TRUNCATE TABLE docs`. Qdrant's delete doesn't report how many points it removed, so the
+driver counts the matching points first and returns that count; it's exact unless something
+else writes to the collection between the two calls. A `DELETE` without `WHERE` is an error
+that points to `TRUNCATE`, so a forgotten condition can't empty a collection. A read-only
+connection (`setReadOnly(true)`) refuses every write with SQLState `25006`.
+
 | SQL | Qdrant |
 | --- | --- |
 | `INSERT INTO docs (_id, dense, lang) VALUES (…)` | Upsert in `insert_only` mode |
@@ -293,7 +300,7 @@ CREATE INDEX ON docs (title) USING text WITH (tokenizer = 'word', phrase_matchin
 | `CREATE INDEX ON docs (lang) [USING keyword] [WITH (is_tenant = true, …)]` | Create payload index; the type defaults from the column type |
 | `DROP INDEX lang_idx ON docs` | Delete payload index |
 | `COMMENT ON TABLE docs IS '…'` | Collection metadata `description` |
-| `DROP TABLE docs` | Delete collection |
+| `DROP TABLE docs`, `DROP TABLE IF EXISTS docs` | Delete collection (runs today) |
 
 ## Aliases
 
