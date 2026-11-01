@@ -423,6 +423,25 @@ SELECT /*+ hnsw_ef=256 shard_key='eu' */ _id, _score    -- for one statement
 FROM docs ORDER BY similarity(dense, embed('refund')) DESC LIMIT 10;
 ```
 
+**What runs today:** `SET qdrant.<option> = <value>` (or `TO <value>`) for `consistency`,
+`ordering`, `wait`, `timeout`, `hnsw_ef`, `exact`, and `indexed_only`; `SET qdrant.<option> =
+DEFAULT` and `RESET qdrant.<option>` put one back to Qdrant's default, and `RESET ALL` every
+one. `SHOW qdrant.<option>` and `SHOW ALL` return rows of `name` and `setting`, with a null
+setting for an option left at Qdrant's default. A value may be a bare word (`majority`) or
+text that holds a number or a boolean (`'30'`). The options belong to the connection: every
+statement it makes after a `SET` sends them, other connections don't, and a read-only
+connection may change them, since they change nothing in Qdrant.
+
+| Option | Sent with |
+| --- | --- |
+| `consistency`, `timeout` | Reads: scrolls, searches, counts, facets |
+| `wait`, `ordering`, `timeout` | Writes: deletes, and the writes to come |
+| `hnsw_ef`, `exact`, `indexed_only` | Searches, as the request's `params` |
+
+A name without the `qdrant.` prefix, as tools send for other databases (`SET search_path`),
+isn't supported, rather than ignored. `shard_key`, the quantization options, and the
+`/*+ … */` hint for one statement are still the target.
+
 ## System tables
 
 Read-only tables that describe the server rather than any collection's points. They sit in

@@ -7,6 +7,7 @@ import com.runaxsoftware.qdrant.jdbc.statement.QdrantStatement;
 import com.runaxsoftware.qdrant.jdbc.embedding.ConnectionEmbedders;
 import com.runaxsoftware.qdrant.jdbc.embedding.Embedders;
 import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.RequestOptions;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ServerVersion;
 import com.runaxsoftware.qdrant.jdbc.schema.SchemaReader;
 
@@ -80,6 +81,19 @@ public class QdrantConnection implements Connection {
 
     public QdrantGateway gateway() {
         return gateway;
+    }
+
+    /**
+     * The request options this connection's {@code SET} statements left, which every request
+     * from now on goes with.
+     */
+    public RequestOptions requestOptions() {
+        return gateway.options();
+    }
+
+    public void requestOptions(RequestOptions options) throws SQLException {
+        checkOpen();
+        gateway.options(options);
     }
 
     public ServerVersion serverVersion() {

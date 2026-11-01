@@ -136,6 +136,15 @@ try (PreparedStatement statement = connection.prepareStatement(
 }
 ```
 
+Options for the rest of the connection, sent with each request they apply to:
+
+```sql
+SET qdrant.consistency = majority;   -- reads wait for most replicas
+SET qdrant.hnsw_ef = 256;            -- searches look at more candidates
+SHOW ALL;
+RESET ALL;
+```
+
 ### How SQL maps to Qdrant
 
 | SQL | Qdrant | Notes |

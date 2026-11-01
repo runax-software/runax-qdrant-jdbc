@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Request options for the connection: `SET qdrant.consistency = majority`, and `ordering`,
+  `wait`, `timeout`, `hnsw_ef`, `exact` and `indexed_only`, each sent with the requests it
+  applies to: reads take the consistency and timeout, writes whether to wait, the ordering and
+  the timeout, and searches the precision settings. `RESET qdrant.<option>` and `RESET ALL`
+  put them back to Qdrant's defaults; `SHOW qdrant.<option>` and `SHOW ALL` list them. They
+  belong to the connection, and a read-only connection may change them. ([#27])
 - `embed('text', 'provider:model')` in a search: `ORDER BY similarity(dense, embed('refund
   policy', 'openai:text-embedding-3-small')) DESC LIMIT 10`. A `qdrant:` model is run by Qdrant
   itself, on any kind of vector: every Qdrant runs `qdrant:qdrant/bm25` into sparse vectors,
@@ -188,3 +194,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#24]: https://github.com/runax-software/runax-qdrant-jdbc/pull/24
 [#25]: https://github.com/runax-software/runax-qdrant-jdbc/pull/25
 [#26]: https://github.com/runax-software/runax-qdrant-jdbc/pull/26
+[#27]: https://github.com/runax-software/runax-qdrant-jdbc/pull/27

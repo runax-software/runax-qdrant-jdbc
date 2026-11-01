@@ -168,9 +168,10 @@ public final class FakeQdrantServer implements AutoCloseable {
      * @param apiKey    the {@code api-key} header, or {@code null} when there was none
      * @param userAgent the {@code User-Agent} header
      * @param body      the JSON body, or {@code null} when there was none
+     * @param query     the query string, decoded, or {@code null} when there was none
      */
     public record Request(String method, String path, String apiKey, String userAgent,
-                          JsonNode body) {
+                          JsonNode body, String query) {
     }
 
     private record Failure(int status, String contentType, String body) {
@@ -633,7 +634,8 @@ public final class FakeQdrantServer implements AutoCloseable {
             String apiKey = exchange.getRequestHeaders().getFirst("api-key");
             JsonNode body = readBody(exchange.getRequestBody());
             requests.add(new Request(method, path, apiKey,
-                exchange.getRequestHeaders().getFirst("User-Agent"), body));
+                exchange.getRequestHeaders().getFirst("User-Agent"), body,
+                exchange.getRequestURI().getQuery()));
 
             String[] segments = path.split("/", -1);
             Endpoint endpoint = route(method, segments);

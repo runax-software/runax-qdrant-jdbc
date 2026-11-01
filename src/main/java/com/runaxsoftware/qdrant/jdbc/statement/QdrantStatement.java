@@ -1,6 +1,10 @@
 package com.runaxsoftware.qdrant.jdbc.statement;
 
 import com.runaxsoftware.qdrant.jdbc.connection.QdrantConnection;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.RequestOption;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.RequestOptions;
+import com.runaxsoftware.qdrant.jdbc.resultset.ListResultSet;
+import com.runaxsoftware.qdrant.jdbc.resultset.ResultColumn;
 import com.runaxsoftware.qdrant.jdbc.schema.SchemaReader;
 import com.runaxsoftware.qdrant.jdbc.sql.executor.ExecutionResult;
 import com.runaxsoftware.qdrant.jdbc.sql.executor.Executor;
@@ -13,10 +17,15 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.Planner;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.SetOptionPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ShowOptionsPlan;
 import com.runaxsoftware.qdrant.jdbc.system.SystemTable;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Types;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * A statement. SQL is parsed and planned against the collections' columns, so syntax errors,
@@ -154,12 +163,14 @@ public class QdrantStatement extends AbstractStatement {
         closeResultSet();
         setUpdateCount(-1);
 
-        if (!plan.returnsRows() && connection.isReadOnly()) {
+        if (plan.changesData() && connection.isReadOnly()) {
             throw new SQLException("The connection is read-only, so it can't change what Qdrant "
                 + "holds: call setReadOnly(false), or turn off read-only in the tool", "25006");
         }
 
-        ExecutionResult result = executor.execute(plan, this);
+        ExecutionResult result = plan instanceof SetOptionPlan set ? setOption(set)
+            : plan instanceof ShowOptionsPlan show ? showOptions(show)
+            : executor.execute(plan, this);
         setResultSet(result.resultSet());
         setUpdateCount(result.updateCount());
 
@@ -176,6 +187,34 @@ public class QdrantStatement extends AbstractStatement {
         }
 
         return result;
+    }
+
+    /**
+     * Changes the connection's request options. They belong to the connection, so every
+     * statement it makes from now on sends them, not only this one.
+     */
+    private ExecutionResult setOption(SetOptionPlan plan) throws SQLException {
+        RequestOptions options = plan.option() == null
+            ? RequestOptions.NONE
+            : connection.requestOptions().with(plan.option(), plan.value());
+
+        connection.requestOptions(options);
+        return ExecutionResult.updated(0);
+    }
+
+    // One row per option: its name, and its value as text, or null for Qdrant's default
+    private ExecutionResult showOptions(ShowOptionsPlan plan) {
+        RequestOptions options = connection.requestOptions();
+        var rows = new ArrayList<Object[]>();
+
+        for (RequestOption option : plan.options()) {
+            Object value = option == RequestOption.WAIT ? options.waits() : options.get(option);
+            rows.add(new Object[] {"qdrant." + option.key(), value == null ? null : value.toString()});
+        }
+
+        return ExecutionResult.rows(new ListResultSet(List.of(
+            ResultColumn.of("name", Types.VARCHAR), ResultColumn.of("setting", Types.VARCHAR)),
+            rows, this));
     }
 
     // Reports syntax errors, unknown names, and SQL that can't run yet before anything runs

@@ -10,6 +10,8 @@ import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantCollection;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QueryRequest;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.RequestOption;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.RequestOptions;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScoredPoint;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScrollPage;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScrollRequest;
@@ -43,6 +45,7 @@ public class QdrantGateway implements AutoCloseable {
     private final String apiKey;
     private final Duration timeout;
     private final String userAgent;
+    private volatile RequestOptions options = RequestOptions.NONE;
 
     private QdrantGateway(HttpClient http, String baseUrl, String apiKey, Duration timeout, String userAgent) {
         this.http = http;
@@ -98,6 +101,18 @@ public class QdrantGateway implements AutoCloseable {
         return request(HttpMethod.GET, "/collections/" + segment(collection), null);
     }
 
+    /**
+     * The options the requests from now on go with, as the connection's {@code SET} statements
+     * leave them.
+     */
+    public void options(RequestOptions options) {
+        this.options = options;
+    }
+
+    public RequestOptions options() {
+        return options;
+    }
+
     public ScrollPage scroll(ScrollRequest scroll) throws SQLException {
         ObjectNode body = JSON.createObjectNode()
             .put("limit", scroll.limit())
@@ -114,7 +129,8 @@ public class QdrantGateway implements AutoCloseable {
         }
 
         return RestModels.scrollPage(
-            request(HttpMethod.POST, "/collections/" + segment(scroll.collection()) + "/points/scroll", body));
+            request(HttpMethod.POST, "/collections/" + segment(scroll.collection()) + "/points/scroll"
+                + readParameters(), body));
     }
 
     /**
@@ -140,8 +156,12 @@ public class QdrantGateway implements AutoCloseable {
         if (!query.vector().isEmpty()) body.put("using", query.vector());
         if (query.filter() != null) body.set("filter", query.filter());
 
+        ObjectNode params = searchParameters();
+        if (!params.isEmpty()) body.set("params", params);
+
         return RestModels.scoredPoints(request(HttpMethod.POST,
-            "/collections/" + segment(query.collection()) + "/points/query", body));
+            "/collections/" + segment(query.collection()) + "/points/query" + readParameters(),
+            body));
     }
 
     /**
@@ -164,18 +184,20 @@ public class QdrantGateway implements AutoCloseable {
         if (filter != null) body.set("filter", filter);
 
         return request(HttpMethod.POST,
-            "/collections/" + segment(collection) + "/points/count", body).path("count").asLong(0);
+            "/collections/" + segment(collection) + "/points/count" + readParameters(), body)
+            .path("count").asLong(0);
     }
 
     /**
-     * Deletes the points a filter matches, and waits until Qdrant has applied it.
+     * Deletes the points a filter matches, and waits until Qdrant has applied it unless the
+     * connection set {@code qdrant.wait} to false.
      */
     public void deletePoints(String collection, JsonNode filter) throws SQLException {
         ObjectNode body = JSON.createObjectNode();
         body.set("filter", filter);
 
         request(HttpMethod.POST,
-            "/collections/" + segment(collection) + "/points/delete?wait=true", body);
+            "/collections/" + segment(collection) + "/points/delete" + writeParameters(), body);
     }
 
     /**
@@ -232,7 +254,51 @@ public class QdrantGateway implements AutoCloseable {
         if (facet.filter() != null) body.set("filter", facet.filter());
 
         return RestModels.facetHits(request(HttpMethod.POST,
-            "/collections/" + segment(facet.collection()) + "/facet", body));
+            "/collections/" + segment(facet.collection()) + "/facet" + readParameters(), body));
+    }
+
+    // The query string a read goes with: its consistency and server-side timeout, when set
+    private String readParameters() {
+        RequestOptions current = options;
+        var parameters = new StringBuilder();
+
+        append(parameters, "consistency", current.get(RequestOption.CONSISTENCY));
+        append(parameters, "timeout", current.get(RequestOption.TIMEOUT));
+
+        return parameters.toString();
+    }
+
+    // The query string a write goes with: whether to wait, its ordering, and its timeout
+    private String writeParameters() {
+        RequestOptions current = options;
+        var parameters = new StringBuilder();
+
+        append(parameters, "wait", current.waits());
+        append(parameters, "ordering", current.get(RequestOption.ORDERING));
+        append(parameters, "timeout", current.get(RequestOption.TIMEOUT));
+
+        return parameters.toString();
+    }
+
+    // A search's precision settings, which go in its body rather than its query string
+    private ObjectNode searchParameters() {
+        RequestOptions current = options;
+        ObjectNode params = JSON.createObjectNode();
+
+        if (current.get(RequestOption.HNSW_EF) instanceof Integer ef) params.put("hnsw_ef", ef);
+        if (current.get(RequestOption.EXACT) instanceof Boolean exact) params.put("exact", exact);
+        if (current.get(RequestOption.INDEXED_ONLY) instanceof Boolean indexed) {
+            params.put("indexed_only", indexed);
+        }
+
+        return params;
+    }
+
+    private static void append(StringBuilder parameters, String name, Object value) {
+        if (value == null) return;
+
+        parameters.append(parameters.length() == 0 ? '?' : '&').append(name).append('=')
+            .append(URLEncoder.encode(value.toString(), StandardCharsets.UTF_8));
     }
 
     /**
