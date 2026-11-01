@@ -5,7 +5,8 @@ and how much SQL it accepts. Both are measured, not estimated — every number b
 the code or from a server that was asked. The point is to make the gaps legible, so a
 maintainer can tell a missing feature that blocks real use from one that nobody would notice.
 
-**Measured against** driver commit `e1e03c7` and Qdrant **1.20.0** (build
+**Measured against** driver commit `9393e92` (with `SET`, `UPDATE` and `INSERT`, #27, #28 and
+#31) and Qdrant **1.20.0** (build
 `222b2e44ab1c3f17e8246396ead6558e45041df7`), running locally over REST on port 6333, with the
 three collections `./gradlew seedQdrant` loads. Qdrant 1.20 does not serve `/openapi.json` —
 that path answers 404 — so the route list comes from the published spec at the matching tag,
@@ -36,14 +37,14 @@ one of them is indistinguishable from a bug.
 
 ## Qdrant REST coverage
 
-Qdrant 1.20 documents **69 routes**. The driver calls **21** of them, which is **30%**. The
+Qdrant 1.20 documents **69 routes**. The driver calls **24** of them, which is **35%**. The
 counts below are per area, using Qdrant's own OpenAPI tags, so they can be recomputed from the
 spec without judgement calls.
 
 | Area | Covered | Total | What the covered routes are for |
 | --- | --- | --- | --- |
 | Collections | 5 | 9 | Listing and describing tables, `CREATE TABLE`, `DROP TABLE`, `IF NOT EXISTS` |
-| Points | 4 | 14 | `SELECT` (scroll), `COUNT(*)`, `GROUP BY` (facet), `DELETE` and `TRUNCATE` |
+| Points | 7 | 14 | `SELECT` (scroll), `COUNT(*)`, `GROUP BY` (facet), `DELETE`, `TRUNCATE`, `UPDATE` (batch), `INSERT` (upsert, and the ID check before it) |
 | Search | 1 | 5 | `ORDER BY similarity(...) DESC`, including `embed()` |
 | Aliases | 1 | 3 | Listing aliases as views, and `system.aliases` |
 | Indexes | 1 | 2 | The payload indexes `CREATE TABLE` declares |
@@ -52,11 +53,11 @@ spec without judgement calls.
 | Service | 3 | 6 | Version on connect, `system.telemetry`, `system.metrics` |
 | Beta | 1 | 2 | `system.issues` |
 | Quotas | 0 | 2 | — |
-| **Total** | **21** | **69** | |
+| **Total** | **24** | **69** | |
 
 ### The routes the driver calls
 
-Thirteen come from `QdrantGateway`, which is the only place that speaks HTTP, and eight more
+Sixteen come from `QdrantGateway`, which is the only place that speaks HTTP, and eight more
 from `QdrantSystemTables`, which reads endpoints the gateway has no model for because their
 shape depends on the Qdrant version.
 
@@ -71,8 +72,11 @@ shape depends on the Qdrant version.
 | `PUT /collections/{c}/index` | `createIndex` | The `… KEYWORD INDEX` columns of a `CREATE TABLE` |
 | `POST /collections/{c}/points/scroll` | `scroll` | `SELECT`, paged by cursor, and the sample that infers columns |
 | `POST /collections/{c}/points/query` | `query` | `ORDER BY similarity(...) DESC` |
-| `POST /collections/{c}/points/count` | `count` | `COUNT(*)`, and the row count a `DELETE` reports |
+| `POST /collections/{c}/points/count` | `count` | `COUNT(*)`, and the row count a `DELETE` or `UPDATE` reports |
 | `POST /collections/{c}/points/delete` | `deletePoints` | `DELETE … WHERE`, `TRUNCATE TABLE` |
+| `POST /collections/{c}/points/batch` | `updatePoints` | `UPDATE`: set, delete, overwrite and clear payload in one call |
+| `POST /collections/{c}/points` | `existingIds` | `INSERT`: the IDs a statement gives, looked up so a taken one is an error |
+| `PUT /collections/{c}/points` | `insertPoints` | `INSERT`: one upsert in `insert_only` mode |
 | `POST /collections/{c}/facet` | `facet` | `GROUP BY … COUNT(*)` |
 | `GET /aliases` | `listAliases` | Aliases as views, and `system.aliases` |
 | `GET /snapshots` | `QdrantSystemTables` | `system.snapshots`, the whole-storage rows |
@@ -87,9 +91,9 @@ shape depends on the Qdrant version.
 The driver also calls `POST /embeddings` on `api.openai.com` or `api.voyageai.com` for
 `embed('text', 'openai:…')`. That is not a Qdrant route and is not counted here.
 
-### Why 30% means less than it looks, in both directions
+### Why 35% means less than it looks, in both directions
 
-**The denominator is padded.** Of the 48 routes the driver does not call, 15 are snapshot
+**The denominator is padded.** Of the 45 routes the driver does not call, 15 are snapshot
 plumbing — creating, downloading, uploading and recovering snapshots of a collection or of one
 shard — and 6 more are cluster surgery: moving a shard, dropping a peer, recovering Raft. No
 SQL client would call those; they belong to an operator with a shell, and exposing them through
@@ -97,7 +101,7 @@ JDBC would mean inventing `CALL` syntax for operations that have nothing to do w
 dialect spec does plan exactly that (see its *Operations* section), but as procedures, and a
 procedure that wraps one route is not what "covering an API" usually means. Set aside the 15
 unused snapshot routes, the 6 unused cluster ones, the 3 health probes (`healthz`, `livez`,
-`readyz`) and the 2 quota routes, and 43 remain, of which the driver calls 21 — **49%**.
+`readyz`) and the 2 quota routes, and 43 remain, of which the driver calls 24 — **56%**.
 Neither number is wrong; they answer different questions.
 
 **The numerator hides how much each route carries.** One route is not one feature.
@@ -107,18 +111,19 @@ formulas, MMR, server-side embedding. The driver sends two shapes of its body �
 `query.nearest`, or `{"text": …, "model": …}` when Qdrant embeds the text — out of a dozen the
 route accepts. Counting it as covered is true and almost uninformative. The same goes for
 `points/scroll`: the driver sends `limit`, `offset` as the page cursor, `filter`,
-`with_payload`, `with_vector` and `order_by`'s key and direction, and never
-`order_by.start_from`, `shard_key`, `consistency` or `timeout` — untouched fields of a route
-that counts as used.
+`with_payload`, `with_vector` and `order_by`'s key and direction, plus `consistency` and
+`timeout` once a connection `SET`s them, and never `order_by.start_from` or `shard_key` —
+untouched fields of a route that counts as used. `points/batch` is the opposite case: one
+route that carries all of `UPDATE`.
 
-**And one missing route outweighs ten present ones.** `PUT /collections/{c}/points` is upsert.
-It is one row in the unused list, next to `cluster/recover`, and it is the difference between a
-driver that can put data into Qdrant and one that cannot. Without it `CREATE TABLE` makes an
-empty collection that has to be filled with `curl`, a grid cannot save an edit, and no ETL tool
-can write. Ten of the snapshot routes together matter less. A percentage cannot say this, which
-is why the ranked gaps below exist. The converse also happens: `POST /collections/{c}/points`
-is `get_points`, retrieval by ID, and counts as uncovered although `WHERE _id IN (…)` already
-answers it through `points/scroll` with a `has_id` filter. Nothing is missing there.
+**And one route can outweigh ten.** `PUT /collections/{c}/points` is upsert, and until #31 it
+was one row in the unused list next to `cluster/recover`: the difference between a driver that
+can put data into Qdrant and one that cannot. It is used now, by `INSERT`. The converse also
+happens. The four single-purpose payload routes (`points/payload` in both methods,
+`payload/clear`, `payload/delete`) count as uncovered, although `UPDATE` does all four of
+their jobs through `points/batch`, in one call; nothing is missing there. Changing a vector is
+different: `PUT …/points/vectors` and `…/vectors/delete` are unused, and no statement reaches
+them either.
 
 ### Spec and server disagree, so both were checked
 
@@ -131,7 +136,7 @@ slightly wrong.
   `batch` and `groups`, `points/discover` and `discover/batch` — is in the 1.15 spec, gone from
   the 1.20 spec, and alive on a 1.20 server: each answers a JSON validation error rather than
   an empty 404. They were superseded by the Query API, not removed. Counting them puts the live
-  surface at 77 routes and the driver at 27%; this document uses the documented 69, because the
+  surface at 77 routes and the driver at 31%; this document uses the documented 69, because the
   spec is what a maintainer can check, and routes Qdrant has stopped documenting are not ones
   the driver should start calling.
 - **`/locks` is really gone.** `GET` and `POST /locks` are in the 1.15 spec and answer an empty
@@ -151,14 +156,15 @@ client.
 
 ## SQL coverage
 
-The ceiling is the lexer. `Lexer.java` recognises **25 keywords**, and a word outside that set
-becomes an identifier, so `HAVING`, `LIKE`, `BETWEEN`, `JOIN`, `UNION`, `INSERT`, `UPDATE`,
-`VIEW`, `INDEX`, `SET` and `CALL` cannot be lexed as syntax at all. `Parser.java` wires **five
-statement kinds**, and `Plan.java`'s sealed interface permits **nine plan kinds** — the best
-single index of what can run. Two parser classes exist but are empty four-line stubs with no
-body and no caller: `InsertParser` and `IndexParser`. The type names a `CREATE TABLE` uses
-(`VECTOR`, `KEYWORD`, `DISTANCE`, `MODIFIER`) are not keywords either; `CreateParser` reads
-them as identifiers in the positions where they can appear.
+The ceiling is the lexer. `Lexer.java` recognises **30 keywords**, and a word outside that set
+becomes an identifier, so `HAVING`, `LIKE`, `BETWEEN`, `JOIN`, `UNION`, `VIEW`, `INDEX`,
+`ALTER` and `CALL` cannot be lexed as syntax at all. `Parser.java` wires **ten statement
+kinds**, and `Plan.java`'s sealed interface permits **thirteen plan kinds** — the best single
+index of what can run. One parser class is still an empty four-line stub with no body and no
+caller: `IndexParser`. Some words mean something in one statement only, and aren't keywords,
+so they stay usable as names: the type names a `CREATE TABLE` uses (`VECTOR`, `KEYWORD`,
+`DISTANCE`, `MODIFIER`), which `CreateParser` reads where they can appear, and `RESET`, `SHOW`,
+`ALL`, `TO` and `DEFAULT`, which `OptionParser` reads the same way.
 
 ### Statements
 
@@ -172,19 +178,30 @@ them as identifiers in the positions where they can appear.
 | `TRUNCATE TABLE` | works | Deletes every point; the collection and its indexes stay |
 | `DROP TABLE [IF EXISTS]` | works | |
 | `CREATE TABLE [IF NOT EXISTS]` | partial | Vector and indexed payload columns; no `WITH (…)` |
-| `INSERT` | missing | Not a keyword: fails as `Expected SELECT, DELETE, TRUNCATE, DROP or CREATE` |
-| `UPDATE` | missing | Same |
+| `INSERT INTO … (columns) VALUES …` | works | One `insert_only` upsert; the column list is required; a taken ID is `23505`; a row without `_id` gets a UUID, from `getGeneratedKeys` |
+| `UPDATE … SET … WHERE` | partial | Payload only, in one batch; `WHERE` is required; `SET` on a vector or `_id` is an error |
+| `SET qdrant.<option>`, `RESET`, `SHOW` | works | Seven request options, kept for the connection; other databases' settings are errors |
+| `INSERT … ON CONFLICT` | missing | `ON` isn't a keyword, so it fails at the end of `VALUES` |
 | `CREATE INDEX`, `DROP INDEX` | missing | `CREATE` parses, then `Expected TABLE, found 'INDEX'` |
 | `CREATE VIEW` / `ALTER VIEW` / `DROP VIEW` | missing | Aliases are listed as views but cannot be managed |
-| `ALTER TABLE` | missing | Not a keyword |
-| `CALL`, `SET` | missing | Not keywords; `getProcedures` returns no rows |
+| `ALTER TABLE` | missing | Not a keyword: `Expected SELECT, INSERT, UPDATE, …, found 'ALTER'` |
+| `CALL` | missing | Not a keyword; `getProcedures` returns no rows |
 | `JOIN`, `UNION`, subqueries | missing | Rejected on purpose — see below |
 | Trailing `;` | works | One semicolon ends a statement; two statements in one call is an error |
 
 A statement runs on `Statement` and on `PreparedStatement` alike. `prepareStatement` parses
 once and reports syntax errors then, binding each `?` into the parsed tree rather than into the
-SQL text; `getParameterMetaData` reports the count with type `OTHER` (1111), and `getMetaData`
-is `null` until the statement runs.
+SQL text — in `WHERE`, the select list, a search's vector, `embed(?, ?)`, `UPDATE`'s `SET` and
+`INSERT`'s `VALUES`. `getParameterMetaData` reports the count with type `OTHER` (1111), and
+`getMetaData` is `null` until the statement runs. `addBatch` and `executeBatch` run a prepared
+`INSERT`, `UPDATE` or `DELETE` once per set of values; Qdrant has no transactions, so a
+`BatchUpdateException` reports the sets that ran before a failure.
+
+A write goes with the connection's `qdrant.wait`, `qdrant.ordering` and `qdrant.timeout`, a
+read with its `qdrant.consistency` and `qdrant.timeout`, and a search with its `qdrant.hnsw_ef`,
+`qdrant.exact` and `qdrant.indexed_only`; `SHOW ALL` lists them. A value is read as its column's
+type in `INSERT` and `UPDATE`, since tools send a cell as text: `'49.5'` into a `DOUBLE` column
+is stored as a number, and text that can't be one is `22018`.
 
 ### Clauses
 
@@ -260,7 +277,7 @@ can express. The mapping below is what `FilterPlanner` emits.
 | `field IS NULL` | `is_empty`: missing, `null`, or `[]` |
 | `field IS NOT NULL` | `must_not` of `is_empty` |
 | `vector IS NULL` / `IS NOT NULL` | `has_vector`, negated or not; an unnamed vector is an error, as every point has one |
-| `_id = 7`, `_id IN (7, '5c56…')` | `has_id`; a value must be a non-negative whole number or a UUID |
+| `_id = 7`, `_id IN (7, '5c56…')`, `_id = '7'` | `has_id`; a value must be a non-negative whole number or a UUID, and text that holds a whole number is that number, as DataGrip sends it |
 | `_id NOT IN (…)` | `must_not` of `has_id` |
 
 The null handling is the part that took thought and is easy to regress: SQL says a comparison
@@ -297,7 +314,18 @@ SELECT _id, _score FROM sample_products LIMIT 1
   DESC
 
 SELECT name FROM sample_products WHERE name = NULL
-  Expected a value, found 'NULL' at line 1, column 47
+  Comparing 'name' with NULL is never true: use IS NULL or IS NOT NULL
+
+UPDATE sample_products SET name = 'x'
+  UPDATE without WHERE would change every point of sample_products: add a WHERE, such as
+  WHERE _id = 7
+
+INSERT INTO sample_products (_id, name) VALUES (1, 'dup')
+  Point 1 is already in sample_products: INSERT adds new points, and UPDATE changes one
+
+SET search_path = public
+  'search_path' isn't an option this driver has: it has qdrant.consistency, qdrant.ordering,
+  qdrant.wait, qdrant.timeout, qdrant.hnsw_ef, qdrant.exact, qdrant.indexed_only
 ```
 
 A vector's dimensions are checked against the collection before the search is sent, so a typo
@@ -322,8 +350,10 @@ Qdrant inside the same query body, so no new route is involved and `qdrant:qdran
 nothing installed; `openai:` and `voyage:` call the provider from the driver and need a key in
 the connection properties. Naming no model is an error unless the collection's
 `runax.embed.<vector>` metadata holds one, which is deliberate — a vector searched with the
-wrong model returns plausible nonsense rather than failing. `embed()` is not yet accepted
-anywhere but a search, because there is no `INSERT` to accept it in.
+wrong model returns plausible nonsense rather than failing. `embed()` is also a value of
+`INSERT`: Qdrant embeds a `qdrant:` model as it stores the point, and the driver embeds any
+other first, one provider call per row. `UPDATE` doesn't take it yet, since `UPDATE` doesn't
+change vectors.
 
 ### The JDBC surface
 
@@ -336,7 +366,9 @@ and the product, driver and version strings. `getProcedures` is a default and re
 so the `CALL` procedures the dialect spec plans are not announced yet.
 
 Reads are paged by the scroll cursor rather than loaded whole. `setReadOnly(true)` refuses
-every write with SQLState `25006`. `prepareCall` fails with `Qdrant has no stored procedures`.
+every write with SQLState `25006`, and still runs `SET`, which changes only the connection.
+`getGeneratedKeys` returns the IDs the latest `INSERT` added, given or made, as one `_id`
+column. `prepareCall` fails with `Qdrant has no stored procedures`.
 `setAutoCommit(false)` is accepted and means nothing, since Qdrant has no transactions and
 every statement applies on its own; the buffered-write mode that would give it meaning is on the
 roadmap. Note that most `SQLFeatureNotSupportedException`s above carry a null SQLState — the
@@ -344,36 +376,37 @@ message is good, the state is not set.
 
 ## Gaps that matter, ranked
 
-1. **No `INSERT`, and no upsert call.** `PUT /collections/{c}/points` is unused and `INSERT` is
-   not a lexer keyword, which together make the driver read-only apart from deletes. This is
-   first because it changes what the driver *is*: a `CREATE TABLE` produces a collection that
-   can only be filled from outside, a grid cannot save an edit, and no tool that loads data can
-   be pointed at it. It is also the cheapest of the big gaps, since one route and one statement
-   kind cover it, and `embed()` already exists to turn a text column into a vector.
-2. **`OFFSET` is missing.** One clause, already supported by the route the driver calls —
+The two gaps that led this list when it was first measured, no `INSERT` and no `UPDATE`, are
+closed: the driver can create a collection, fill it, save a grid's edits, and delete from it.
+What remains, most important first:
+
+1. **`OFFSET` is missing.** One clause, already supported by the route the driver calls —
    `points/scroll` takes `offset`, and the Query API takes it for searches — and every grid
    needs it to page past the first screen. The roadmap names this as the last piece of DataGrip
    compatibility, which is right: the gap is not that someone cannot express a query, it is that
-   a tool's scrollbar does not work.
-3. **No index management, which strands the clauses that depend on it.** `CREATE INDEX` and
+   a tool's scrollbar does not work. It is in review as #30.
+2. **No index management, which strands the clauses that depend on it.** `CREATE INDEX` and
    `DROP INDEX` do not parse (`IndexParser` is an empty stub), and
    `DELETE /collections/{c}/index/{field_name}` is unused, while `PUT …/index` is only ever
    called from inside a `CREATE TABLE`. The consequence compounds: `ORDER BY` needs a range
    index and `GROUP BY` needs a countable one, so sorting by a keyword column — the most
-   ordinary thing a person does to a grid — fails, and the fix cannot be said in SQL. Ranking
-   this third rather than second is a judgement call; it affects fewer statements than `OFFSET`
-   but leaves the user with no way forward at all.
-4. **No `UPDATE`, so there is no payload editing.** Four unused payload routes
-   (`points/payload` in both methods, `payload/clear`, `payload/delete`) and two vector ones.
-   Lower than `INSERT` only because a workflow that cannot insert rarely needs to update.
-5. **`LIKE` and text matching.** `title` in `sample_articles` carries a Qdrant `text` index and
+   ordinary thing a person does to a grid — fails, and the fix cannot be said in SQL.
+3. **`LIKE` and text matching.** `title` in `sample_articles` carries a Qdrant `text` index and
    nothing in SQL reaches it; `match: {text}` and `match: {prefix}` are fields of a filter the
    driver already builds, so this costs no new route. `WHERE name LIKE '%lamp%'` is what people
    type first, and today `LIKE` is not even a keyword, so it fails as a syntax error.
+4. **Vectors can be written once and never changed.** `INSERT` stores them, but `UPDATE … SET
+   dense = …` is an error, and `PUT …/points/vectors` and `…/vectors/delete` are unused. In a
+   grid, editing a vector cell fails while every other cell saves; re-embedding a collection
+   after changing models means deleting and re-inserting its points.
+5. **`INSERT` only inserts.** `INSERT … ON CONFLICT (_id) DO UPDATE`, Qdrant's own upsert, has
+   no SQL yet, so loading a batch that may repeat IDs means splitting it into `INSERT`s and
+   `UPDATE`s. Rows the driver embeds are also embedded one provider call at a time.
 
 Below that line the remaining gaps are mostly ones a SQL user would not reach for first: hybrid
 search and fusion (one route, many body shapes), `CALL` procedures for snapshots and shard
-keys, and `WHERE` and `ORDER BY` over the `system` tables.
+keys, `WHERE` and `ORDER BY` over the `system` tables, and the request options still to come
+(`shard_key`, quantization, a `/*+ … */` hint for one statement).
 
 ## Where the documents and the code disagree
 
