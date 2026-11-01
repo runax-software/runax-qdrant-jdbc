@@ -1,5 +1,7 @@
 package com.runaxsoftware.qdrant.jdbc.gateway.models;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 import java.util.List;
 
 /**
@@ -12,6 +14,7 @@ import java.util.List;
  * @param limit       how many points to return, which a search always says
  * @param withPayload whether to return payloads
  * @param withVector  whether to return vectors
+ * @param filter      the points to rank, as a Qdrant filter, or {@code null} for every point
  */
 public record QueryRequest(
     String collection,
@@ -19,15 +22,25 @@ public record QueryRequest(
     List<Double> query,
     long limit,
     boolean withPayload,
-    boolean withVector) {
+    boolean withVector,
+    JsonNode filter) {
 
     public QueryRequest(String collection, String vector, List<Double> query, long limit,
-                        boolean withPayload, boolean withVector) {
+                        boolean withPayload, boolean withVector, JsonNode filter) {
         this.collection = collection;
         this.vector = vector;
         this.query = List.copyOf(query);
         this.limit = limit;
         this.withPayload = withPayload;
         this.withVector = withVector;
+        this.filter = filter;
+    }
+
+    /**
+     * A search of every point, unfiltered.
+     */
+    public QueryRequest(String collection, String vector, List<Double> query, long limit,
+                        boolean withPayload, boolean withVector) {
+        this(collection, vector, query, limit, withPayload, withVector, null);
     }
 }

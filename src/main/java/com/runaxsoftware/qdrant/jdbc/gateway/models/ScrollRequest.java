@@ -11,11 +11,21 @@ import com.fasterxml.jackson.databind.JsonNode;
  *                    to start at the beginning
  * @param withPayload whether to return payloads
  * @param withVector  whether to return vectors
+ * @param filter      the points to read, as a Qdrant filter, or {@code null} for every point
  */
 public record ScrollRequest(
     String collection,
     int limit,
     JsonNode offset,
     boolean withPayload,
-    boolean withVector) {
+    boolean withVector,
+    JsonNode filter) {
+
+    /**
+     * A page of every point, unfiltered.
+     */
+    public ScrollRequest(String collection, int limit, JsonNode offset, boolean withPayload,
+                         boolean withVector) {
+        this(collection, limit, offset, withPayload, withVector, null);
+    }
 }

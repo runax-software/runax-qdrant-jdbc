@@ -173,7 +173,6 @@ class PlannerTest {
 
     @ParameterizedTest
     @ValueSource(strings = {
-            "SELECT * FROM docs WHERE price > 1",
             "SELECT * FROM docs ORDER BY price",
             "SELECT * FROM docs OFFSET 5",
             "SELECT 1 FROM docs"})
@@ -338,8 +337,6 @@ class PlannerTest {
     void rejectsWhatASearchStillCantDo() {
         String search = " ORDER BY similarity(_vector, [0.1, 0.2, 0.3, 0.4]) DESC";
 
-        assertThrows(SQLFeatureNotSupportedException.class,
-                () -> plan("SELECT _id FROM docs WHERE price > 1" + search, CATALOG));
         assertThrows(SQLFeatureNotSupportedException.class,
                 () -> plan("SELECT _id FROM docs" + search + " LIMIT 5 OFFSET 2", CATALOG));
     }

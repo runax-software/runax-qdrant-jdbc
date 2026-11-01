@@ -109,7 +109,7 @@ public final class Executor {
      */
     private List<Object[]> searchRows(QueryPlan plan, long limit) throws SQLException {
         List<ScoredPoint> found = searcher.search(new QueryRequest(plan.collection(),
-            plan.vector(), plan.query(), limit, plan.withPayload(), plan.withVector()));
+            plan.vector(), plan.query(), limit, plan.withPayload(), plan.withVector(), plan.filter()));
         List<ColumnDefinition> columns = plan.columns();
         var rows = new ArrayList<Object[]>(found.size());
 

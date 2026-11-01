@@ -103,6 +103,7 @@ public class QdrantGateway implements AutoCloseable {
             .put("with_vector", scroll.withVector());
 
         if (scroll.offset() != null) body.set("offset", scroll.offset());
+        if (scroll.filter() != null) body.set("filter", scroll.filter());
 
         return RestModels.scrollPage(
             request(HttpMethod.POST, "/collections/" + segment(scroll.collection()) + "/points/scroll", body));
@@ -123,6 +124,7 @@ public class QdrantGateway implements AutoCloseable {
 
         // A collection's single unnamed vector is the one Qdrant searches when none is named
         if (!query.vector().isEmpty()) body.put("using", query.vector());
+        if (query.filter() != null) body.set("filter", query.filter());
 
         return RestModels.scoredPoints(request(HttpMethod.POST,
             "/collections/" + segment(query.collection()) + "/points/query", body));
