@@ -8,19 +8,16 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.Parser;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.Planner;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
-import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.SQLFeatureNotSupportedException;
 
 /**
  * A statement. SQL is parsed and planned against the collections' columns, so syntax errors,
- * unknown collections and unknown columns are reported, and a SELECT without FROM (such as a
- * tool's {@code SELECT 'keep alive'}) returns its row. Reading collections with SQL isn't
- * supported yet: this version of the driver lists collections and their columns through
- * {@link java.sql.DatabaseMetaData}. The statement settings tools apply before running a query
- * (maximum rows, fetch size, timeout) are accepted and kept.
+ * unknown collections and unknown columns are reported before anything runs. A SELECT from a
+ * collection reads its points page by page; a SELECT without FROM (such as a tool's
+ * {@code SELECT 'keep alive'}) returns its row. The statement's maximum rows limit every result,
+ * and its fetch size sets how many points one page reads.
  *
  * <p>The columns come from the connection's {@link SchemaReader}, which keeps them for a while,
  * so they can be older than the collection. When the SQL names a column the kept columns don't
@@ -29,19 +26,16 @@ import java.sql.SQLFeatureNotSupportedException;
  */
 public final class QdrantStatement extends AbstractStatement {
 
-    private static final String NOT_YET =
-        "Reading collections with SQL isn't supported yet: this version of the driver lists "
-            + "collections and their columns, and runs SELECT without FROM";
-
     private static final String UNKNOWN_COLUMN = "42S22";
 
     private final Planner planner = new Planner();
-    private final Executor executor = new Executor();
+    private final Executor executor;
     private final SchemaReader schemaReader;
 
     public QdrantStatement(QdrantConnection connection) {
         super(connection);
         this.schemaReader = connection.schemaReader();
+        this.executor = new Executor(connection.gateway());
     }
 
     // Running SQL
@@ -148,11 +142,6 @@ public final class QdrantStatement extends AbstractStatement {
             // The kept columns may be older than the collection: read them again, once
             schemaReader.forget(table::equals);
             plan = planner.plan(statement, schemaReader::read);
-        }
-
-        // Until the executor reads points, a statement that reads a collection stops here
-        if (plan instanceof ScrollPlan) {
-            throw new SQLFeatureNotSupportedException(NOT_YET);
         }
 
         return plan;
