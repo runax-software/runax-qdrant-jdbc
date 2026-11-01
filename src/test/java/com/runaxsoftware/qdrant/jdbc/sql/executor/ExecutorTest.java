@@ -3,10 +3,16 @@ package com.runaxsoftware.qdrant.jdbc.sql.executor;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.Point;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.ScrollPage;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.ScrollRequest;
 import com.runaxsoftware.qdrant.jdbc.resultset.ResultColumn;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnKind;
@@ -20,23 +26,29 @@ import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Proxy;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
-import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Statement;
 import java.sql.Types;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
 class ExecutorTest {
 
-    // A statement the executor may hand to its results but must never call
-    private static final Statement STATEMENT = (Statement) Proxy.newProxyInstance(
-        ExecutorTest.class.getClassLoader(), new Class<?>[] {Statement.class},
-        (proxy, method, arguments) -> {
-            throw new AssertionError("Called Statement." + method.getName());
-        });
+    private static final ObjectMapper JSON = new ObjectMapper();
 
-    private final Executor executor = new Executor();
+    private static final ColumnDefinition ID =
+        new ColumnDefinition("_id", ColumnKind.ID, ColumnType.TEXT, 0, null, "");
+
+    // A statement without maximum rows or fetch size
+    private static final Statement STATEMENT = statement(0, 0);
+
+    private final Executor executor = new Executor(request -> {
+        throw new AssertionError("Scrolled " + request.collection());
+    });
+
+    // Constant plans
 
     @Test
     void runsAConstantPlanAsRowsOwnedByTheStatement() throws SQLException {
@@ -86,6 +98,16 @@ class ExecutorTest {
     }
 
     @Test
+    void limitsAConstantPlanToTheMaximumRows() throws SQLException {
+        ConstantPlan plan = new ConstantPlan(List.of(ResultColumn.of("one", Types.BIGINT)),
+            List.of(List.of(1L), List.of(2L), List.of(3L)));
+
+        try (ResultSet rows = executor.execute(plan, statement(2, 0)).resultSet()) {
+            assertEquals(List.of(1L, 2L), longs(rows));
+        }
+    }
+
+    @Test
     void returnsAFreshResultForEachRun() throws SQLException {
         ConstantPlan plan = new ConstantPlan(List.of(ResultColumn.of("one", Types.BIGINT)),
             List.of(List.of(1L)));
@@ -114,15 +136,267 @@ class ExecutorTest {
         }
     }
 
+    // Scroll plans: paging and limits
+
     @Test
-    void refusesPlansItCantRunYet() {
-        ScrollPlan plan = new ScrollPlan("docs", List.of(new ColumnDefinition("_id", ColumnKind.ID,
-            ColumnType.TEXT, 0, null, "")), false, false, null);
+    void readsEveryPageOfACollection() throws SQLException {
+        FakeCollection docs = new FakeCollection(5);
 
-        SQLFeatureNotSupportedException error = assertThrows(SQLFeatureNotSupportedException.class,
-            () -> executor.execute(plan, STATEMENT));
+        try (ResultSet rows = docs.run(scroll(null), statement(0, 2))) {
+            assertEquals(List.of(1L, 2L, 3L, 4L, 5L), longs(rows));
+        }
 
-        assertTrue(error.getMessage().contains("ScrollPlan"), error.getMessage());
-        assertTrue(error.getMessage().contains("isn't supported yet"), error.getMessage());
+        assertEquals(List.of(2, 2, 2), docs.limits());
+        assertEquals(Arrays.asList(null, "3", "5"), docs.offsets());
+    }
+
+    @Test
+    void stopsAtTheLimitAndAsksOnlyForTheRowsItStillNeeds() throws SQLException {
+        FakeCollection docs = new FakeCollection(10);
+
+        try (ResultSet rows = docs.run(scroll(3L), statement(0, 2))) {
+            assertEquals(List.of(1L, 2L, 3L), longs(rows));
+        }
+
+        assertEquals(List.of(2, 1), docs.limits());
+    }
+
+    @Test
+    void stopsAtTheMaximumRowsWhenTheyAreFewerThanTheLimit() throws SQLException {
+        FakeCollection docs = new FakeCollection(10);
+
+        try (ResultSet rows = docs.run(scroll(5L), statement(2, 0))) {
+            assertEquals(List.of(1L, 2L), longs(rows));
+        }
+        try (ResultSet rows = docs.run(scroll(2L), statement(5, 0))) {
+            assertEquals(List.of(1L, 2L), longs(rows));
+        }
+        try (ResultSet rows = docs.run(scroll(null), statement(4, 0))) {
+            assertEquals(List.of(1L, 2L, 3L, 4L), longs(rows));
+        }
+    }
+
+    @Test
+    void asksForNothingWhenTheLimitIsZero() throws SQLException {
+        FakeCollection docs = new FakeCollection(3);
+
+        try (ResultSet rows = docs.run(scroll(0L), STATEMENT)) {
+            assertFalse(rows.next());
+        }
+
+        assertEquals(List.of(), docs.limits());
+    }
+
+    @Test
+    void usesTheDefaultPageSizeAndCapsTheFetchSize() throws SQLException {
+        FakeCollection docs = new FakeCollection(1);
+
+        docs.run(scroll(null), statement(0, 0)).close();
+        docs.run(scroll(null), statement(0, Executor.MAX_PAGE_SIZE + 1)).close();
+        docs.run(scroll(null), statement(0, 7)).close();
+
+        assertEquals(List.of(Executor.DEFAULT_PAGE_SIZE, Executor.MAX_PAGE_SIZE, 7), docs.limits());
+    }
+
+    @Test
+    void returnsNoRowsForAnEmptyCollection() throws SQLException {
+        try (ResultSet rows = new FakeCollection(0).run(scroll(null), STATEMENT)) {
+            assertFalse(rows.next());
+        }
+    }
+
+    @Test
+    void reportsAFailedFirstPageWhenRun() {
+        SQLException failure = new SQLException("Qdrant: Not found", "42S02");
+        Executor failing = new Executor(request -> {
+            throw failure;
+        });
+
+        assertSame(failure, assertThrows(SQLException.class,
+            () -> failing.execute(scroll(null), STATEMENT)));
+    }
+
+    @Test
+    void asksForPayloadsAndVectorsOnlyWhenThePlanNeedsThem() throws SQLException {
+        List<ScrollRequest> requests = new ArrayList<>();
+        Executor recording = new Executor(request -> {
+            requests.add(request);
+            return new ScrollPage(List.of(), null);
+        });
+
+        recording.execute(new ScrollPlan("docs", List.of(ID), false, true, null), STATEMENT)
+            .resultSet().close();
+
+        assertEquals("docs", requests.get(0).collection());
+        assertFalse(requests.get(0).withPayload());
+        assertTrue(requests.get(0).withVector());
+    }
+
+    // Scroll plans: values
+
+    @Test
+    void describesTheColumnsOfACollection() throws SQLException {
+        ColumnDefinition price = new ColumnDefinition("price", ColumnKind.PAYLOAD_FIELD,
+            ColumnType.FLOAT, 0, "price", "");
+        ScrollPlan plan = new ScrollPlan("docs", List.of(ID, price), true, false, null);
+
+        try (ResultSet rows = new FakeCollection(0).run(plan, STATEMENT)) {
+            ResultSetMetaData metadata = rows.getMetaData();
+
+            assertEquals("_id", metadata.getColumnLabel(1));
+            assertEquals(ResultSetMetaData.columnNoNulls, metadata.isNullable(1));
+            assertEquals("price", metadata.getColumnLabel(2));
+            assertEquals(Types.DOUBLE, metadata.getColumnType(2));
+            assertEquals("docs", metadata.getTableName(2));
+            assertEquals(ResultSetMetaData.columnNullable, metadata.isNullable(2));
+        }
+    }
+
+    @Test
+    void readsIdsPayloadsAndPayloadFields() throws SQLException {
+        JsonNode payload = json("""
+            {"title": "Desk lamp", "price": 39.9, "stock": 3, "new": true,
+             "specs": {"color": "black"}, "tags": ["office"], "nothing": null}""");
+        Executor oneLamp = new Executor(request -> new ScrollPage(List.of(
+            new Point(json("7"), payload, null),
+            new Point(json("\"0b3e9a2c-7a51-4c6e-9d0f-2f4a6c8e1b37\""), json("{}"), null)), null));
+        ScrollPlan plan = new ScrollPlan("docs", List.of(ID,
+            field("title", ColumnType.TEXT), field("price", ColumnType.FLOAT),
+            field("stock", ColumnType.INTEGER), field("new", ColumnType.BOOLEAN),
+            field("specs.color", ColumnType.TEXT), field("tags", ColumnType.JSON),
+            field("nothing", ColumnType.TEXT),
+            new ColumnDefinition("_payload", ColumnKind.PAYLOAD, ColumnType.JSON, 0, null, "")),
+            true, false, null);
+
+        try (ResultSet rows = oneLamp.execute(plan, STATEMENT).resultSet()) {
+            assertTrue(rows.next());
+            assertEquals("7", rows.getString("_id"));
+            assertEquals("Desk lamp", rows.getString("title"));
+            assertEquals(39.9, rows.getDouble("price"));
+            assertEquals(3L, rows.getLong("stock"));
+            assertTrue(rows.getBoolean("new"));
+            assertEquals("black", rows.getString("specs.color"));
+            assertEquals("[\"office\"]", rows.getString("tags"));
+            assertNull(rows.getString("nothing"));
+            assertEquals(payload, json(rows.getString("_payload")));
+
+            assertTrue(rows.next());
+            assertEquals("0b3e9a2c-7a51-4c6e-9d0f-2f4a6c8e1b37", rows.getString("_id"));
+            assertNull(rows.getString("title"), "a field the point doesn't have is null");
+            assertTrue(rows.wasNull());
+            assertFalse(rows.next());
+        }
+    }
+
+    @Test
+    void readsUnnamedAndNamedVectors() throws SQLException {
+        Executor withVectors = new Executor(request -> new ScrollPage(List.of(
+            new Point(json("1"), null, json("[0.5, 1.0]")),
+            new Point(json("2"), null, json("{\"text\": [0.25]}")),
+            new Point(json("3"), null, null)), null));
+        ScrollPlan unnamed = new ScrollPlan("docs", List.of(vector("")), false, true, null);
+        ScrollPlan named = new ScrollPlan("docs", List.of(vector("text")), false, true, null);
+
+        try (ResultSet rows = withVectors.execute(unnamed, STATEMENT).resultSet()) {
+            assertTrue(rows.next());
+            assertEquals("[0.5,1.0]", rows.getString(1));
+        }
+        try (ResultSet rows = withVectors.execute(named, STATEMENT).resultSet()) {
+            rows.next();
+            assertNull(rows.getString(1), "an array has no named vector");
+            rows.next();
+            assertEquals("[0.25]", rows.getString(1));
+            rows.next();
+            assertNull(rows.getString(1), "no vectors were sent");
+        }
+    }
+
+    // Helpers
+
+    // A statement that answers maxRows and fetchSize and fails on anything else
+    private static Statement statement(long maxRows, int fetchSize) {
+        return (Statement) Proxy.newProxyInstance(ExecutorTest.class.getClassLoader(),
+            new Class<?>[] {Statement.class}, (proxy, method, arguments) -> {
+                switch (method.getName()) {
+                    case "getLargeMaxRows":
+                        return maxRows;
+                    case "getFetchSize":
+                        return fetchSize;
+                    case "toString":
+                        return "statement";
+                    default:
+                        throw new AssertionError("Called Statement." + method.getName());
+                }
+            });
+    }
+
+    private static ScrollPlan scroll(Long limit) {
+        return new ScrollPlan("docs", List.of(ID), false, false, limit);
+    }
+
+    private static ColumnDefinition field(String path, ColumnType type) {
+        return new ColumnDefinition(path, ColumnKind.PAYLOAD_FIELD, type, 0, path, "");
+    }
+
+    private static ColumnDefinition vector(String name) {
+        return new ColumnDefinition(name.isEmpty() ? "_vector" : name, ColumnKind.VECTOR,
+            ColumnType.VECTOR, 1, name, "");
+    }
+
+    private static List<Long> longs(ResultSet rows) throws SQLException {
+        List<Long> values = new ArrayList<>();
+        while (rows.next()) {
+            values.add(rows.getLong(1));
+        }
+        return values;
+    }
+
+    private static JsonNode json(String text) {
+        try {
+            return JSON.readTree(text);
+        } catch (Exception e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    /**
+     * Points 1 to {@code size}, scrolled the way Qdrant does: from the offset's ID, at most the
+     * request's limit, with the next page's first ID as the next offset.
+     */
+    private static final class FakeCollection {
+        private final int size;
+        private final List<ScrollRequest> requests = new ArrayList<>();
+
+        FakeCollection(int size) {
+            this.size = size;
+        }
+
+        ResultSet run(ScrollPlan plan, Statement statement) throws SQLException {
+            return new Executor(this::scroll).execute(plan, statement).resultSet();
+        }
+
+        List<Integer> limits() {
+            return requests.stream().map(ScrollRequest::limit).toList();
+        }
+
+        List<String> offsets() {
+            return requests.stream()
+                .map(request -> request.offset() == null ? null : request.offset().asText())
+                .toList();
+        }
+
+        private ScrollPage scroll(ScrollRequest request) {
+            requests.add(request);
+
+            long first = request.offset() == null ? 1 : request.offset().asLong();
+            long end = Math.min(size + 1L, first + request.limit());
+            List<Point> points = new ArrayList<>();
+
+            for (long id = first; id < end; id++) {
+                points.add(new Point(JSON.getNodeFactory().numberNode(id), null, null));
+            }
+
+            return new ScrollPage(points, end <= size ? JSON.getNodeFactory().numberNode(end) : null);
+        }
     }
 }

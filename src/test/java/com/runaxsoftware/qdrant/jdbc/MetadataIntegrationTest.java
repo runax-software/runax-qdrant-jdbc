@@ -24,7 +24,6 @@ import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
@@ -173,15 +172,18 @@ class MetadataIntegrationTest {
     }
 
     @Test
-    void plansSelectsFromAnAlias() throws SQLException {
+    void selectsFromAnAlias() throws SQLException {
         String view = PREFIX + "current";
         SampleCollections.alias(gateway, view, PREFIX + "products");
 
         try (Statement statement = connection.createStatement()) {
-            // Planned against the collection's columns, so it fails only because reading
-            // points isn't supported yet
-            assertThrows(SQLFeatureNotSupportedException.class,
-                () -> statement.executeQuery("SELECT name, price FROM " + view));
+            // Planned against the collection's columns and read through the alias
+            try (ResultSet rows = statement.executeQuery("SELECT name, price FROM " + view + " LIMIT 1")) {
+                assertTrue(rows.next());
+                assertEquals("Desk lamp", rows.getString("name"));
+                assertEquals(39.9, rows.getDouble("price"));
+                assertFalse(rows.next());
+            }
 
             SQLException unknown = assertThrows(SQLException.class,
                 () -> statement.executeQuery("SELECT nope FROM " + view));
@@ -345,13 +347,17 @@ class MetadataIntegrationTest {
 
         try (Statement statement = connection.createStatement()) {
             upsert(table, 1, object("kind", "signup"));
-            assertThrows(SQLFeatureNotSupportedException.class,
-                () -> statement.executeQuery("SELECT kind FROM " + table));
+            statement.executeQuery("SELECT kind FROM " + table).close();
 
             // Planned against the columns read again, not reported as an unknown column
             upsert(table, 2, object("color", "red"));
-            assertThrows(SQLFeatureNotSupportedException.class,
-                () -> statement.executeQuery("SELECT color FROM " + table));
+            try (ResultSet rows = statement.executeQuery("SELECT _id, color FROM " + table)) {
+                List<String> colors = new ArrayList<>();
+                while (rows.next()) {
+                    colors.add(rows.getString("_id") + "=" + rows.getString("color"));
+                }
+                assertEquals(List.of("1=null", "2=red"), colors);
+            }
 
             SQLException unknown = assertThrows(SQLException.class,
                 () -> statement.executeQuery("SELECT nope FROM " + table));
