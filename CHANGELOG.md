@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which until now were errors without a limit. The statement reports an `SQLWarning` (SQLState
   `01000`) saying how many rows the driver asked for and why, so a bounded answer never passes
   for the whole one. `defaultLimit=0` keeps asking the statement for its own limit, as before.
-  A plain read still pages through the scroll cursor and needs no limit. ([#25])
+  A plain read still pages through the scroll cursor and needs no limit. ([#26])
 
 - `GROUP BY` with `COUNT(*)`, through Qdrant's facet API: `SELECT lang, COUNT(*) FROM docs
   GROUP BY lang LIMIT 20` counts the points per value of one payload field, the most common
@@ -187,3 +187,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#23]: https://github.com/runax-software/runax-qdrant-jdbc/pull/23
 [#24]: https://github.com/runax-software/runax-qdrant-jdbc/pull/24
 [#25]: https://github.com/runax-software/runax-qdrant-jdbc/pull/25
+[#26]: https://github.com/runax-software/runax-qdrant-jdbc/pull/26
