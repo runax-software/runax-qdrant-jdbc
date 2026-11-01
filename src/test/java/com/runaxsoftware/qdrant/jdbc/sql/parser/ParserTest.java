@@ -409,15 +409,14 @@ class ParserTest {
 
     @Test
     void rejectsStatementsItDoesntRead() {
-        assertError("Expected SELECT, DELETE, TRUNCATE, DROP or CREATE, found 'INSERT' at line 1, "
-            + "column 1",
-            "INSERT INTO docs");
+        assertError("Expected SELECT, DELETE, TRUNCATE, DROP, CREATE, SET, RESET or SHOW, found "
+            + "'INSERT' at line 1, column 1", "INSERT INTO docs");
     }
 
     @Test
     void rejectsAnEmptyStatement() {
-        assertError("Expected SELECT, DELETE, TRUNCATE, DROP or CREATE, found the end of the "
-            + "statement at line 1, column 1", "");
+        assertError("Expected SELECT, DELETE, TRUNCATE, DROP, CREATE, SET, RESET or SHOW, found "
+            + "the end of the statement at line 1, column 1", "");
     }
 
     // DELETE, TRUNCATE and DROP TABLE
@@ -553,8 +552,8 @@ class ParserTest {
                 + "at line 1, column 11", "SELECT 1; SELECT 2");
         assertError("Expected the end of the statement: run one statement at a time, found ';' at "
                 + "line 1, column 10", "SELECT 1;;");
-        assertError("Expected SELECT, DELETE, TRUNCATE, DROP or CREATE, found ';' at line 1, column 1",
-                ";");
+        assertError("Expected SELECT, DELETE, TRUNCATE, DROP, CREATE, SET, RESET or SHOW, found "
+                + "';' at line 1, column 1", ";");
     }
 
     @Test

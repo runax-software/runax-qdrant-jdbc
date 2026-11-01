@@ -57,6 +57,10 @@ Planned work, roughly in the order it will land. The SQL each item accepts is sp
 - [x] **Prepared statements** with parameters: `?` for constants in `WHERE`, the select list,
   and a search's vector (`float[]` or `double[]`), batches of values for `DELETE`, and
   parameter metadata. `LIMIT ?` and `OFFSET ?` come later.
+- [x] **Request options** — `SET qdrant.consistency = majority` and the other options
+  Qdrant takes with each request (`ordering`, `wait`, `timeout`, `hnsw_ef`, `exact`,
+  `indexed_only`), kept for the connection, with `RESET` and `SHOW`. `shard_key`, the
+  quantization options, and the `/*+ … */` hint for one statement come later.
 - [ ] **Grid edits** — `UPDATE ... WHERE _id = ?` from DataGrip's data editor, mapped to
   Qdrant's set-payload call.
 - [x] **DELETE** mapped to deleting points: `DELETE FROM docs WHERE …` through the same
