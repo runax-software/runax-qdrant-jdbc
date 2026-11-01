@@ -20,7 +20,10 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.SelectItem;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Star;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.TableName;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.VectorLiteral;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DeleteStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropTableStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.TruncateStatement;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -396,13 +399,49 @@ class ParserTest {
     // Errors
 
     @Test
-    void rejectsStatementsOtherThanSelect() {
-        assertError("Expected SELECT, found 'DELETE' at line 1, column 1", "DELETE FROM docs");
+    void rejectsStatementsItDoesntRead() {
+        assertError("Expected SELECT, DELETE, TRUNCATE or DROP, found 'INSERT' at line 1, column 1",
+            "INSERT INTO docs");
     }
 
     @Test
     void rejectsAnEmptyStatement() {
-        assertError("Expected SELECT, found the end of the statement at line 1, column 1", "");
+        assertError("Expected SELECT, DELETE, TRUNCATE or DROP, found the end of the statement "
+            + "at line 1, column 1", "");
+    }
+
+    // DELETE, TRUNCATE and DROP TABLE
+
+    @Test
+    void parsesADeleteWithItsCondition() throws SQLSyntaxErrorException {
+        assertEquals(new DeleteStatement(TableName.of("docs"), null,
+                new Comparison(Column.of("price"), ">", new Literal(5L))),
+            Parser.parse("DELETE FROM docs WHERE price > 5"));
+        assertEquals(new DeleteStatement(TableName.of("collections", "docs"), "t",
+                new Comparison(new Column("t", "_id"), "=", new Literal(7L))),
+            Parser.parse("delete from collections.docs as t where t._id = 7"));
+        assertEquals(new DeleteStatement(TableName.of("docs"), null, null),
+            Parser.parse("DELETE FROM docs"));
+    }
+
+    @Test
+    void parsesATruncateWithOrWithoutTable() throws SQLSyntaxErrorException {
+        assertEquals(new TruncateStatement(TableName.of("docs")), Parser.parse("TRUNCATE TABLE docs"));
+        assertEquals(new TruncateStatement(TableName.of("docs")), Parser.parse("truncate docs"));
+    }
+
+    @Test
+    void parsesADropTableWithOrWithoutIfExists() throws SQLSyntaxErrorException {
+        assertEquals(new DropTableStatement(TableName.of("docs"), false), Parser.parse("DROP TABLE docs"));
+        assertEquals(new DropTableStatement(TableName.of("docs"), true),
+            Parser.parse("drop table if exists docs"));
+        assertEquals(new DropTableStatement(TableName.of("if"), false), Parser.parse("DROP TABLE if"),
+            "a collection may be called if");
+    }
+
+    @Test
+    void rejectsADeleteWithoutFrom() {
+        assertError("Expected FROM, found 'docs' at line 1, column 8", "DELETE docs");
     }
 
     @Test

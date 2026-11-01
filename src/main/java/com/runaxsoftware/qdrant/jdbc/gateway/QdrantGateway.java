@@ -142,11 +142,42 @@ public class QdrantGateway implements AutoCloseable {
      * count is the whole answer rather than a hint about one.
      */
     public long count(String collection) throws SQLException {
-        // The WHERE filter goes into this body, next to "exact", once filters are mapped
+        return count(collection, null);
+    }
+
+    /**
+     * How many points a filter matches, counted exactly, as {@link #count(String)} is.
+     *
+     * @param filter a Qdrant filter, or {@code null} for every point
+     */
+    public long count(String collection, JsonNode filter) throws SQLException {
         ObjectNode body = JSON.createObjectNode().put("exact", true);
+        if (filter != null) body.set("filter", filter);
 
         return request(HttpMethod.POST,
             "/collections/" + segment(collection) + "/points/count", body).path("count").asLong(0);
+    }
+
+    /**
+     * Deletes the points a filter matches, and waits until Qdrant has applied it.
+     */
+    public void deletePoints(String collection, JsonNode filter) throws SQLException {
+        ObjectNode body = JSON.createObjectNode();
+        body.set("filter", filter);
+
+        request(HttpMethod.POST,
+            "/collections/" + segment(collection) + "/points/delete?wait=true", body);
+    }
+
+    /**
+     * Deletes a collection, with its points and indexes. Fails with SQL state {@code 42S02} when
+     * there's no such collection.
+     */
+    public void deleteCollection(String collection) throws SQLException {
+        // Some Qdrant versions answer a missing collection with "result": false, not a 404
+        if (!request(HttpMethod.DELETE, "/collections/" + segment(collection), null).asBoolean()) {
+            throw new SQLException("Collection `" + collection + "` doesn't exist", "42S02");
+        }
     }
 
     /**

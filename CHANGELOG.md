@@ -60,6 +60,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a `lang`. Conditions Qdrant can't run, such as `price = ?`, `lower(name) = 'x'` or
   `name > 'm'`, fail with an `SQLFeatureNotSupportedException` instead of being checked by the
   driver; a filtered read still pages through the scroll cursor. ([#16])
+- Deleting points and collections. `DELETE FROM docs WHERE …` deletes the points the
+  condition matches, with the same filters as `SELECT`, and returns how many it deleted (the
+  driver counts them first, as Qdrant doesn't report it). A `DELETE` without `WHERE` is an
+  error that points to `TRUNCATE TABLE docs`, which deletes every point and keeps the
+  collection and its indexes. `DROP TABLE docs` deletes the collection; `DROP TABLE IF EXISTS`
+  doesn't mind a missing one. Writes wait for Qdrant to apply them. ([#19])
 - Table aliases and qualified names: `FROM docs t` (with or without `AS`), and `t.*`,
   `t.name`, `t.price AS cost`, `WHERE t.lang = 'en'` and `ORDER BY t.price` under that name
   or under the table's own name, as SQL does — a name given to the table replaces its own.
@@ -90,6 +96,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `Connection.isReadOnly()` and `DatabaseMetaData.isReadOnly()` now return `false`, as the
+  driver can write. `setReadOnly(true)` is kept, and a read-only connection refuses
+  `DELETE`, `TRUNCATE` and `DROP TABLE` with SQLState `25006`, so a tool's read-only
+  connection setting protects the data. ([#19])
+
 - **Breaking:** the driver talks to Qdrant's REST API with the JDK's HTTP client instead
   of the Qdrant Java SDK over gRPC, so the default port is now `6333` instead of `6334`.
   URLs that name `:6334` must change to the REST port; connecting to the gRPC port fails
@@ -119,4 +130,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#18]: https://github.com/runax-software/runax-qdrant-jdbc/pull/18
 [#16]: https://github.com/runax-software/runax-qdrant-jdbc/pull/16
 [#17]: https://github.com/runax-software/runax-qdrant-jdbc/pull/17
+[#19]: https://github.com/runax-software/runax-qdrant-jdbc/pull/19
 [#20]: https://github.com/runax-software/runax-qdrant-jdbc/pull/20

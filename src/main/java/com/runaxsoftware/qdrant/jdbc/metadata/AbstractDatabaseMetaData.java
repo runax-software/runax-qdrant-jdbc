@@ -118,7 +118,7 @@ abstract class AbstractDatabaseMetaData implements DatabaseMetaData {
 
     @Override
     public boolean isReadOnly() {
-        return true;
+        return false;
     }
 
 

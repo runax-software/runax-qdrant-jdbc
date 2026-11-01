@@ -1049,7 +1049,7 @@ class QdrantDatabaseMetaDataTest {
         assertEquals(server.jdbcUrl(), metaData.getURL());
         assertNull(metaData.getUserName());
         assertSame(connection, metaData.getConnection());
-        assertTrue(metaData.isReadOnly());
+        assertFalse(metaData.isReadOnly());
     }
 
     @Test

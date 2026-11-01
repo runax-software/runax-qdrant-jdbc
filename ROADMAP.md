@@ -47,7 +47,9 @@ Planned work, roughly in the order it will land. The SQL each item accepts is sp
 - [ ] **Prepared statements** with parameters.
 - [ ] **Grid edits** — `UPDATE ... WHERE _id = ?` from DataGrip's data editor, mapped to
   Qdrant's set-payload call.
-- [ ] **DELETE** mapped to deleting points.
+- [x] **DELETE** mapped to deleting points: `DELETE FROM docs WHERE …` through the same
+  filters as `SELECT`, `TRUNCATE TABLE docs` for every point, and `DROP TABLE [IF EXISTS] docs`
+  for the collection itself. A `DELETE` without `WHERE` is an error that points to `TRUNCATE`.
 - [ ] **DataGrip plugin** (`runax-qdrant-datagrip`, a separate repository) — a search
   panel that writes SQL into a console, collection tools, and a bundled driver
   definition.

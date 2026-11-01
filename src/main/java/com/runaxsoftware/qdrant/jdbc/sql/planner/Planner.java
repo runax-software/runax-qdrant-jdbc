@@ -1,7 +1,10 @@
 package com.runaxsoftware.qdrant.jdbc.sql.planner;
 
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DeleteStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropTableStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Statement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.TruncateStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
 
 import java.sql.SQLException;
@@ -13,10 +16,20 @@ import java.sql.SQLFeatureNotSupportedException;
 public final class Planner {
 
     private final SelectPlanner selectPlanner = new SelectPlanner();
+    private final WritePlanner writePlanner = new WritePlanner();
 
     public Plan plan(Statement statement, Catalog catalog) throws SQLException {
         if (statement instanceof SelectStatement select) {
             return selectPlanner.plan(select, catalog);
+        }
+        if (statement instanceof DeleteStatement delete) {
+            return writePlanner.plan(delete, catalog);
+        }
+        if (statement instanceof TruncateStatement truncate) {
+            return writePlanner.plan(truncate, catalog);
+        }
+        if (statement instanceof DropTableStatement drop) {
+            return writePlanner.plan(drop);
         }
 
         throw new SQLFeatureNotSupportedException(

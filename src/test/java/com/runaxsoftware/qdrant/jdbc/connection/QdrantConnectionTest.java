@@ -413,8 +413,10 @@ class QdrantConnectionTest {
     }
 
     @Test
-    void ignoresCatalogSchemaAndReadOnlySettings() throws SQLException {
-        connection.setReadOnly(false);
+    void keepsReadOnlyAndIgnoresCatalogAndSchemaSettings() throws SQLException {
+        assertFalse(connection.isReadOnly());
+
+        connection.setReadOnly(true);
         connection.setCatalog("anything");
         connection.setSchema("anything");
 

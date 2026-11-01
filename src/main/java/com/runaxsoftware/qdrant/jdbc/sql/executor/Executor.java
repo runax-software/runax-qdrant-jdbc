@@ -1,5 +1,6 @@
 package com.runaxsoftware.qdrant.jdbc.sql.executor;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QueryRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScoredPoint;
@@ -8,6 +9,8 @@ import com.runaxsoftware.qdrant.jdbc.resultset.ResultColumn;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConstantPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CountPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DeletePointsPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
@@ -39,17 +42,21 @@ public final class Executor {
      */
     static final int MAX_PAGE_SIZE = 1_000;
 
+    private static final String UNKNOWN_TABLE = "42S02";
+
     private final Scroller scroller;
     private final Searcher searcher;
     private final Counter counter;
     private final SystemTableReader systemTables;
+    private final Writer writer;
 
     /**
      * @param gateway where scroll plans read points, query plans rank them, count plans count
      *                them, and system table plans read the server's own state from
      */
     public Executor(QdrantGateway gateway) {
-        this(gateway::scroll, gateway::query, gateway::count, new QdrantSystemTables(gateway));
+        this(gateway::scroll, gateway::query, gateway::count, new QdrantSystemTables(gateway),
+            writer(gateway));
     }
 
     /**
@@ -60,8 +67,17 @@ public final class Executor {
         this(scroller, query -> List.of(), collection -> 0, table -> List.of());
     }
 
+    /**
+     * An executor that runs no write plans.
+     */
     Executor(Scroller scroller, Searcher searcher, Counter counter,
              SystemTableReader systemTables) {
+        this(scroller, searcher, counter, systemTables, null);
+    }
+
+    Executor(Scroller scroller, Searcher searcher, Counter counter,
+             SystemTableReader systemTables, Writer writer) {
+        this.writer = writer;
         this.scroller = scroller;
         this.searcher = searcher;
         this.counter = counter;
@@ -116,6 +132,15 @@ public final class Executor {
                 countRows(count, limit(count.limit(), maxRows)), statement));
         }
 
+        if (plan instanceof DeletePointsPlan delete) {
+            return ExecutionResult.updated(delete(delete));
+        }
+
+        if (plan instanceof DropCollectionPlan drop) {
+            drop(drop);
+            return ExecutionResult.updated(0);
+        }
+
         if (plan instanceof SystemTablePlan system) {
             return ExecutionResult.rows(new ListResultSet(resultColumns(system),
                 systemRows(system, limit(system.limit(), maxRows)), statement));
@@ -146,6 +171,50 @@ public final class Executor {
      */
     private static int onePage(long limit) {
         return (int) Math.max(1, Math.min(limit, Integer.MAX_VALUE));
+    }
+
+    /**
+     * Deletes the plan's points and returns how many there were. Qdrant doesn't say how many a
+     * delete removed, so they're counted first: exact unless something writes to the collection
+     * between the two calls.
+     */
+    private long delete(DeletePointsPlan plan) throws SQLException {
+        long count = writer.count(plan.collection(), plan.filter());
+
+        if (count > 0) {
+            writer.deletePoints(plan.collection(), plan.filter());
+        }
+
+        return count;
+    }
+
+    private void drop(DropCollectionPlan plan) throws SQLException {
+        try {
+            writer.deleteCollection(plan.collection());
+        } catch (SQLException e) {
+            if (!plan.ifExists() || !UNKNOWN_TABLE.equals(e.getSQLState())) {
+                throw e;
+            }
+        }
+    }
+
+    private static Writer writer(QdrantGateway gateway) {
+        return new Writer() {
+            @Override
+            public long count(String collection, JsonNode filter) throws SQLException {
+                return gateway.count(collection, filter);
+            }
+
+            @Override
+            public void deletePoints(String collection, JsonNode filter) throws SQLException {
+                gateway.deletePoints(collection, filter);
+            }
+
+            @Override
+            public void deleteCollection(String collection) throws SQLException {
+                gateway.deleteCollection(collection);
+            }
+        };
     }
 
     /**

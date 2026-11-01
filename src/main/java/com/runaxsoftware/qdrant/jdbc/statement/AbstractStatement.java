@@ -27,6 +27,7 @@ abstract class AbstractStatement implements Statement {
     private int queryTimeout;
     private SQLWarning warnings;
     private ResultSet resultSet;
+    private long updateCount = -1;
 
     AbstractStatement(QdrantConnection connection) {
         this.connection = connection;
@@ -43,13 +44,13 @@ abstract class AbstractStatement implements Statement {
     @Override
     public int getUpdateCount() throws SQLException {
         checkOpen();
-        return -1;
+        return (int) Math.min(updateCount, Integer.MAX_VALUE);
     }
 
     @Override
     public long getLargeUpdateCount() throws SQLException {
         checkOpen();
-        return -1;
+        return updateCount;
     }
 
     @Override
@@ -62,6 +63,7 @@ abstract class AbstractStatement implements Statement {
         checkOpen();
 
         // Every statement has a single result, so there's never a next one
+        updateCount = -1;
         if (current == Statement.KEEP_CURRENT_RESULT) resultSet = null;
         else closeResultSet();
 
@@ -314,6 +316,13 @@ abstract class AbstractStatement implements Statement {
      */
     void setResultSet(ResultSet resultSet) {
         this.resultSet = resultSet;
+    }
+
+    /**
+     * Keeps the count of the latest run, for {@link #getUpdateCount()}; -1 when it returned rows.
+     */
+    void setUpdateCount(long updateCount) {
+        this.updateCount = updateCount;
     }
 
     /**
