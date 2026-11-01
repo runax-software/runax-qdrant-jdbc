@@ -149,6 +149,14 @@ public final class ExpressionParser {
                 + "points, and a field's distinct values come from its facet API", "42000");
         }
 
+        return parseValueOrCall();
+    }
+
+    /**
+     * A value, or a name: a call such as {@code embed('text')}, or a column, which the planner
+     * says whether it may use there.
+     */
+    public Expression parseValueOrCall() throws SQLSyntaxErrorException {
         return this.tokenStream.peekIdentifier() ? parseTerm() : parseValue();
     }
 

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `INSERT INTO docs (_id, lang, dense) VALUES (…), (…)`, as one upsert in Qdrant's
+  `insert_only` mode. An ID that's already taken fails with `23505` before anything is
+  written, as a primary key would, and a row without `_id` gets a UUID, which
+  `getGeneratedKeys` returns. Values are read as their column's type; a field the collection
+  doesn't have yet is added, `"specs.color"` builds its object, and `_payload` gives the whole
+  payload. A vector is written out, given as JSON text, or made with `embed('text')`, by Qdrant
+  as it stores the point or by the driver before. Batches of a prepared `INSERT` work. ([#INS])
 - `UPDATE docs SET lang = 'de', year = 2024 WHERE _id = 7`, so DataGrip's data editor saves
   edited cells. The changes go in one call to Qdrant's batch update API: fields are set
   together, `"specs.color"` is set inside its object, `NULL` deletes a field, a field the

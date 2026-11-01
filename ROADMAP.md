@@ -38,7 +38,8 @@ Planned work, roughly in the order it will land. The SQL each item accepts is sp
 - [x] **`embed('text')`** in a search: `similarity(dense, embed('refund policy',
   'openai:text-embedding-3-small'))`. The model is `provider:model`: `openai:` and `voyage:`
   are called by the driver, with their keys from the connection's `openaiApiKey` and
-  `voyageApiKey`. Other providers, batching, and `embed()` in `INSERT` come later.
+  `voyageApiKey`, and in `INSERT`, where Qdrant or the driver embeds the text as the point is
+  stored. Other providers and batching come later.
 - [x] **Qdrant Cloud inference** — let Qdrant embed the text server-side where available,
   through the same function: `embed('refund policy', 'qdrant:qdrant/bm25')`. Every Qdrant runs
   BM25 into sparse vectors; hosted dense models need Qdrant Cloud's inference.
@@ -64,6 +65,10 @@ Planned work, roughly in the order it will land. The SQL each item accepts is sp
 - [x] **Grid edits** — `UPDATE ... WHERE _id = ?` from DataGrip's data editor, mapped to
   Qdrant's set-payload call: fields, fields inside objects, `NULL` to delete one, a new field,
   or `_payload` for the whole payload, in one batch call. Changing vectors comes later.
+- [x] **INSERT** — `INSERT INTO docs (_id, lang, dense) VALUES (…), (…)` as one upsert that
+  skips points already there: an ID that's taken is an error, as a primary key's is, and a row
+  without one gets a UUID, which `getGeneratedKeys` returns. Vectors are written out, given as
+  JSON text, or embedded with `embed()`. `INSERT … ON CONFLICT` comes later.
 - [x] **DELETE** mapped to deleting points: `DELETE FROM docs WHERE …` through the same
   filters as `SELECT`, `TRUNCATE TABLE docs` for every point, and `DROP TABLE [IF EXISTS] docs`
   for the collection itself. A `DELETE` without `WHERE` is an error that points to `TRUNCATE`.

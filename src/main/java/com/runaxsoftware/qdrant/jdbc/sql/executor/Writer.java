@@ -22,6 +22,16 @@ interface Writer {
     void deletePoints(String collection, JsonNode filter) throws SQLException;
 
     /**
+     * The IDs among these that the collection already has a point for.
+     */
+    List<JsonNode> existingIds(String collection, List<JsonNode> ids) throws SQLException;
+
+    /**
+     * Adds points, leaving any point already there as it is.
+     */
+    void insertPoints(String collection, List<JsonNode> points) throws SQLException;
+
+    /**
      * Applies payload changes, in order, in one batch.
      */
     void updatePoints(String collection, List<JsonNode> operations) throws SQLException;

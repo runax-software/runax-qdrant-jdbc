@@ -25,6 +25,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.ColumnSpec;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateTableStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DeleteStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropTableStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.InsertStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.TruncateStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.UpdateStatement;
@@ -411,13 +412,15 @@ class ParserTest {
 
     @Test
     void rejectsStatementsItDoesntRead() {
-        assertError("Expected SELECT, UPDATE, DELETE, TRUNCATE, DROP, CREATE, SET, RESET or SHOW, "
-            + "found 'INSERT' at line 1, column 1", "INSERT INTO docs");
+        assertError("Expected SELECT, INSERT, UPDATE, DELETE, TRUNCATE, DROP, CREATE, SET, RESET or "
+            + "SHOW, "
+            + "found 'MERGE' at line 1, column 1", "MERGE INTO docs");
     }
 
     @Test
     void rejectsAnEmptyStatement() {
-        assertError("Expected SELECT, UPDATE, DELETE, TRUNCATE, DROP, CREATE, SET, RESET or SHOW, "
+        assertError("Expected SELECT, INSERT, UPDATE, DELETE, TRUNCATE, DROP, CREATE, SET, RESET or "
+            + "SHOW, "
             + "found the end of the statement at line 1, column 1", "");
     }
 
@@ -448,6 +451,29 @@ class ParserTest {
             Parser.parse("drop table if exists docs"));
         assertEquals(new DropTableStatement(TableName.of("if"), false), Parser.parse("DROP TABLE if"),
             "a collection may be called if");
+    }
+
+    // INSERT
+
+    @Test
+    void parsesAnInsertOfSeveralRows() throws SQLSyntaxErrorException {
+        assertEquals(new InsertStatement(TableName.of("collections", "docs"),
+                List.of(Column.of("_id"), Column.of("dense"), Column.of("specs.color"), Column.of("lang")),
+                List.of(
+                    List.of(new Literal(1L), new VectorLiteral(List.of(0.1, 0.2)),
+                        new Literal("red"), new Literal(null)),
+                    List.of(new Parameter(1), new FunctionCall("embed", List.of(new Literal("refund"))),
+                        new Parameter(2), new Literal("en")))),
+            Parser.parse("INSERT INTO collections.docs (_id, dense, \"specs.color\", lang) VALUES "
+                + "(1, [0.1, 0.2], 'red', NULL), (?, embed('refund'), ?, 'en')"));
+    }
+
+    @Test
+    void rejectsAnInsertWithoutItsColumns() {
+        assertError("Expected the columns in brackets, as INSERT INTO docs (_id, lang) VALUES (...), "
+            + "found 'VALUES' at line 1, column 18", "INSERT INTO docs VALUES (1)");
+        assertError("Expected VALUES, found the end of the statement at line 1, column 24",
+            "INSERT INTO docs (lang)");
     }
 
     // UPDATE
@@ -576,7 +602,8 @@ class ParserTest {
                 + "at line 1, column 11", "SELECT 1; SELECT 2");
         assertError("Expected the end of the statement: run one statement at a time, found ';' at "
                 + "line 1, column 10", "SELECT 1;;");
-        assertError("Expected SELECT, UPDATE, DELETE, TRUNCATE, DROP, CREATE, SET, RESET or SHOW, "
+        assertError("Expected SELECT, INSERT, UPDATE, DELETE, TRUNCATE, DROP, CREATE, SET, RESET or "
+            + "SHOW, "
                 + "found ';' at line 1, column 1", ";");
     }
 
