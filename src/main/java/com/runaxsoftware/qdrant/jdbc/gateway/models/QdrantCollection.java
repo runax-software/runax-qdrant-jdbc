@@ -10,10 +10,21 @@ import java.util.Map;
  * @param pointsCount    the number of points, as Qdrant last counted them
  * @param vectors        the dense and multivectors in Qdrant's order, then the sparse vectors
  * @param payloadIndexes payload field path to its index type
+ * @param metadata       the collection's metadata entries whose values are text, such as the
+ *                       model each vector was embedded with
  */
 public record QdrantCollection(
     String name,
     long pointsCount,
     List<VectorField> vectors,
-    Map<String, PayloadIndexType> payloadIndexes) {
+    Map<String, PayloadIndexType> payloadIndexes,
+    Map<String, String> metadata) {
+
+    /**
+     * A collection without metadata.
+     */
+    public QdrantCollection(String name, long pointsCount, List<VectorField> vectors,
+                            Map<String, PayloadIndexType> payloadIndexes) {
+        this(name, pointsCount, vectors, payloadIndexes, Map.of());
+    }
 }

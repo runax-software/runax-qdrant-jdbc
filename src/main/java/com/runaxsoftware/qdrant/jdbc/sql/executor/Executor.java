@@ -1,9 +1,11 @@
 package com.runaxsoftware.qdrant.jdbc.sql.executor;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.runaxsoftware.qdrant.jdbc.embedding.Embedders;
 import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetHit;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetRequest;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.Document;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QueryRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScoredPoint;
 import com.runaxsoftware.qdrant.jdbc.resultset.ListResultSet;
@@ -15,6 +17,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CountPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DeletePointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropCollectionPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.EmbedText;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetColumn;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
@@ -50,20 +53,32 @@ public final class Executor {
 
     private static final String UNKNOWN_TABLE = "42S02";
 
+    // What Qdrant answers when it's asked to embed with a model and has no inference service
+    private static final String NO_INFERENCE = "InferenceService URL not configured";
+
     private final Scroller scroller;
     private final Searcher searcher;
     private final Counter counter;
     private final Faceter faceter;
     private final SystemTableReader systemTables;
     private final Writer writer;
+    private final Embedders embedders;
 
     /**
      * @param gateway where scroll plans read points, query plans rank them, count and facet
      *                plans count them, and system table plans read the server's own state from
      */
     public Executor(QdrantGateway gateway) {
+        this(gateway, Embedders.none());
+    }
+
+    /**
+     * @param gateway   as above
+     * @param embedders the providers a search's {@code embed()} calls, unless Qdrant embeds
+     */
+    public Executor(QdrantGateway gateway, Embedders embedders) {
         this(gateway::scroll, gateway::query, gateway::count, gateway::facet,
-            new QdrantSystemTables(gateway), writer(gateway));
+            new QdrantSystemTables(gateway), writer(gateway), embedders);
     }
 
     /**
@@ -85,6 +100,12 @@ public final class Executor {
 
     Executor(Scroller scroller, Searcher searcher, Counter counter, Faceter faceter,
              SystemTableReader systemTables, Writer writer) {
+        this(scroller, searcher, counter, faceter, systemTables, writer, Embedders.none());
+    }
+
+    Executor(Scroller scroller, Searcher searcher, Counter counter, Faceter faceter,
+             SystemTableReader systemTables, Writer writer, Embedders embedders) {
+        this.embedders = embedders;
         this.writer = writer;
         this.scroller = scroller;
         this.searcher = searcher;
@@ -246,6 +267,52 @@ public final class Executor {
         }
     }
 
+    /**
+     * The search request: the vector written out, the vector a provider made of the text, or
+     * the text itself for Qdrant to embed.
+     */
+    private QueryRequest request(QueryPlan plan, long limit) throws SQLException {
+        EmbedText embed = plan.embed();
+        List<Double> query = plan.query();
+        Document document = null;
+
+        if (embed != null && embed.model().provider().embedsOnServer()) {
+            document = new Document(embed.text(), embed.model().name());
+        } else if (embed != null) {
+            query = embedders.embedder(embed.model().provider())
+                .embed(embed.model().name(), embed.text());
+
+            if (query.size() != embed.dimensions()) {
+                throw new SQLException(embed.model() + " made a vector of " + query.size()
+                    + " dimensions, and '" + plan.vector() + "' of " + plan.collection() + " has "
+                    + embed.dimensions() + ": it was embedded with another model", "42000");
+            }
+        }
+
+        return new QueryRequest(plan.collection(), plan.vector(), query, limit,
+            plan.withPayload(), plan.withVector(), plan.filter(), document);
+    }
+
+    /**
+     * The search's points. A Qdrant without an inference service can't embed a document with a
+     * hosted model, and says so in terms of its own configuration, so the error says what to do.
+     */
+    private List<ScoredPoint> search(QueryRequest request) throws SQLException {
+        try {
+            return searcher.search(request);
+        } catch (SQLException e) {
+            if (request.document() == null || !String.valueOf(e.getMessage()).contains(NO_INFERENCE)) {
+                throw e;
+            }
+
+            throw new SQLException("This Qdrant can't embed text with 'qdrant:"
+                + request.document().model() + "': it runs no inference service, which hosted "
+                + "models need (Qdrant Cloud has one). Embed with a model the driver calls, as "
+                + "openai:text-embedding-3-small, or with qdrant:qdrant/bm25 for a sparse vector",
+                e.getSQLState(), e);
+        }
+    }
+
     private static Writer writer(QdrantGateway gateway) {
         return new Writer() {
             @Override
@@ -351,8 +418,7 @@ public final class Executor {
      * search, so the rows are read at once rather than paged.
      */
     private List<Object[]> searchRows(QueryPlan plan, long limit) throws SQLException {
-        List<ScoredPoint> found = searcher.search(new QueryRequest(plan.collection(),
-            plan.vector(), plan.query(), limit, plan.withPayload(), plan.withVector(), plan.filter()));
+        List<ScoredPoint> found = search(request(plan, limit));
         List<ColumnDefinition> columns = plan.columns();
         var rows = new ArrayList<Object[]>(found.size());
 

@@ -29,8 +29,15 @@ final class RestModels {
                 .asText("")));
         }
 
+        // Metadata holds any JSON; the driver keeps the text entries, which is what it writes
+        Map<String, String> metadata = new LinkedHashMap<>();
+        for (Map.Entry<String, JsonNode> entry : info.path("config").path("metadata").properties()) {
+            if (entry.getValue().isTextual()) metadata.put(entry.getKey(), entry.getValue().asText());
+        }
+
         return new QdrantCollection(name, info.path("points_count").asLong(0),
-            List.copyOf(vectors), Collections.unmodifiableMap(indexes));
+            List.copyOf(vectors), Collections.unmodifiableMap(indexes),
+            Collections.unmodifiableMap(metadata));
     }
 
     static List<QdrantAlias> aliases(JsonNode result) {

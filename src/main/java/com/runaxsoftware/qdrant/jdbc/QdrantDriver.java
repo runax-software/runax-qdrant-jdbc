@@ -97,7 +97,7 @@ public final class QdrantDriver implements Driver {
     }
 
     private static DriverPropertyInfo property(Setting setting, String value) {
-        String shown = setting == Setting.PASSWORD
+        String shown = setting.secret()
             ? null
             : value == null ? setting.defaultValue() : value;
 

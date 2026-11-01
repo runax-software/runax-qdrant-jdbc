@@ -13,7 +13,12 @@ public enum Setting {
     SAMPLE_SIZE("sampleSize", "100", "How many points to read when working out a collection's columns."),
     SCHEMA_CACHE("schemaCache", "3600", "Seconds to keep a collection's columns before reading them again. "
         + "Listing tables, as a Refresh does, reads them again sooner; 0 reads them every time."),
-    LOG_FILE("logFile", null, "File to log every JDBC call to, for troubleshooting. The API key is never logged.");
+    LOG_FILE("logFile", null, "File to log every JDBC call to, for troubleshooting. The API key is never logged."),
+    OPENAI_API_KEY("openaiApiKey", null, "OpenAI API key, for embed('text', 'openai:...'). Never logged."),
+    OPENAI_URL("openaiUrl", "https://api.openai.com/v1", "OpenAI's API URL, or one that answers like it, "
+        + "such as an Azure OpenAI deployment."),
+    VOYAGE_API_KEY("voyageApiKey", null, "Voyage AI API key, for embed('text', 'voyage:...'). Never logged."),
+    VOYAGE_URL("voyageUrl", "https://api.voyageai.com/v1", "Voyage AI's API URL.");
 
     private final String key;
     private final String defaultValue;
@@ -41,5 +46,12 @@ public enum Setting {
 
     public List<String> choices() {
         return this.choices;
+    }
+
+    /**
+     * Whether the value is a key, which is never shown, logged, or put in a message.
+     */
+    public boolean secret() {
+        return this == PASSWORD || this == OPENAI_API_KEY || this == VOYAGE_API_KEY;
     }
 }

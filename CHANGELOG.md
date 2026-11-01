@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `embed('text', 'provider:model')` in a search: `ORDER BY similarity(dense, embed('refund
+  policy', 'openai:text-embedding-3-small')) DESC LIMIT 10`. A `qdrant:` model is run by Qdrant
+  itself, on any kind of vector: every Qdrant runs `qdrant:qdrant/bm25` into sparse vectors,
+  and Qdrant Cloud runs hosted dense models. `openai:` and `voyage:` models are called by the
+  driver, with the new `openaiApiKey`, `openaiUrl`, `voyageApiKey` and `voyageUrl` connection
+  properties; the keys are never shown or logged. The model a vector was embedded with can be
+  kept in the collection's metadata as `runax.embed.<vector>`: `embed('text')` then needs no
+  model, and naming another is an error rather than a search against the wrong vectors.
+  ([#24])
 - Prepared statements: `connection.prepareStatement("SELECT _id FROM docs WHERE lang = ? AND
   year >= ?")`, with `setString`, `setInt`, `setLong`, `setDouble`, `setBoolean`,
   `setBigDecimal`, `setTimestamp`, `setDate`, `setNull`, and `setObject` (a `UUID`, `Instant`,
@@ -165,3 +174,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#21]: https://github.com/runax-software/runax-qdrant-jdbc/pull/21
 [#22]: https://github.com/runax-software/runax-qdrant-jdbc/pull/22
 [#23]: https://github.com/runax-software/runax-qdrant-jdbc/pull/23
+[#24]: https://github.com/runax-software/runax-qdrant-jdbc/pull/24

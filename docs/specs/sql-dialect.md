@@ -146,9 +146,10 @@ vector in the statement before the search runs. `_score` is a `DOUBLE` column th
 search has, and `*` doesn't include it. A search says how many points to rank, through `LIMIT`
 or the statement's maximum rows: Qdrant ranks the points nearest the vector rather than
 reading the whole collection, so a search without either is an error rather than a number the
-driver picked. `ASC` is an error too, since Qdrant returns the closest points first. The rest
-of this section, `OFFSET` included, is still the target; a `WHERE` filters the points
-Qdrant ranks, as in a scroll.
+driver picked. `ASC` is an error too, since Qdrant returns the closest points first. The
+query may also be `embed('text' [, 'provider:model'])`, described under
+[Embeddings](#embeddings). The rest of this section, `OFFSET` included, is still the target;
+a `WHERE` filters the points Qdrant ranks, as in a scroll.
 
 ```sql
 SELECT _id, _score, title
@@ -175,10 +176,9 @@ The *query* argument can be:
   sparse, `'[[…], […]]'` for multivectors;
 - a point ID: `similarity(dense, 42)` searches with point 42's vector; `ref('other', 42)`
   takes it from another collection (`lookup_from`);
-- `embed('text')`: the driver embeds the text with the vector's model, through the
-  embedder abstraction (see [Embeddings](#embeddings));
-- `document('text', 'model')` or `image('url', 'model')`: Qdrant embeds it (server-side
-  inference).
+- `embed('text' [, 'provider:model'])`: the text, embedded with the vector's model by Qdrant
+  (`qdrant:`) or by a provider the driver calls (see [Embeddings](#embeddings));
+- `image('url', 'model')`: Qdrant embeds an image (server-side inference).
 
 `recommend`, `discover`, `context`, and `feedback` take point IDs and vectors in the same
 forms, as `ARRAY[…]` or JSON.
@@ -277,7 +277,7 @@ connection (`setReadOnly(true)`) refuses every write with SQLState `25006`.
 | `INSERT … ON CONFLICT (_id) DO UPDATE …` | Upsert (`upsert` mode) |
 | `… ON CONFLICT (_id) DO UPDATE … WHERE version < 3` | Upsert with `update_filter`: conditional update |
 | `INSERT` without `_id` | The driver generates a UUID, returned by `getGeneratedKeys` |
-| `INSERT … VALUES (…, embed('text'), …)`, `document(…)` | Vectors embedded by the driver or by Qdrant |
+| `INSERT … VALUES (…, embed('text'), …)` | Vectors embedded by the driver or by Qdrant |
 | `UPDATE docs SET lang = 'de' WHERE …` | `set_payload` by filter |
 | `UPDATE … SET "meta.author" = 'Ann'` | `set_payload` with `key` (nested path) |
 | `UPDATE … SET _payload = '{…}'` | `overwrite_payload` |
@@ -339,31 +339,44 @@ Aliases are listed as views in `DatabaseMetaData`, with the target collection's 
 
 ## Embeddings
 
-Embedding providers (OpenAI and others) come from a separate embedder abstraction, built
-outside this spec. The driver only uses it; this section is the contract the driver needs.
+`embed('text', 'provider:model')` turns text into a vector. The model is written as who runs
+it, a colon, and the model's own name, unchanged: `openai:text-embedding-3-small`,
+`voyage:voyage-3`, `qdrant:qdrant/bm25`, `qdrant:sentence-transformers/all-minilm-l6-v2`.
+
+| Provider | Who embeds | Settings |
+| --- | --- | --- |
+| `qdrant` | Qdrant, through the Query API's document query: any kind of vector the model makes | None: every Qdrant runs `qdrant/bm25`; hosted models need Qdrant Cloud's inference |
+| `openai` | The driver, through `POST {openaiUrl}/embeddings` | `openaiApiKey`; `openaiUrl` (default `https://api.openai.com/v1`) for Azure OpenAI or a proxy |
+| `voyage` | The driver, through `POST {voyageUrl}/embeddings`, as a query | `voyageApiKey`; `voyageUrl` (default `https://api.voyageai.com/v1`) |
 
 The driver decides **which model** a vector uses. It keeps that in the collection's metadata,
-so every client embeds the same vector with the same model:
+under `runax.embed.<vector>` (`runax.embed._vector` for the unnamed one), so every client
+embeds the same vector with the same model:
 
 ```sql
-ALTER TABLE docs SET (metadata = '{"runax.embed.dense": "<model id>"}');
+ALTER TABLE docs SET (metadata = '{"runax.embed.dense": "openai:text-embedding-3-small"}');
 ```
 
-The model ID's format belongs to the embedder abstraction. Provider API keys come from
-connection settings and never go into collection metadata.
+**What runs today:** `embed()` as the query of `similarity(…)`. With a model kept for the
+vector, `embed('text')` needs none, and naming a different one is an error: the search would
+run, but against vectors made by another model, and find the wrong points. With no model kept,
+`embed('text')` without one is an error that says to name it. The metadata is read with the
+collection's columns; setting it from SQL (the `ALTER TABLE` above) isn't supported yet, so
+it's set with Qdrant's update-collection API. Providers the driver calls make dense vectors,
+whose dimensions the driver checks against the vector before it searches; a `qdrant:` model's
+are Qdrant's to check. Provider API keys come from connection settings, never from SQL or
+collection metadata, and are never logged. A Qdrant without an inference service answers a
+hosted `qdrant:` model with an error that says so.
 
-For each `embed()` the driver asks the embedder for:
+Still the target, for each `embed()`:
 
-- **the vector's model**, by the model ID above;
 - **the text's role**: a *query* inside `similarity()`, `recommend()`, and the other ranking
   functions, a *document* inside `INSERT` and `UPDATE` (some models embed the two
-  differently);
+  differently); Voyage AI is already asked for a query;
 - **many texts at once**: an `INSERT` of many rows, or a JDBC batch, is one call;
-- **the vector's kind**: dense, sparse (`{indices, values}`), or multivector, checked against
-  the vector's size from the collection.
+- **more providers**, and sparse and multivector output from the providers the driver calls.
 
-A failure in the embedder fails the statement with an `SQLException` that names the model.
-`document()` and `image()` don't use the embedder: Qdrant embeds the input itself.
+`image()` doesn't use the embedder: Qdrant embeds the input itself.
 
 ## Prepared statements
 

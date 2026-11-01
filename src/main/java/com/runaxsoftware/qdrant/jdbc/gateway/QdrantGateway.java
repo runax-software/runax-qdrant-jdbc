@@ -127,8 +127,14 @@ public class QdrantGateway implements AutoCloseable {
             .put("with_payload", query.withPayload())
             .put("with_vector", query.withVector());
 
-        ArrayNode vector = body.putObject("query").putArray("nearest");
-        for (double value : query.query()) vector.add(value);
+        if (query.document() != null) {
+            // Qdrant embeds the text with the model, then searches with what it made
+            body.putObject("query").put("text", query.document().text())
+                .put("model", query.document().model());
+        } else {
+            ArrayNode vector = body.putObject("query").putArray("nearest");
+            for (double value : query.query()) vector.add(value);
+        }
 
         // A collection's single unnamed vector is the one Qdrant searches when none is named
         if (!query.vector().isEmpty()) body.put("using", query.vector());

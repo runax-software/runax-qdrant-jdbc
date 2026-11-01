@@ -15,6 +15,8 @@ import java.util.List;
  * @param withPayload whether to return payloads
  * @param withVector  whether to return vectors
  * @param filter      the points to rank, as a Qdrant filter, or {@code null} for every point
+ * @param document    text for Qdrant to embed and search with instead of the query vector, or
+ *                    {@code null}
  */
 public record QueryRequest(
     String collection,
@@ -23,10 +25,12 @@ public record QueryRequest(
     long limit,
     boolean withPayload,
     boolean withVector,
-    JsonNode filter) {
+    JsonNode filter,
+    Document document) {
 
     public QueryRequest(String collection, String vector, List<Double> query, long limit,
-                        boolean withPayload, boolean withVector, JsonNode filter) {
+                        boolean withPayload, boolean withVector, JsonNode filter,
+                        Document document) {
         this.collection = collection;
         this.vector = vector;
         this.query = List.copyOf(query);
@@ -34,6 +38,15 @@ public record QueryRequest(
         this.withPayload = withPayload;
         this.withVector = withVector;
         this.filter = filter;
+        this.document = document;
+    }
+
+    /**
+     * A search with a vector written out.
+     */
+    public QueryRequest(String collection, String vector, List<Double> query, long limit,
+                        boolean withPayload, boolean withVector, JsonNode filter) {
+        this(collection, vector, query, limit, withPayload, withVector, filter, null);
     }
 
     /**

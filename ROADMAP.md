@@ -35,11 +35,18 @@ Planned work, roughly in the order it will land. The SQL each item accepts is sp
 - [ ] **Packaging** — one self-contained jar, a DataGrip setup guide, and publishing to
   Maven Central as `com.runaxsoftware:qdrant-jdbc`. The jar (`./gradlew shadowJar`) and
   the guide (in the README) are done; Maven Central isn't.
-- [ ] **`embed('text')`** through the embedder abstraction (OpenAI and other providers),
-  which is being built separately.
-- [ ] **Qdrant Cloud inference** — let Qdrant embed the text server-side where available.
-- [ ] **Embedding model per vector** — kept in the collection's metadata for each named
-  vector, not per connection, so a query can't silently use the wrong model.
+- [x] **`embed('text')`** in a search: `similarity(dense, embed('refund policy',
+  'openai:text-embedding-3-small'))`. The model is `provider:model`: `openai:` and `voyage:`
+  are called by the driver, with their keys from the connection's `openaiApiKey` and
+  `voyageApiKey`. Other providers, batching, and `embed()` in `INSERT` come later.
+- [x] **Qdrant Cloud inference** — let Qdrant embed the text server-side where available,
+  through the same function: `embed('refund policy', 'qdrant:qdrant/bm25')`. Every Qdrant runs
+  BM25 into sparse vectors; hosted dense models need Qdrant Cloud's inference.
+- [x] **Embedding model per vector** — kept in the collection's metadata for each vector
+  (`runax.embed.dense = "openai:text-embedding-3-small"`), not per connection, so
+  `embed('text')` needs no model and a query can't silently use the wrong one. Setting it from
+  SQL (`ALTER TABLE … SET (metadata = …)`) comes later; Qdrant's update-collection API sets it
+  today.
 - [x] **GROUP BY** with `COUNT(*)` through the facet API, on a field indexed as keyword,
   integer, bool, or uuid. A grouped statement needs a limit, since Qdrant counts the most
   common values in one call; `HAVING` and ordering the groups by anything but their count come

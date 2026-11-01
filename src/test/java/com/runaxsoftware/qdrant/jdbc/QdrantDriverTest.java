@@ -137,8 +137,8 @@ class QdrantDriverTest {
         DriverPropertyInfo[] properties = driver.getPropertyInfo("jdbc:qdrant://localhost", null);
 
         List<String> names = Arrays.stream(properties).map(property -> property.name).toList();
-        assertEquals(List.of("password", "tls", "timeout", "sampleSize", "schemaCache", "logFile"),
-            names);
+        assertEquals(List.of("password", "tls", "timeout", "sampleSize", "schemaCache", "logFile",
+            "openaiApiKey", "openaiUrl", "voyageApiKey", "voyageUrl"), names);
         assertNull(properties[0].value);
         assertEquals("false", properties[1].value);
         assertArrayEquals(new String[] {"false", "true"}, properties[1].choices);
@@ -146,6 +146,8 @@ class QdrantDriverTest {
         assertEquals("100", properties[3].value);
         assertEquals("3600", properties[4].value);
         assertNull(properties[5].value);
+        assertEquals("https://api.openai.com/v1", properties[7].value);
+        assertEquals("https://api.voyageai.com/v1", properties[9].value);
 
         for (DriverPropertyInfo property : properties) {
             assertFalse(property.required);
@@ -177,6 +179,8 @@ class QdrantDriverTest {
         current.setProperty("sampleSize", "5");
         current.setProperty("schemaCache", "60");
         current.setProperty("logFile", "/tmp/calls.log");
+        current.setProperty("openaiApiKey", "secret");
+        current.setProperty("voyageApiKey", "secret");
 
         DriverPropertyInfo[] properties = driver.getPropertyInfo("jdbc:qdrant://localhost", current);
 
@@ -186,6 +190,8 @@ class QdrantDriverTest {
         assertEquals("5", properties[3].value);
         assertEquals("60", properties[4].value);
         assertEquals("/tmp/calls.log", properties[5].value);
+        assertNull(properties[6].value, "an embedding provider's key is never shown");
+        assertNull(properties[8].value);
 
         for (DriverPropertyInfo property : properties) {
             assertFalse("secret".equals(property.value), property.name);

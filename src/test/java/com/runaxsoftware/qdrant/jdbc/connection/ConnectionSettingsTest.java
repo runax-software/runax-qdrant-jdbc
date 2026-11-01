@@ -246,6 +246,35 @@ class ConnectionSettingsTest {
     }
 
     @Test
+    void readsTheEmbeddingProvidersKeysAndUrls() throws SQLException {
+        Properties properties = new Properties();
+        properties.setProperty("openaiApiKey", "sk-secret");
+        properties.setProperty("openaiUrl", "https://my-proxy.example/v1");
+
+        ConnectionSettings settings = parse("jdbc:qdrant://localhost", properties);
+
+        assertEquals("sk-secret", settings.embedding().openAiKey());
+        assertEquals("https://my-proxy.example/v1", settings.embedding().openAiUrl().toString());
+        assertEquals(null, settings.embedding().voyageKey());
+        assertEquals("https://api.voyageai.com/v1", settings.embedding().voyageUrl().toString());
+
+        String text = settings.toString();
+        assertFalse(text.contains("sk-secret"), text);
+        assertTrue(text.contains("openai=set, voyage=none"), text);
+    }
+
+    @Test
+    void rejectsAnEmbeddingUrlThatIsntHttp() {
+        Properties properties = new Properties();
+        properties.setProperty("voyageUrl", "ftp://example.com");
+
+        SQLException error = assertThrows(SQLException.class,
+            () -> parse("jdbc:qdrant://localhost", properties));
+        assertTrue(error.getMessage().contains("voyageUrl must be an http or https URL"),
+            error.getMessage());
+    }
+
+    @Test
     void saysWhenThereIsNoApiKeyInToString() throws SQLException {
         String text = parse("jdbc:qdrant://localhost", new Properties()).toString();
 

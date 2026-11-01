@@ -46,7 +46,7 @@ public class QdrantStatement extends AbstractStatement {
         super(connection);
         this.connection = connection;
         this.schemaReader = connection.schemaReader();
-        this.executor = new Executor(connection.gateway());
+        this.executor = new Executor(connection.gateway(), connection.embedders());
     }
 
     // Running SQL
