@@ -1,5 +1,7 @@
 package com.runaxsoftware.qdrant.jdbc.connection;
 
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.sql.SQLException;
@@ -64,6 +66,21 @@ final class SettingValues {
             return Path.of(value);
         } catch (InvalidPathException e) {
             throw invalid(setting.key() + " isn't a valid path: " + value, e);
+        }
+    }
+
+    URI uri(Setting setting) throws SQLException {
+        String value = valueOrDefault(setting);
+
+        try {
+            URI uri = new URI(value);
+            if (!"http".equals(uri.getScheme()) && !"https".equals(uri.getScheme())) {
+                throw invalid(setting.key() + " must be an http or https URL, not " + value);
+            }
+
+            return uri;
+        } catch (URISyntaxException e) {
+            throw invalid(setting.key() + " isn't a valid URL: " + value, e);
         }
     }
 

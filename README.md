@@ -14,7 +14,8 @@ first target; any JDBC client (DBeaver, BI tools) should work the same way.
 - **SQL over the Qdrant API** — `WHERE` becomes a Qdrant filter, plus `LIMIT`,
   `COUNT(*)`, `GROUP BY` through facets, and `ORDER BY` on range-indexed fields.
 - **Similarity search** — rank points by similarity to a vector, with the score as a
-  `_score` column; embedding text on the fly comes next.
+  `_score` column, and `embed('text')` to search with text, embedded by Qdrant or by a
+  provider such as OpenAI.
 - **System tables** — `system.collections` and `system.aliases` describe the server
   itself, so a collection's status, point counts, shards, and aliases are SQL rows rather
   than REST calls.
@@ -86,26 +87,31 @@ LIMIT 10
 vector), and `_score` is how close Qdrant scored each point. A search says how many points
 to rank, with `LIMIT` or the statement's maximum rows.
 
-A search takes a `WHERE` too, which Qdrant applies before ranking. Qdrant can also embed the
-text itself with `document('text', 'model')`: every Qdrant runs `qdrant/bm25` into a sparse
-vector, and Qdrant Cloud runs hosted dense models.
+A search takes a `WHERE` too, which Qdrant applies before ranking. To search with text,
+`embed('text', 'provider:model')` turns it into the vector first:
 
 ```sql
 SELECT _id, _score, title
 FROM docs
-ORDER BY similarity(keywords, document('refund policy', 'qdrant/bm25')) DESC
+WHERE lang = 'en'
+ORDER BY similarity(dense, embed('refund policy', 'openai:text-embedding-3-small')) DESC
 LIMIT 10
 ```
 
-Planned, and described in the dialect spec: `embed('refund policy')`, which the driver embeds
-with the model configured for that vector.
+| Model | Who embeds | Needs |
+| --- | --- | --- |
+| `qdrant:qdrant/bm25` | Qdrant, into a sparse vector | Nothing: every Qdrant runs it |
+| `qdrant:<hosted model>` | Qdrant | Qdrant Cloud with inference |
+| `openai:<model>` | The driver, through OpenAI's API | `openaiApiKey` (and `openaiUrl` for Azure or a proxy) |
+| `voyage:<model>` | The driver, through Voyage AI's API | `voyageApiKey` |
 
-```sql
-SELECT _id, _score, _payload
-FROM docs
-WHERE lang = 'en'
-ORDER BY similarity(dense, embed('refund policy')) DESC
-LIMIT 10
+A vector is searched well only with the model its points were embedded with. Keep it in the
+collection's metadata as `runax.embed.<vector>`, and `embed('refund policy')` needs no model;
+naming a different one is then an error rather than a search that quietly finds nonsense:
+
+```bash
+curl -X PATCH localhost:6333/collections/docs -H 'Content-Type: application/json' \
+  -d '{"metadata": {"runax.embed.dense": "openai:text-embedding-3-small"}}'
 ```
 
 The server's own state, in the `system` schema next to the `collections` schema the

@@ -3,7 +3,7 @@ package com.runaxsoftware.qdrant.jdbc.sql.planner;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.Ordering;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadIndexType;
-import com.runaxsoftware.qdrant.jdbc.gateway.models.Document;
+import com.runaxsoftware.qdrant.jdbc.embedding.EmbeddingModel;
 import com.runaxsoftware.qdrant.jdbc.metadata.QdrantDatabaseMetaData;
 import com.runaxsoftware.qdrant.jdbc.resultset.ResultColumn;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
@@ -23,6 +23,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.TableName;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.VectorLiteral;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConstantPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.EmbedText;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CountPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetColumn;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetPlan;
@@ -71,17 +72,17 @@ final class SelectPlanner {
     private static final String CATALOG = QdrantDatabaseMetaData.CATALOG;
     private static final String COLLECTIONS_SCHEMA = QdrantDatabaseMetaData.SCHEMA;
 
-    // The function that hands Qdrant text to embed itself
-    private static final String DOCUMENT = "document";
+    // The function that turns text into the vector a search searches with
+    private static final String EMBED = "embed";
 
     /**
      * What a statement's ORDER BY asks Qdrant to rank by.
      *
      * @param vector   the Qdrant name of the vector to search, empty for an unnamed one
-     * @param query    the vector to search with, empty when Qdrant embeds a document
-     * @param document the text for Qdrant to embed, or {@code null}
+     * @param query    the vector to search with, empty when the search embeds text
+     * @param embed    the text to embed, or {@code null}
      */
-    private record Search(String vector, List<Double> query, Document document) {
+    private record Search(String vector, List<Double> query, EmbedText embed) {
     }
 
     public Plan plan(SelectStatement statement, Catalog catalog) throws SQLException {
@@ -137,7 +138,7 @@ final class SelectPlanner {
 
         if (search != null) {
             return new QueryPlan(schema.name(), columns, search.vector(), search.query(),
-                withPayload, withVector, statement.limit(), filter, search.document());
+                withPayload, withVector, statement.limit(), filter, search.embed());
         }
 
         Ordering ordering = order == null
@@ -369,16 +370,15 @@ final class SelectPlanner {
         ColumnDefinition vector = searched(call.arguments().get(0), schema, alias);
         Expression with = call.arguments().get(1);
 
-        // Qdrant embeds the text with a model that makes the vector's kind, dense or sparse
-        if (with instanceof FunctionCall function && function.is(DOCUMENT)) {
-            return new Search(vector.source(), List.of(), document(function, vector));
+        if (with instanceof FunctionCall function && function.is(EMBED)) {
+            return new Search(vector.source(), List.of(), embed(function, vector, schema));
         }
 
         if (vector.type() != ColumnType.VECTOR) {
             throw new SQLFeatureNotSupportedException("Searching '" + vector.name() + "', a "
                 + vector.type().typeName() + " of " + schema.name() + ", with a vector written "
-                + "out isn't supported yet: search it with " + DOCUMENT + "('text', 'model'), "
-                + "which Qdrant embeds");
+                + "out isn't supported yet: search it with " + EMBED + "('text', "
+                + "'qdrant:qdrant/bm25'), which Qdrant embeds");
         }
 
         VectorLiteral query = vectorLiteral(with, vector);
@@ -393,29 +393,66 @@ final class SelectPlanner {
     }
 
     /**
-     * The text and model of {@code document('refund policy', 'qdrant/bm25')}, which Qdrant
-     * embeds itself. The model is named in the statement: which models exist is Qdrant's to
-     * say, and a wrong one is its error to report.
+     * The text of {@code embed('refund policy')} and the model that embeds it. A vector is
+     * searched well only with the model its points were embedded with, so that model can be kept
+     * in the collection's metadata ({@code runax.embed.<vector>}): {@code embed} then needs no
+     * model, and one that names another is an error rather than a search that silently finds
+     * nonsense.
      */
-    private static Document document(FunctionCall call, ColumnDefinition vector)
+    private static EmbedText embed(FunctionCall call, ColumnDefinition vector, TableSchema schema)
         throws SQLException {
-        String usage = DOCUMENT + "('refund policy', 'model'), as " + SIMILARITY + "("
-            + vector.name() + ", " + DOCUMENT + "('refund policy', 'qdrant/bm25'))";
+        String usage = EMBED + "('refund policy', 'provider:model'), as " + SIMILARITY + "("
+            + vector.name() + ", " + EMBED + "('refund policy', 'openai:text-embedding-3-small'))";
 
-        if (call.arguments().size() != 2) {
-            throw new SQLSyntaxErrorException(DOCUMENT + " takes the text and the model that "
-                + "embeds it: " + usage, "42000");
+        if (call.arguments().isEmpty() || call.arguments().size() > 2) {
+            throw new SQLSyntaxErrorException(EMBED + " takes the text and, unless the collection "
+                + "keeps one, the model: " + usage, "42000");
         }
 
         String text = text(call.arguments().get(0), usage);
-        String model = text(call.arguments().get(1), usage);
+        EmbeddingModel named = call.arguments().size() == 2
+            ? EmbeddingModel.parse(text(call.arguments().get(1), usage))
+            : null;
+        EmbeddingModel kept = keptModel(vector, schema);
 
-        if (model.isBlank()) {
-            throw new SQLSyntaxErrorException(DOCUMENT + " needs a model's name: " + usage,
-                "42000");
+        if (named != null && kept != null && !named.equals(kept)) {
+            throw new SQLSyntaxErrorException("Vector '" + vector.name() + "' of " + schema.name()
+                + " is embedded with " + kept + ", as its " + EmbeddingModel.metadataKey(vector.name())
+                + " metadata says, so searching it with " + named + " would find the wrong points: "
+                + "leave the model out, or name " + kept, "42000");
         }
 
-        return new Document(text, model);
+        EmbeddingModel model = named != null ? named : kept;
+        if (model == null) {
+            throw new SQLSyntaxErrorException(EMBED + " needs the model that embeds vector '"
+                + vector.name() + "' of " + schema.name() + ": name it, as " + EMBED + "('"
+                + text + "', 'openai:text-embedding-3-small'), or keep it in the collection's "
+                + EmbeddingModel.metadataKey(vector.name()) + " metadata", "42000");
+        }
+
+        // The providers the driver calls make dense vectors; Qdrant's models make any kind
+        if (!model.provider().embedsOnServer() && vector.type() != ColumnType.VECTOR) {
+            throw new SQLFeatureNotSupportedException(model + " makes dense vectors, and '"
+                + vector.name() + "' of " + schema.name() + " is a " + vector.type().typeName()
+                + ": embed it with a model Qdrant runs, as qdrant:qdrant/bm25 for a sparse one");
+        }
+
+        return new EmbedText(model, text, vector.type() == ColumnType.VECTOR ? vector.size() : 0);
+    }
+
+    // The model the collection's metadata keeps for the vector, or null when it keeps none
+    private static EmbeddingModel keptModel(ColumnDefinition vector, TableSchema schema)
+        throws SQLException {
+        String key = EmbeddingModel.metadataKey(vector.name());
+        String id = schema.collection().metadata().get(key);
+        if (id == null) return null;
+
+        try {
+            return EmbeddingModel.parse(id);
+        } catch (SQLException e) {
+            throw new SQLException("The " + key + " metadata of " + schema.name() + " holds '"
+                + id + "', which isn't a model: " + e.getMessage(), e.getSQLState(), e);
+        }
     }
 
     private static String text(Expression argument, String usage) throws SQLException {
@@ -427,7 +464,7 @@ final class SelectPlanner {
                 + "PreparedStatement");
         }
 
-        throw new SQLSyntaxErrorException(DOCUMENT + " takes text in quotes: " + usage, "42000");
+        throw new SQLSyntaxErrorException(EMBED + " takes text in quotes: " + usage, "42000");
     }
 
     /**
@@ -452,8 +489,8 @@ final class SelectPlanner {
     }
 
     /**
-     * The vector a search searches with, written out. Text for Qdrant to embed is a
-     * {@code document(...)}, read above; the other forms a search could take come later.
+     * The vector a search searches with, written out. Text to embed is an {@code embed(...)},
+     * read above; the other forms a search could take come later.
      */
     private static VectorLiteral vectorLiteral(Expression argument, ColumnDefinition vector)
         throws SQLException {
@@ -466,7 +503,7 @@ final class SelectPlanner {
         if (argument instanceof FunctionCall call) {
             throw new SQLFeatureNotSupportedException("'" + call.name() + "' isn't supported yet: "
                 + "a similarity search takes a vector written out, as [0.1, 0.2], or "
-                + DOCUMENT + "('text', 'model') for Qdrant to embed");
+                + EMBED + "('text') to embed text");
         }
 
         throw new SQLSyntaxErrorException("A similarity search takes a vector written out in "

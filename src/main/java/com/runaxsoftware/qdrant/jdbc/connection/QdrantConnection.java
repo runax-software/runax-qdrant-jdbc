@@ -4,6 +4,8 @@ import com.runaxsoftware.qdrant.jdbc.DriverInfo;
 import com.runaxsoftware.qdrant.jdbc.metadata.QdrantDatabaseMetaData;
 import com.runaxsoftware.qdrant.jdbc.statement.QdrantPreparedStatement;
 import com.runaxsoftware.qdrant.jdbc.statement.QdrantStatement;
+import com.runaxsoftware.qdrant.jdbc.embedding.ConnectionEmbedders;
+import com.runaxsoftware.qdrant.jdbc.embedding.Embedders;
 import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ServerVersion;
 import com.runaxsoftware.qdrant.jdbc.schema.SchemaReader;
@@ -19,6 +21,7 @@ public class QdrantConnection implements Connection {
     private final QdrantGateway gateway;
     private final ServerVersion serverVersion;
     private final SchemaReader schemaReader;
+    private final Embedders embedders;
     private final Properties clientInfo = new Properties();
     private volatile boolean closed;
     private SQLWarning warnings;
@@ -32,6 +35,7 @@ public class QdrantConnection implements Connection {
         this.gateway = gateway;
         this.serverVersion = serverVersion;
         this.schemaReader = new SchemaReader(gateway, settings.sampleSize(), settings.schemaCache());
+        this.embedders = new ConnectionEmbedders(settings.embedding(), settings.timeout());
     }
 
     public static QdrantConnection open(String url, ConnectionSettings settings) throws SQLException {
@@ -82,6 +86,13 @@ public class QdrantConnection implements Connection {
 
     public SchemaReader schemaReader() {
         return schemaReader;
+    }
+
+    /**
+     * The embedding providers this connection can call, for {@code embed()}.
+     */
+    public Embedders embedders() {
+        return embedders;
     }
 
     public void checkOpen() throws SQLException {

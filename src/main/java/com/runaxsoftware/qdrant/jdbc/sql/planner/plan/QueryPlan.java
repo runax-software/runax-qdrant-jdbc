@@ -1,7 +1,6 @@
 package com.runaxsoftware.qdrant.jdbc.sql.planner.plan;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.runaxsoftware.qdrant.jdbc.gateway.models.Document;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
 
 import java.util.List;
@@ -15,15 +14,15 @@ import java.util.List;
  * @param columns     the result set's columns, in SELECT order, which may include the score
  * @param vector      the name of the vector to search, empty for a collection's single unnamed
  *                    vector
- * @param query       the vector to search with, of that vector's dimensions; empty when Qdrant
- *                    embeds a document instead
+ * @param query       the vector to search with, of that vector's dimensions; empty when the
+ *                    search embeds text instead
  * @param withPayload whether any column needs the payload
  * @param withVector  whether any column needs a vector
  * @param limit       the maximum number of rows, or {@code null} when the statement gave none
  *                    and the statement's maximum rows decide
  * @param filter      the statement's WHERE as a Qdrant filter, or {@code null} when it has none
- * @param document    text for Qdrant to embed and search with, or {@code null} when the query
- *                    vector is written out
+ * @param embed       text to embed and search with, or {@code null} when the query vector is
+ *                    written out
  */
 public record QueryPlan(
     String collection,
@@ -34,12 +33,12 @@ public record QueryPlan(
     boolean withVector,
     Long limit,
     JsonNode filter,
-    Document document
+    EmbedText embed
 ) implements Plan {
 
     public QueryPlan(String collection, List<ColumnDefinition> columns, String vector,
                      List<Double> query, boolean withPayload, boolean withVector, Long limit,
-                     JsonNode filter, Document document) {
+                     JsonNode filter, EmbedText embed) {
         this.collection = collection;
         this.columns = List.copyOf(columns);
         this.vector = vector;
@@ -48,7 +47,7 @@ public record QueryPlan(
         this.withVector = withVector;
         this.limit = limit;
         this.filter = filter;
-        this.document = document;
+        this.embed = embed;
     }
 
     /**

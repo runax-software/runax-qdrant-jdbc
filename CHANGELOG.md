@@ -9,12 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Server-side inference in a search: `ORDER BY similarity(keywords, document('refund policy',
-  'qdrant/bm25')) DESC LIMIT 10` asks Qdrant to embed the text with the model and search with
-  what it made, so the driver runs no model. It searches sparse vectors and multivectors as
-  well as dense ones, since the model makes the vector. Every Qdrant runs `qdrant/bm25`; hosted
-  dense models need Qdrant Cloud's inference, and a Qdrant without it answers with an error
-  that says so. ([#24])
+- `embed('text', 'provider:model')` in a search: `ORDER BY similarity(dense, embed('refund
+  policy', 'openai:text-embedding-3-small')) DESC LIMIT 10`. A `qdrant:` model is run by Qdrant
+  itself, on any kind of vector: every Qdrant runs `qdrant:qdrant/bm25` into sparse vectors,
+  and Qdrant Cloud runs hosted dense models. `openai:` and `voyage:` models are called by the
+  driver, with the new `openaiApiKey`, `openaiUrl`, `voyageApiKey` and `voyageUrl` connection
+  properties; the keys are never shown or logged. The model a vector was embedded with can be
+  kept in the collection's metadata as `runax.embed.<vector>`: `embed('text')` then needs no
+  model, and naming another is an error rather than a search against the wrong vectors.
+  ([#24])
 - Prepared statements: `connection.prepareStatement("SELECT _id FROM docs WHERE lang = ? AND
   year >= ?")`, with `setString`, `setInt`, `setLong`, `setDouble`, `setBoolean`,
   `setBigDecimal`, `setTimestamp`, `setDate`, `setNull`, and `setObject` (a `UUID`, `Instant`,

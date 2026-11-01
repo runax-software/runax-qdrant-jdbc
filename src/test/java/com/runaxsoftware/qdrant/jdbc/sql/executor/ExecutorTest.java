@@ -10,6 +10,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.runaxsoftware.qdrant.jdbc.embedding.Embedders;
+import com.runaxsoftware.qdrant.jdbc.embedding.EmbeddingModel;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.Document;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetHit;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetRequest;
@@ -27,6 +29,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.Parser;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.Planner;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConstantPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CountPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.EmbedText;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetColumn;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
@@ -841,22 +844,56 @@ class ExecutorTest {
             List.of(new FacetColumn("count", ColumnType.INTEGER, true)), null, limit);
     }
 
-    // Qdrant embedding a document
+    // Embedding the text a search searches with
 
     @Test
-    void sendsTheDocumentForQdrantToEmbed() throws SQLException {
+    void sendsTheTextForQdrantToEmbedWithAQdrantModel() throws SQLException {
         List<QueryRequest> requests = new ArrayList<>();
-        Executor recording = new Executor(request -> {
-            throw new AssertionError("Scrolled");
-        }, query -> {
-            requests.add(query);
-            return List.of();
-        }, (collection, filter) -> 0, facet -> List.of(), table -> List.of());
 
-        recording.execute(document("qdrant/bm25"), STATEMENT).resultSet().close();
+        searching(requests, provider -> {
+            throw new AssertionError("Called " + provider);
+        }).execute(embedded("qdrant:qdrant/bm25", 0), STATEMENT).resultSet().close();
 
         assertEquals(new Document("refund policy", "qdrant/bm25"), requests.get(0).document());
+        assertEquals(List.of(), requests.get(0).query());
         assertEquals("keywords", requests.get(0).vector());
+    }
+
+    @Test
+    void embedsTheTextWithTheProviderAndSearchesWithItsVector() throws SQLException {
+        List<QueryRequest> requests = new ArrayList<>();
+        List<String> embedded = new ArrayList<>();
+
+        searching(requests, provider -> (model, text) -> {
+            embedded.add(provider + " " + model + " " + text);
+            return List.of(0.1, 0.2);
+        }).execute(embedded("openai:text-embedding-3-small", 2), STATEMENT).resultSet().close();
+
+        assertEquals(List.of("OPENAI text-embedding-3-small refund policy"), embedded);
+        assertEquals(List.of(0.1, 0.2), requests.get(0).query());
+        assertNull(requests.get(0).document(), "Qdrant gets the vector, not the text");
+    }
+
+    @Test
+    void rejectsAVectorOfOtherDimensionsThanTheSearchedOne() {
+        Executor executor = searching(new ArrayList<>(), provider -> (model, text) -> List.of(0.1, 0.2, 0.3));
+
+        SQLException error = assertThrows(SQLException.class,
+            () -> executor.execute(embedded("openai:text-embedding-3-small", 2), STATEMENT));
+
+        assertEquals("openai:text-embedding-3-small made a vector of 3 dimensions, and 'keywords' "
+            + "of docs has 2: it was embedded with another model", error.getMessage());
+    }
+
+    @Test
+    void passesOnAProviderThatIsntSetUp() {
+        Executor executor = searching(new ArrayList<>(), provider -> {
+            throw new SQLException("Embedding with OpenAI needs its API key", "28000");
+        });
+
+        assertEquals("28000", assertThrows(SQLException.class,
+            () -> executor.execute(embedded("openai:text-embedding-3-small", 2), STATEMENT))
+            .getSQLState());
     }
 
     @Test
@@ -868,18 +905,33 @@ class ExecutorTest {
                 + "configured - please provide valid address in config", "HY000");
         }, (collection, filter) -> 0, facet -> List.of(), table -> List.of());
 
-        SQLException error = assertThrows(SQLException.class,
-            () -> local.execute(document("sentence-transformers/all-minilm-l6-v2"), STATEMENT));
+        SQLException error = assertThrows(SQLException.class, () -> local.execute(
+            embedded("qdrant:sentence-transformers/all-minilm-l6-v2", 0), STATEMENT));
 
-        assertEquals("This Qdrant can't embed text with 'sentence-transformers/all-minilm-l6-v2': "
-            + "it runs no inference service, which hosted models need (Qdrant Cloud has one). "
-            + "Every Qdrant can embed with qdrant/bm25, into a sparse vector", error.getMessage());
+        assertEquals("This Qdrant can't embed text with 'qdrant:sentence-transformers/all-minilm-l6-v2'"
+            + ": it runs no inference service, which hosted models need (Qdrant Cloud has one). "
+            + "Embed with a model the driver calls, as openai:text-embedding-3-small, or with "
+            + "qdrant:qdrant/bm25 for a sparse vector", error.getMessage());
         assertEquals("HY000", error.getSQLState());
     }
 
-    private static QueryPlan document(String model) {
-        return new QueryPlan("docs", List.of(ID, SCORE), "keywords", List.of(), false, false, 5L,
-            null, new Document("refund policy", model));
+    // An executor whose searches find nothing, recording what they were asked for
+    private static Executor searching(List<QueryRequest> requests, Embedders embedders) {
+        return new Executor(request -> {
+            throw new AssertionError("Scrolled");
+        }, query -> {
+            requests.add(query);
+            return List.of();
+        }, (collection, filter) -> 0, facet -> List.of(), table -> List.of(), null, embedders);
+    }
+
+    private static QueryPlan embedded(String model, int dimensions) {
+        try {
+            return new QueryPlan("docs", List.of(ID, SCORE), "keywords", List.of(), false, false,
+                5L, null, new EmbedText(EmbeddingModel.parse(model), "refund policy", dimensions));
+        } catch (SQLException e) {
+            throw new AssertionError(e);
+        }
     }
 
     private static ScrollPlan ordered(Long limit) {

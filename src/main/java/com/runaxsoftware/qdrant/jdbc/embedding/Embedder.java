@@ -1,11 +1,18 @@
 package com.runaxsoftware.qdrant.jdbc.embedding;
 
+import java.sql.SQLException;
+import java.util.List;
+
 /**
- * Turns text into a vector, for similarity search with {@code embed('...')}
+ * Turns text into a dense vector with one provider's models, for a search's
+ * {@code embed('...')}. The text is a query, which some models embed differently from the
+ * documents they search.
  */
 public interface Embedder {
+
     /**
-     * Embeds the text into a dense vector
+     * @param model the model's name, as the provider knows it
+     * @param text  the text to search with
      */
-   float[] embed(String text);
+    List<Double> embed(String model, String text) throws SQLException;
 }
