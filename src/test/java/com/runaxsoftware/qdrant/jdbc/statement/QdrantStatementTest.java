@@ -174,7 +174,7 @@ class QdrantStatementTest {
     @Test
     void reportsAnUnknownSystemTableOrColumnBeforeRunning() throws SQLException {
         SQLSyntaxErrorException table = assertThrows(SQLSyntaxErrorException.class,
-            () -> statement.executeQuery("SELECT * FROM system.telemetry"));
+            () -> statement.executeQuery("SELECT * FROM system.queries"));
         assertEquals("42S02", table.getSQLState());
 
         SQLSyntaxErrorException column = assertThrows(SQLSyntaxErrorException.class,

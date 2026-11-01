@@ -42,6 +42,12 @@ import java.util.Properties;
 
 class QdrantDatabaseMetaDataTest {
 
+    /**
+     * Every system table, in the order {@code getTables} lists them, which is by name.
+     */
+    private static final List<String> SYSTEM_TABLES = List.of("aliases", "cluster", "collections",
+        "issues", "metrics", "peers", "shard_keys", "shards", "snapshots", "telemetry");
+
     private FakeQdrantServer server;
     private Connection connection;
     private DatabaseMetaData metaData;
@@ -105,19 +111,20 @@ class QdrantDatabaseMetaDataTest {
         assertEquals(4, tables("%", new String[] {"VIEW", "table"}).size());
         assertEquals(List.of(), tables("%", new String[] {"VIEW", "SYSTEM TABLE"}));
         assertEquals(List.of(), tables("%", new String[0]));
-        assertEquals(List.of("aliases", "collections"),
-            systemTables("%", new String[] {"VIEW", "SYSTEM TABLE"}));
+        assertEquals(SYSTEM_TABLES, systemTables("%", new String[] {"VIEW", "SYSTEM TABLE"}));
     }
 
     @Test
     void matchesFiltersForItsCatalogAndSchema() throws SQLException {
-        // 4 collections, and the 2 system tables wherever the schema filter takes them in too
-        assertEquals(6, column(metaData.getTables("", "", "%", null), "TABLE_NAME").size());
-        assertEquals(6, column(metaData.getTables(null, "%", "%", null), "TABLE_NAME").size());
+        // 4 collections, and the system tables wherever the schema filter takes them in too
+        int all = 4 + SYSTEM_TABLES.size();
+
+        assertEquals(all, column(metaData.getTables("", "", "%", null), "TABLE_NAME").size());
+        assertEquals(all, column(metaData.getTables(null, "%", "%", null), "TABLE_NAME").size());
         assertEquals(4, column(metaData.getTables("qdrant", "collections", "%", null),
             "TABLE_NAME").size());
         assertEquals(4, column(metaData.getTables(null, "coll%", "%", null), "TABLE_NAME").size());
-        assertEquals(2, column(metaData.getTables("qdrant", "system", "%", null),
+        assertEquals(SYSTEM_TABLES.size(), column(metaData.getTables("qdrant", "system", "%", null),
             "TABLE_NAME").size());
         assertEquals(List.of(), column(metaData.getTables("other", null, "%", null), "TABLE_NAME"));
         assertEquals(List.of(), column(metaData.getTables("QDRANT", null, "%", null), "TABLE_NAME"));
@@ -630,8 +637,22 @@ class QdrantDatabaseMetaDataTest {
 
         assertEquals(List.of(
             "qdrant.system.aliases SYSTEM TABLE Every alias, with the collection it points at",
+            "qdrant.system.cluster SYSTEM TABLE The cluster as the connected peer sees it, in "
+                + "one row",
             "qdrant.system.collections SYSTEM TABLE Every collection on the server, with its "
                 + "state and parameters",
+            "qdrant.system.issues SYSTEM TABLE The problems and suggestions Qdrant reports "
+                + "about itself",
+            "qdrant.system.metrics SYSTEM TABLE Qdrant's Prometheus metrics, as one row per "
+                + "sample",
+            "qdrant.system.peers SYSTEM TABLE Every peer of the cluster, with its address",
+            "qdrant.system.shard_keys SYSTEM TABLE Every collection's shard keys, for custom "
+                + "sharding",
+            "qdrant.system.shards SYSTEM TABLE Every shard of every collection, and the peer "
+                + "holding each copy",
+            "qdrant.system.snapshots SYSTEM TABLE Every snapshot, of a collection or of the "
+                + "whole storage",
+            "qdrant.system.telemetry SYSTEM TABLE Qdrant's telemetry, as one row per value in it",
             "qdrant.collections.Mixed-Case TABLE null",
             "qdrant.collections.articles TABLE null",
             "qdrant.collections.ghost TABLE null",
@@ -649,8 +670,7 @@ class QdrantDatabaseMetaDataTest {
         assertEquals(List.of("Current-2"), tables("Current\\-_", new String[] {"VIEW", "TABLE"}));
         assertEquals(4, tables("%", new String[] {"TABLE"}).size());
         assertEquals(List.of(), tables("%", new String[] {"SYSTEM TABLE"}));
-        assertEquals(List.of("aliases", "collections"),
-            systemTables("%", new String[] {"SYSTEM TABLE"}));
+        assertEquals(SYSTEM_TABLES, systemTables("%", new String[] {"SYSTEM TABLE"}));
         assertEquals(List.of(), column(metaData.getTables("other", null, "%", null),
             "TABLE_NAME"));
     }
@@ -775,8 +795,9 @@ class QdrantDatabaseMetaDataTest {
     void listsTheSystemTablesWithoutCallingQdrant() throws SQLException {
         int collections = server.calls(Endpoint.COLLECTIONS);
 
-        assertEquals(List.of("aliases", "collections"), systemTables("%", null));
+        assertEquals(SYSTEM_TABLES, systemTables("%", null));
         assertEquals(List.of("collections"), systemTables("coll%", null));
+        assertEquals(List.of("shard_keys", "shards"), systemTables("shard%", null));
         assertEquals(List.of(), systemTables("products", null));
         assertEquals(List.of(), systemTables("%", new String[] {"TABLE", "VIEW"}));
 

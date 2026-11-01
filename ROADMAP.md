@@ -48,13 +48,16 @@ Planned work, roughly in the order it will land. The SQL each item accepts is sp
 - [ ] **Post-filtering in the driver (to decide)** — conditions Qdrant can't run, such as
   `price > cost`, `LOWER(name) = 'lamp'`, or joins, checked by the driver on the rows Qdrant
   returns. Probably opt-in and capped, since it can read far more points than it returns.
-- [ ] **System tables** — read-only tables for server and collection state, browsable in
+- [x] **System tables** — read-only tables for server and collection state, browsable in
   DataGrip, in a `system` schema next to `collections`, the schema collections sit in, so
   they can't clash with collection names. `system.collections` (status, optimizer, point and
   segment counts, shards, vectors, payload indexes) and `system.aliases` are done, along
   with the schema-qualified names (`system.collections`, `qdrant.system.collections`) that
-  reach them. Still to come: snapshots, shard keys, cluster info and peers, telemetry,
-  metrics, and issues. Read-only lists then move from `CALL` procedures to these tables.
+  reach them, and so are `snapshots`, `shard_keys`, `shards`, `cluster`, `peers`,
+  `telemetry`, `metrics`, and `issues`. Read-only lists then move from `CALL` procedures to
+  these tables. A system table takes `SELECT`, a column list, and `LIMIT`; `WHERE`,
+  `ORDER BY`, and `COUNT(*)` over one come with the items above. Only the telemetry Qdrant
+  answers with by default is exposed, not its deeper `?details_level=` levels.
 - [ ] **Buffered writes (later, opt-in)** — not real transactions, since Qdrant has none.
   With a setting on and auto-commit off, the driver holds `INSERT`, `UPDATE`, and `DELETE`
   until `commit()` and drops them on `rollback()`. Documented as "rollback before commit

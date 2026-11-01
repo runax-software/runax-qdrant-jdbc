@@ -137,6 +137,15 @@ public class QdrantGateway implements AutoCloseable {
         return result;
     }
 
+    /**
+     * An endpoint's body as it was sent, for {@code GET /metrics}: Qdrant answers that one in
+     * Prometheus' text format, which has no JSON {@code "result"} for {@link #request} to
+     * unwrap. Failures are reported the same way as a JSON endpoint's.
+     */
+    public String requestText(String path) throws SQLException {
+        return checkText(exchange(HttpMethod.GET, path, null, "text/plain"));
+    }
+
     public String baseUrl() {
         return this.baseUrl;
     }
@@ -149,8 +158,18 @@ public class QdrantGateway implements AutoCloseable {
     }
 
     private JsonNode send(HttpMethod method, String path, JsonNode body) throws SQLException {
+        return check(exchange(method, path, body, "application/json"));
+    }
+
+    /**
+     * One call to Qdrant, with the connection's key, timeout, and user agent, failing with the
+     * SQL state the transport error deserves. The answer's status isn't looked at here: what a
+     * body means depends on whether it's JSON or text.
+     */
+    private HttpResponse<String> exchange(HttpMethod method, String path, JsonNode body,
+                                          String accept) throws SQLException {
         HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(baseUrl + path))
-            .timeout(timeout).header("Accept", "application/json").header("User-Agent", userAgent);
+            .timeout(timeout).header("Accept", accept).header("User-Agent", userAgent);
 
         if (apiKey != null) request.header("api-key", apiKey);
 
@@ -177,28 +196,44 @@ public class QdrantGateway implements AutoCloseable {
             throw new SQLException("Interrupted while waiting for Qdrant", "HY008", e);
         }
 
-        return check(response);
+        return response;
     }
 
     private static JsonNode check(HttpResponse<String> response) throws SQLException {
-        int status = response.statusCode();
+        if (!succeeded(response)) throw failure(response);
 
-        if (status >= 200 && status < 300) {
-            try {
-                return JSON.readTree(response.body());
-            } catch (JsonProcessingException e) {
-                throw new SQLException("Qdrant sent a response that isn't JSON", "08S01", e);
-            }
+        try {
+            return JSON.readTree(response.body());
+        } catch (JsonProcessingException e) {
+            throw new SQLException("Qdrant sent a response that isn't JSON", "08S01", e);
         }
+    }
 
+    /**
+     * A successful answer's body, unparsed, for the endpoints that answer in text.
+     */
+    private static String checkText(HttpResponse<String> response) throws SQLException {
+        if (!succeeded(response)) throw failure(response);
+
+        return response.body();
+    }
+
+    private static boolean succeeded(HttpResponse<String> response) {
+        int status = response.statusCode();
+        return status >= 200 && status < 300;
+    }
+
+    private static SQLException failure(HttpResponse<String> response) {
+        int status = response.statusCode();
         String error = errorMessage(response.body(), status);
+
         if (status == 401 || status == 403) {
-            throw new SQLInvalidAuthorizationSpecException(
+            return new SQLInvalidAuthorizationSpecException(
                 "Qdrant rejected the API key (put it in the password field): " + error, "28000", status);
         }
 
         String state = status == 404 ? "42S02" : status < 500 ? "42000" : "HY000";
-        throw new SQLException("Qdrant: " + error, state, status);
+        return new SQLException("Qdrant: " + error, state, status);
     }
 
     /**

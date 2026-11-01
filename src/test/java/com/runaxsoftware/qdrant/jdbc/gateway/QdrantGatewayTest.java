@@ -398,6 +398,36 @@ class QdrantGatewayTest {
         assertEquals(name, method.method());
     }
 
+    // Endpoints that answer in text rather than JSON
+
+    @Test
+    void returnsTheTextOfAnEndpointThatAnswersInText() throws SQLException {
+        assertEquals(FakeQdrantServer.METRICS, gateway.requestText("/metrics"));
+    }
+
+    @Test
+    void asksForTextFromAnEndpointThatAnswersInText() throws Exception {
+        try (RecordingServer recording = new RecordingServer(200, "app_info 1")) {
+            assertEquals("app_info 1", recording.gateway().requestText("/metrics"));
+
+            Headers headers = recording.headers().get(0);
+            assertEquals("text/plain", headers.getFirst("Accept"));
+            assertEquals(USER_AGENT, headers.getFirst("User-Agent"));
+            assertNull(headers.getFirst("Content-Type"));
+        }
+    }
+
+    @Test
+    void reportsWhatQdrantReportsAboutAnEndpointThatAnswersInText() {
+        server.fail(Endpoint.METRICS, 500, "Service internal error");
+
+        SQLException error = assertThrows(SQLException.class,
+            () -> gateway.requestText("/metrics"));
+
+        assertEquals("HY000", error.getSQLState());
+        assertEquals("Qdrant: Service internal error", error.getMessage());
+    }
+
     // Headers
 
     @Test
