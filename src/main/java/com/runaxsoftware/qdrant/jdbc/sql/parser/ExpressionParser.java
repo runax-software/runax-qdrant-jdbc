@@ -48,7 +48,7 @@ public final class ExpressionParser {
             return inner;
         }
 
-        Expression column = new Column(this.tokenStream.expectIdentifier());
+        Expression column = parseColumn();
 
         if (this.tokenStream.matchKeyword("IS")) {
             boolean negated = this.tokenStream.matchKeyword("NOT");
@@ -82,6 +82,19 @@ public final class ExpressionParser {
             return new Comparison(column, operator.text(), parseValue());
         }
         throw this.tokenStream.error("Expected a comparison such as =, <, IN or IS NULL");
+    }
+
+    /**
+     * A column name, which the statement may name under the table or an alias, as in
+     * {@code t.name}. A nested payload field is one quoted name, {@code "specs.color"}, so it
+     * reads as a column and not as a qualified one.
+     */
+    public Column parseColumn() throws SQLSyntaxErrorException {
+        String name = this.tokenStream.expectIdentifier();
+
+        return this.tokenStream.matchSymbol(".")
+            ? new Column(name, this.tokenStream.expectIdentifier())
+            : Column.of(name);
     }
 
     public Expression parseValue() throws SQLSyntaxErrorException {

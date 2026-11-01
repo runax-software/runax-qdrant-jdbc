@@ -209,6 +209,46 @@ class MetadataIntegrationTest {
         }
     }
 
+    /**
+     * The statement DataGrip's data editor sends when a collection is opened in the explorer:
+     * the schema-qualified collection, the name it gives it, and a star under that name.
+     */
+    @Test
+    void readsACollectionTheWayADataGripGridDoes() throws SQLException {
+        String table = PREFIX + "products";
+
+        try (Statement statement = connection.createStatement();
+             ResultSet rows = statement.executeQuery(
+                 "SELECT t.* FROM collections." + table + " t")) {
+            assertEquals(List.of("_id", "created_at", "in_stock", "name", "price", "specs",
+                "specs.color", "tags", "_payload"), labels(rows));
+
+            int read = 0;
+            while (rows.next()) read++;
+
+            assertEquals(5, read, "every point, and no vectors, as a star reads them");
+        }
+    }
+
+    @Test
+    void readsANestedPayloadFieldQualifiedOrQuoted() throws SQLException {
+        String table = PREFIX + "products";
+
+        try (Statement statement = connection.createStatement()) {
+            for (String item : List.of("specs.color", "t.\"specs.color\"", "\"specs.color\"")) {
+                try (ResultSet rows = statement.executeQuery(
+                    "SELECT " + item + " FROM " + table + " t LIMIT 1")) {
+                    assertTrue(rows.next(), item);
+                    assertEquals("black", rows.getString("specs.color"), item);
+                }
+            }
+
+            SQLException misspelled = assertThrows(SQLException.class,
+                () -> statement.executeQuery("SELECT specs.colour FROM " + table));
+            assertEquals("42S22", misspelled.getSQLState());
+        }
+    }
+
     @Test
     void describesProductColumns() throws SQLException {
         assertEquals(List.of(
@@ -410,6 +450,17 @@ class MetadataIntegrationTest {
     }
 
     /** Describes a table's columns as "name TYPE" or "name TYPE(size)" for vectors. */
+    /** The column labels of a result, in order. */
+    private static List<String> labels(ResultSet rows) throws SQLException {
+        List<String> labels = new ArrayList<>();
+
+        for (int column = 1; column <= rows.getMetaData().getColumnCount(); column++) {
+            labels.add(rows.getMetaData().getColumnLabel(column));
+        }
+
+        return labels;
+    }
+
     private static List<String> columns(String table) throws SQLException {
         List<String> columns = new ArrayList<>();
 

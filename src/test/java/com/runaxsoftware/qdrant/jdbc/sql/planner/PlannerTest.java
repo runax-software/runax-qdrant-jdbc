@@ -43,9 +43,19 @@ class PlannerTest {
                     new ColumnDefinition("price", ColumnKind.PAYLOAD_FIELD, ColumnType.FLOAT, 0, "price", ""),
                     new ColumnDefinition("_vector", ColumnKind.VECTOR, ColumnType.VECTOR, 4, "", "")));
 
+    private static final TableSchema PRODUCTS = new TableSchema(
+            new QdrantCollection("products", 1, List.of(), Map.of()),
+            List.of(
+                    new ColumnDefinition("_id", ColumnKind.ID, ColumnType.TEXT, 0, null, ""),
+                    new ColumnDefinition("specs", ColumnKind.PAYLOAD_FIELD, ColumnType.JSON, 0, "specs", ""),
+                    new ColumnDefinition("specs.color", ColumnKind.PAYLOAD_FIELD, ColumnType.TEXT, 0, "specs.color", "")));
+
     private static final Catalog CATALOG = name -> {
         if (name.equals("docs")) {
             return DOCS;
+        }
+        if (name.equals("products")) {
+            return PRODUCTS;
         }
 
         throw new SQLException("Collection " + name + " doesn't exist", "42S02");
@@ -156,6 +166,97 @@ class PlannerTest {
         assertThrows(SQLFeatureNotSupportedException.class, () -> plan(sql, CATALOG));
     }
 
+    // Table aliases and qualified names
+
+    @Test
+    void readsAStarNamedUnderTheTable() throws SQLException {
+        // What DataGrip's data editor sends when a collection is opened
+        ScrollPlan plan = scroll("SELECT t.* FROM collections.docs t");
+
+        assertEquals(List.of("_id", "_payload", "title", "price"), names(plan));
+        assertEquals("docs", plan.collection());
+        assertTrue(plan.withPayload());
+        assertFalse(plan.withVector());
+    }
+
+    @Test
+    void readsColumnsNamedUnderTheTable() throws SQLException {
+        assertEquals(List.of("title"), names(scroll("SELECT t.title FROM docs t")));
+        assertEquals(List.of("title"), names(scroll("SELECT t.title FROM docs AS t")));
+        assertEquals(List.of("name"), names(scroll("SELECT t.title AS name FROM docs t")));
+        assertEquals("title", scroll("SELECT t.title AS name FROM docs t").columns().get(0).source());
+    }
+
+    @Test
+    void readsColumnsNamedUnderTheCollectionItself() throws SQLException {
+        assertEquals(List.of("title"), names(scroll("SELECT docs.title FROM docs")));
+        assertEquals(List.of("_id", "_payload", "title", "price"),
+                names(scroll("SELECT docs.* FROM docs")));
+    }
+
+    @Test
+    void expandsAStarAmongOtherColumns() throws SQLException {
+        assertEquals(List.of("_id", "_payload", "title", "price", "title"),
+                names(scroll("SELECT t.*, t.title FROM docs t")));
+        assertEquals(List.of("price", "_id", "_payload", "title", "price"),
+                names(scroll("SELECT price, * FROM docs")));
+    }
+
+    @Test
+    void rejectsTheCollectionsOwnNameWhenTheStatementRenamesIt() {
+        SQLSyntaxErrorException error = assertThrows(SQLSyntaxErrorException.class,
+                () -> plan("SELECT docs.title FROM docs t", CATALOG));
+
+        assertEquals("Unknown table or alias 'docs' in 'docs.title': this statement reads docs "
+                + "as t", error.getMessage());
+        assertEquals("42S02", error.getSQLState());
+    }
+
+    @Test
+    void rejectsAQualifierThatNamesNoTable() {
+        SQLSyntaxErrorException column = assertThrows(SQLSyntaxErrorException.class,
+                () -> plan("SELECT x.title FROM docs t", CATALOG));
+        assertEquals("Unknown table or alias 'x' in 'x.title': this statement reads docs as t",
+                column.getMessage());
+        assertEquals("42S02", column.getSQLState());
+
+        SQLSyntaxErrorException star = assertThrows(SQLSyntaxErrorException.class,
+                () -> plan("SELECT x.* FROM docs", CATALOG));
+        assertEquals("Unknown table or alias 'x' in 'x.*': this statement reads docs",
+                star.getMessage());
+    }
+
+    @Test
+    void readsANestedPayloadFieldWrittenWithoutQuotes() throws SQLException {
+        assertEquals(List.of("specs.color"), names(scroll("SELECT specs.color FROM products")));
+        assertEquals(List.of("specs.color"),
+                names(scroll("SELECT t.\"specs.color\" FROM products t")));
+    }
+
+    @Test
+    void reportsAMisspelledNestedPayloadFieldAsAnUnknownColumn() {
+        SQLSyntaxErrorException error = assertThrows(SQLSyntaxErrorException.class,
+                () -> plan("SELECT specs.colour FROM products", CATALOG));
+
+        assertEquals("Unknown column 'specs.colour' in products", error.getMessage());
+        assertEquals("42S22", error.getSQLState());
+    }
+
+    @Test
+    void reportsAnUnknownColumnUnderTheNameTheStatementWrote() {
+        SQLSyntaxErrorException error = assertThrows(SQLSyntaxErrorException.class,
+                () -> plan("SELECT t.pric FROM docs t", CATALOG));
+
+        assertEquals("Unknown column 't.pric' in docs", error.getMessage());
+        assertEquals("42S22", error.getSQLState());
+    }
+
+    @Test
+    void rejectsAStarWithoutFromHoweverItIsNamed() {
+        assertEquals("SELECT t.* needs a FROM", assertThrows(SQLSyntaxErrorException.class,
+                () -> plan("SELECT t.*", NO_LOOKUPS)).getMessage());
+    }
+
     // System tables
 
     @Test
@@ -192,6 +293,28 @@ class PlannerTest {
             .collection());
         assertEquals("docs", ((ScrollPlan) plan("SELECT * FROM qdrant.collections.docs", CATALOG))
             .collection());
+    }
+
+    @Test
+    void readsASystemTableUnderTheNameAStatementGivesIt() throws SQLException {
+        assertEquals(SystemTable.COLLECTIONS.columns(),
+                system("SELECT t.* FROM system.collections t").columns());
+        assertEquals(List.of("name"),
+                system("SELECT c.name FROM system.collections c").columns().stream()
+                        .map(SystemColumn::name).toList());
+        assertEquals(List.of("name"),
+                system("SELECT COLLECTIONS.name FROM system.collections").columns().stream()
+                        .map(SystemColumn::name).toList());
+    }
+
+    @Test
+    void rejectsAQualifierThatNamesNoSystemTable() {
+        SQLSyntaxErrorException error = assertThrows(SQLSyntaxErrorException.class,
+                () -> plan("SELECT x.name FROM system.collections c", NO_LOOKUPS));
+
+        assertEquals("Unknown table or alias 'x' in 'x.name': this statement reads "
+                + "system.collections as c", error.getMessage());
+        assertEquals("42S02", error.getSQLState());
     }
 
     @Test

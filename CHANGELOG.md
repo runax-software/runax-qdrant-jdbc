@@ -25,11 +25,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SYSTEM TABLE`s with their columns, no primary key and no indexes, and without calling
   Qdrant at all. A `getTables` or `getColumns` call that doesn't filter by schema now returns
   them along with the collections. ([#13])
+- Table aliases and qualified names: `FROM docs t` (with or without `AS`), and `t.*`,
+  `t.name`, `t.price AS cost`, `WHERE t.lang = 'en'` and `ORDER BY t.price` under that name
+  or under the table's own name, as SQL does — a name given to the table replaces its own.
+  A nested payload field also reads without quotes, as `specs.color`, when nothing of that
+  name is in FROM; `"specs.color"` keeps working. An alias or table name that the statement
+  doesn't read reports SQLState `42S02`. ([#14])
 - Schema-qualified table names: `FROM system.collections`, `FROM collections.docs`, and
   `FROM qdrant.system.collections`, the forms tools generate. The driver's own names — the
   catalog, the two schemas, and the system tables and their columns — match whatever the
   case; a collection name is still matched exactly, as Qdrant matches it. An unknown catalog
   or schema reports SQLState `42S02`. ([#13])
+
+### Fixed
+
+- Opening a collection in DataGrip's data editor failed with `Expected the end of the
+  statement, found '.'`: it sends `SELECT t.* FROM collections.<name> t`, which the driver
+  couldn't parse. Before the schema-qualified names landed the same statement failed in the
+  lexer, as `Unexpected character '.'`. ([#14])
 
 ### Changed
 
@@ -57,3 +70,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#7]: https://github.com/runax-software/runax-qdrant-jdbc/pull/7
 [#8]: https://github.com/runax-software/runax-qdrant-jdbc/pull/8
 [#13]: https://github.com/runax-software/runax-qdrant-jdbc/pull/13
+[#14]: https://github.com/runax-software/runax-qdrant-jdbc/pull/14
