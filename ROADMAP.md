@@ -47,7 +47,9 @@ Planned work, roughly in the order it will land. The SQL each item accepts is sp
 - [x] **ORDER BY** on range-indexed payload fields, through the scroll's `order_by`, and
   `ORDER BY _id` as Qdrant's own order. An ordered read needs a limit, since Qdrant answers
   one in a single page; paging an ordered read by value (`order_by.start_from`) comes later.
-- [ ] **Prepared statements** with parameters.
+- [x] **Prepared statements** with parameters: `?` for constants in `WHERE`, the select list,
+  and a search's vector (`float[]` or `double[]`), batches of values for `DELETE`, and
+  parameter metadata. `LIMIT ?` and `OFFSET ?` come later.
 - [ ] **Grid edits** — `UPDATE ... WHERE _id = ?` from DataGrip's data editor, mapped to
   Qdrant's set-payload call.
 - [x] **DELETE** mapped to deleting points: `DELETE FROM docs WHERE …` through the same

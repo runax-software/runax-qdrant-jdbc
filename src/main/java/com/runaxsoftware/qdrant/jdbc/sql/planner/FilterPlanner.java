@@ -307,11 +307,17 @@ final class FilterPlanner {
 
     // The constant a column is compared with
     private Object value(Expression expression, ColumnDefinition column) throws SQLException {
+        if (expression instanceof Literal literal && literal.value() == null) {
+            throw new SQLSyntaxErrorException("Comparing '" + column.name() + "' with NULL is "
+                + "never true: use IS NULL or IS NOT NULL", "42000");
+        }
         if (expression instanceof Literal literal) {
             return literal.value();
         }
         if (expression instanceof Parameter) {
-            throw new SQLFeatureNotSupportedException("Parameters aren't supported yet");
+            throw new SQLFeatureNotSupportedException("Parameters are given through a "
+                + "PreparedStatement: Connection.prepareStatement(sql), then setString and the "
+                + "other setters");
         }
         throw new SQLFeatureNotSupportedException("'" + column.name() + "' can only be compared "
             + "with a text, number or boolean constant");

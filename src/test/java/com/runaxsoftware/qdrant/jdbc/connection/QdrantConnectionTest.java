@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -26,6 +27,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLClientInfoException;
 import java.sql.SQLException;
@@ -366,16 +368,23 @@ class QdrantConnectionTest {
     }
 
     @Test
-    void doesNotSupportPreparedStatementsOrCallsYet() {
-        List<Executable> calls = List.of(
-            () -> connection.prepareStatement("SELECT 1"),
-            () -> connection.prepareStatement("SELECT 1", ResultSet.TYPE_FORWARD_ONLY,
+    void preparesStatementsInEveryFormButHasNoStoredProcedures() throws SQLException {
+        List<PreparedStatement> prepared = List.of(
+            connection.prepareStatement("SELECT ?"),
+            connection.prepareStatement("SELECT ?", ResultSet.TYPE_FORWARD_ONLY,
                 ResultSet.CONCUR_READ_ONLY),
-            () -> connection.prepareStatement("SELECT 1", ResultSet.TYPE_FORWARD_ONLY,
+            connection.prepareStatement("SELECT ?", ResultSet.TYPE_FORWARD_ONLY,
                 ResultSet.CONCUR_READ_ONLY, ResultSet.HOLD_CURSORS_OVER_COMMIT),
-            () -> connection.prepareStatement("SELECT 1", Statement.RETURN_GENERATED_KEYS),
-            () -> connection.prepareStatement("SELECT 1", new int[] {1}),
-            () -> connection.prepareStatement("SELECT 1", new String[] {"id"}),
+            connection.prepareStatement("SELECT ?", Statement.RETURN_GENERATED_KEYS),
+            connection.prepareStatement("SELECT ?", new int[] {1}),
+            connection.prepareStatement("SELECT ?", new String[] {"id"}));
+
+        for (PreparedStatement statement : prepared) {
+            assertEquals(1, statement.getParameterMetaData().getParameterCount());
+            statement.close();
+        }
+
+        List<Executable> calls = List.of(
             () -> connection.prepareCall("CALL x()"),
             () -> connection.prepareCall("CALL x()", ResultSet.TYPE_FORWARD_ONLY,
                 ResultSet.CONCUR_READ_ONLY),
@@ -385,6 +394,14 @@ class QdrantConnectionTest {
         for (Executable call : calls) {
             assertThrows(SQLFeatureNotSupportedException.class, call);
         }
+    }
+
+    @Test
+    void warnsThatAPreparedStatementsResultsAreForwardOnly() throws SQLException {
+        connection.prepareStatement("SELECT 1", ResultSet.TYPE_SCROLL_INSENSITIVE,
+            ResultSet.CONCUR_READ_ONLY).close();
+
+        assertNotNull(connection.getWarnings());
     }
 
     // Transactions and settings

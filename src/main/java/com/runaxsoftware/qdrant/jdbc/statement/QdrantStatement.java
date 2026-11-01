@@ -33,7 +33,7 @@ import java.sql.SQLException;
  * have, the statement reads the collection's columns again and plans once more before it
  * reports the column as unknown, so a field added to the collection since is found.
  */
-public final class QdrantStatement extends AbstractStatement {
+public class QdrantStatement extends AbstractStatement {
 
     private static final String UNKNOWN_COLUMN = "42S22";
 
@@ -54,8 +54,14 @@ public final class QdrantStatement extends AbstractStatement {
     @Override
     public ResultSet executeQuery(String sql) throws SQLException {
         checkOpen();
-        Plan plan = plan(sql);
+        return query(plan(sql));
+    }
 
+    /**
+     * Runs a plan that returns rows, and refuses one that changes what Qdrant holds before it
+     * runs.
+     */
+    ResultSet query(Plan plan) throws SQLException {
         if (!plan.returnsRows()) {
             throw new SQLException("executeQuery can only run a SELECT: use executeUpdate or "
                 + "execute", "HY000");
@@ -68,6 +74,10 @@ public final class QdrantStatement extends AbstractStatement {
     public boolean execute(String sql) throws SQLException {
         checkOpen();
         return run(plan(sql)).hasResultSet();
+    }
+
+    boolean execute(Plan plan) throws SQLException {
+        return run(plan).hasResultSet();
     }
 
     @Override
@@ -108,8 +118,13 @@ public final class QdrantStatement extends AbstractStatement {
     @Override
     public long executeLargeUpdate(String sql) throws SQLException {
         checkOpen();
-        Plan plan = plan(sql);
+        return update(plan(sql));
+    }
 
+    /**
+     * Runs a plan that changes what Qdrant holds, and refuses a SELECT before it runs.
+     */
+    long update(Plan plan) throws SQLException {
         if (plan.returnsRows()) {
             throw new SQLException("executeUpdate can't run a SELECT: use executeQuery or execute",
                 "HY000");
@@ -160,11 +175,21 @@ public final class QdrantStatement extends AbstractStatement {
 
     // Reports syntax errors, unknown names, and SQL that can't run yet before anything runs
     private Plan plan(String sql) throws SQLException {
+        return plan(parse(sql));
+    }
+
+    static Statement parse(String sql) throws SQLException {
         if (sql == null) {
             throw new SQLException("The SQL is null", "HY009");
         }
 
-        var statement = Parser.parse(sql);
+        return Parser.parse(sql);
+    }
+
+    /**
+     * The plan for a parsed statement, checked against the collections' columns.
+     */
+    Plan plan(Statement statement) throws SQLException {
         Plan plan;
 
         try {

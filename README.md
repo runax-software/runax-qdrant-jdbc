@@ -106,6 +106,19 @@ SELECT name, status, points_count, segments_count
 FROM system.collections
 ```
 
+Prepared statements take values with `?`, so values never go into the SQL text:
+
+```java
+try (PreparedStatement statement = connection.prepareStatement(
+        "SELECT _id, title FROM docs WHERE lang = ? AND year >= ? "
+        + "ORDER BY similarity(dense, ?) DESC LIMIT 10")) {
+    statement.setString(1, "en");
+    statement.setInt(2, 2024);
+    statement.setObject(3, new float[] {0.1f, 0.2f, 0.3f, 0.4f});
+    ResultSet rows = statement.executeQuery();
+}
+```
+
 ### How SQL maps to Qdrant
 
 | SQL | Qdrant | Notes |
