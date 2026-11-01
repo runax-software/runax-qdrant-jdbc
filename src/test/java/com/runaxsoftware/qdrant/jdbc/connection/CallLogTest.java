@@ -58,7 +58,7 @@ class CallLogTest {
             statement.setMaxRows(10);
             DatabaseMetaData metaData = connection.getMetaData();
 
-            try (ResultSet tables = metaData.getTables(null, null, "%", null)) {
+            try (ResultSet tables = metaData.getTables(null, "collections", "%", null)) {
                 tables.next();
                 tables.getString(3);
             }
@@ -69,7 +69,7 @@ class CallLogTest {
         assertTrue(text.contains("Connection.createStatement() = Statement"), text);
         assertTrue(text.contains("Statement.setMaxRows(10)"), text);
         assertTrue(text.contains("Connection.getMetaData() = DatabaseMetaData"), text);
-        assertTrue(text.contains("DatabaseMetaData.getTables(null, null, \"%\", null) = ResultSet"), text);
+        assertTrue(text.contains("DatabaseMetaData.getTables(null, \"collections\", \"%\", null) = ResultSet"), text);
         assertTrue(text.contains("ResultSet.next() = true"), text);
         assertTrue(text.contains("ResultSet.getString(3) = \"products\""), text);
         assertTrue(text.contains("ResultSet.close()"), text);

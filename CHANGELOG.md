@@ -18,6 +18,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the listed collections again. ([#8])
 - CI on GitHub Actions for every pull request and push to `main`: `./gradlew build` on
   JDK 17, 21 and 25, then the integration tests against Qdrant in Docker. ([#7])
+- System tables: `system.collections` and `system.aliases`, read-only tables that describe
+  the server rather than any collection's points, in a second schema, `system`, so their
+  names can't clash with a collection's. `SELECT name, status, points_count FROM
+  system.collections` reads Qdrant's collection API; `DatabaseMetaData` lists both tables as
+  `SYSTEM TABLE`s with their columns, no primary key and no indexes, and without calling
+  Qdrant at all. A `getTables` or `getColumns` call that doesn't filter by schema now returns
+  them along with the collections. ([#13])
+- Schema-qualified table names: `FROM system.collections`, `FROM collections.docs`, and
+  `FROM qdrant.system.collections`, the forms tools generate. The driver's own names — the
+  catalog, the two schemas, and the system tables and their columns — match whatever the
+  case; a collection name is still matched exactly, as Qdrant matches it. An unknown catalog
+  or schema reports SQLState `42S02`. ([#13])
 
 ### Changed
 
@@ -44,3 +56,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#6]: https://github.com/runax-software/runax-qdrant-jdbc/pull/6
 [#7]: https://github.com/runax-software/runax-qdrant-jdbc/pull/7
 [#8]: https://github.com/runax-software/runax-qdrant-jdbc/pull/8
+[#13]: https://github.com/runax-software/runax-qdrant-jdbc/pull/13

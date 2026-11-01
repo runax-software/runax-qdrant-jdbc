@@ -11,7 +11,8 @@ final class Lexer {
 
     private static final List<String> TWO_CHAR_SYMBOLS = List.of(
         "<=", ">=", "<>", "!=");
-    private static final String ONE_CHAR_SYMBOLS = "=<>(),*";
+    // '.' separates the parts of a qualified name; a number keeps its own decimal point, below
+    private static final String ONE_CHAR_SYMBOLS = "=<>(),*.";
 
     private final String sql;
     private int pos;

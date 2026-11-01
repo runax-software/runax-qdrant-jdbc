@@ -5,9 +5,11 @@ import com.runaxsoftware.qdrant.jdbc.schema.SchemaReader;
 import com.runaxsoftware.qdrant.jdbc.sql.executor.ExecutionResult;
 import com.runaxsoftware.qdrant.jdbc.sql.executor.Executor;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.Parser;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.TableName;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.Planner;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
+import com.runaxsoftware.qdrant.jdbc.system.SystemTable;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -15,7 +17,8 @@ import java.sql.SQLException;
 /**
  * A statement. SQL is parsed and planned against the collections' columns, so syntax errors,
  * unknown collections and unknown columns are reported before anything runs. A SELECT from a
- * collection reads its points page by page; a SELECT without FROM (such as a tool's
+ * collection reads its points page by page; a SELECT from one of the {@code system} schema's
+ * tables reads the server's own state at once; a SELECT without FROM (such as a tool's
  * {@code SELECT 'keep alive'}) returns its row. The statement's maximum rows limit every result,
  * and its fetch size sets how many points one page reads.
  *
@@ -133,17 +136,29 @@ public final class QdrantStatement extends AbstractStatement {
         try {
             plan = planner.plan(statement, schemaReader::read);
         } catch (SQLException e) {
-            String table = statement instanceof SelectStatement select ? select.table() : null;
+            String collection = statement instanceof SelectStatement select
+                ? collectionRead(select) : null;
 
-            if (table == null || !UNKNOWN_COLUMN.equals(e.getSQLState())) {
+            if (collection == null || !UNKNOWN_COLUMN.equals(e.getSQLState())) {
                 throw e;
             }
 
             // The kept columns may be older than the collection: read them again, once
-            schemaReader.forget(table::equals);
+            schemaReader.forget(collection::equals);
             plan = planner.plan(statement, schemaReader::read);
         }
 
         return plan;
+    }
+
+    /**
+     * The collection a statement reads, or {@code null} when it reads none: a system table's
+     * columns are the driver's own and never go out of date, so planning one again would find
+     * the same unknown column.
+     */
+    private static String collectionRead(SelectStatement select) {
+        TableName table = select.table();
+
+        return table == null || SystemTable.isSystemSchema(table.schema()) ? null : table.name();
     }
 }

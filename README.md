@@ -15,6 +15,9 @@ first target; any JDBC client (DBeaver, BI tools) should work the same way.
   `COUNT(*)`, `GROUP BY` through facets, and `ORDER BY` on range-indexed fields.
 - **Similarity search** — rank points by similarity to a vector or to text embedded on
   the fly, with the score as a `_score` column.
+- **System tables** — `system.collections` and `system.aliases` describe the server
+  itself, so a collection's status, point counts, shards, and aliases are SQL rows rather
+  than REST calls.
 - **Honest errors** — SQL that Qdrant can't run (joins, arbitrary aggregates) fails with
   a clear error instead of scanning a whole collection on the client.
 - **One small jar** — talks to Qdrant's REST API with the JDK's own HTTP client, so the
@@ -83,6 +86,14 @@ LIMIT 10
 `dense` is the name of the vector to search, and `embed(...)` turns text into a vector
 with the embedding model configured for that vector. A vector literal works in its place.
 
+The server's own state, in the `system` schema next to the `collections` schema the
+collections sit in:
+
+```sql
+SELECT name, status, points_count, segments_count
+FROM system.collections
+```
+
 ### How SQL maps to Qdrant
 
 | SQL | Qdrant | Notes |
@@ -94,6 +105,7 @@ with the embedding model configured for that vector. A vector literal works in i
 | `COUNT(*)` | Count API | |
 | `GROUP BY field` + `COUNT(*)` | Facet API | Needs a keyword index on the field |
 | `ORDER BY similarity(...)` | Query API | Score returned as `_score` |
+| `FROM system.collections`, `system.aliases` | Collection and alias APIs | Read-only system tables |
 | `JOIN`, `SUM`, `AVG`, subqueries | — | Rejected with an error |
 
 The full mapping, covering writes, DDL, aliases, hybrid search, and the rest of Qdrant's API,

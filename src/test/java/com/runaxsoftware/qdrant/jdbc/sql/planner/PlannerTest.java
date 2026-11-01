@@ -17,6 +17,9 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.Parser;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConstantPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.SystemTablePlan;
+import com.runaxsoftware.qdrant.jdbc.system.SystemColumn;
+import com.runaxsoftware.qdrant.jdbc.system.SystemTable;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -153,7 +156,96 @@ class PlannerTest {
         assertThrows(SQLFeatureNotSupportedException.class, () -> plan(sql, CATALOG));
     }
 
+    // System tables
+
+    @Test
+    void plansASystemTableWithoutLookingUpCollections() throws SQLException {
+        SystemTablePlan plan = system("SELECT * FROM system.collections");
+
+        assertEquals(SystemTable.COLLECTIONS, plan.table());
+        assertEquals(SystemTable.COLLECTIONS.columns(), plan.columns());
+        assertEquals(null, plan.limit());
+    }
+
+    @Test
+    void plansTheColumnsASystemTableSelectNames() throws SQLException {
+        SystemTablePlan plan = system("SELECT points_count, name AS collection "
+            + "FROM system.collections LIMIT 3");
+
+        assertEquals(List.of("points_count", "collection"),
+            plan.columns().stream().map(SystemColumn::name).toList());
+        assertEquals(List.of("points_count", "name"),
+            plan.columns().stream().map(SystemColumn::source).toList());
+        assertEquals(3L, plan.limit());
+    }
+
+    @Test
+    void readsTheSystemSchemaAndItsTablesInAnyCase() throws SQLException {
+        assertEquals(SystemTable.ALIASES, system("SELECT * FROM SYSTEM.ALIASES").table());
+        assertEquals(SystemTable.ALIASES,
+            system("SELECT ALIAS_NAME FROM qdrant.System.Aliases").table());
+    }
+
+    @Test
+    void plansACollectionNamedInTheCollectionsSchema() throws SQLException {
+        assertEquals("docs", ((ScrollPlan) plan("SELECT * FROM collections.docs", CATALOG))
+            .collection());
+        assertEquals("docs", ((ScrollPlan) plan("SELECT * FROM qdrant.collections.docs", CATALOG))
+            .collection());
+    }
+
+    @Test
+    void rejectsAnUnknownSystemTable() {
+        SQLSyntaxErrorException error = assertThrows(SQLSyntaxErrorException.class,
+            () -> plan("SELECT * FROM system.telemetry", NO_LOOKUPS));
+
+        assertEquals("Unknown table 'system.telemetry': the system schema has aliases, "
+            + "collections", error.getMessage());
+        assertEquals("42S02", error.getSQLState());
+    }
+
+    @Test
+    void rejectsAnUnknownColumnOfASystemTable() {
+        SQLSyntaxErrorException error = assertThrows(SQLSyntaxErrorException.class,
+            () -> plan("SELECT points FROM system.collections", NO_LOOKUPS));
+
+        assertEquals("Unknown column 'points' in system.collections", error.getMessage());
+        assertEquals("42S22", error.getSQLState());
+    }
+
+    @Test
+    void rejectsAnUnknownSchema() {
+        SQLSyntaxErrorException error = assertThrows(SQLSyntaxErrorException.class,
+            () -> plan("SELECT * FROM public.docs", NO_LOOKUPS));
+
+        assertEquals("42S02", error.getSQLState());
+        assertTrue(error.getMessage().startsWith("Unknown schema 'public'"), error.getMessage());
+    }
+
+    @Test
+    void rejectsAnUnknownCatalog() {
+        SQLSyntaxErrorException error = assertThrows(SQLSyntaxErrorException.class,
+            () -> plan("SELECT * FROM other.system.collections", NO_LOOKUPS));
+
+        assertEquals("Unknown catalog 'other': this driver has only qdrant", error.getMessage());
+        assertEquals("42S02", error.getSQLState());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "SELECT * FROM system.collections WHERE status = 'green'",
+            "SELECT * FROM system.collections ORDER BY name",
+            "SELECT * FROM system.collections OFFSET 5",
+            "SELECT 1 FROM system.collections"})
+    void rejectsWhatASystemTableSelectCantDoYet(String sql) {
+        assertThrows(SQLFeatureNotSupportedException.class, () -> plan(sql, NO_LOOKUPS));
+    }
+
     // Helpers
+
+    private SystemTablePlan system(String sql) throws SQLException {
+        return (SystemTablePlan) plan(sql, NO_LOOKUPS);
+    }
 
     private Plan plan(String sql, Catalog catalog) throws SQLException {
         return planner.plan(Parser.parse(sql), catalog);

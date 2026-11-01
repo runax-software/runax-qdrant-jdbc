@@ -10,6 +10,8 @@ import com.runaxsoftware.qdrant.jdbc.schema.DriverColumns;
 import com.runaxsoftware.qdrant.jdbc.schema.SchemaInference;
 import com.runaxsoftware.qdrant.jdbc.schema.SchemaReader;
 import com.runaxsoftware.qdrant.jdbc.schema.TableSchema;
+import com.runaxsoftware.qdrant.jdbc.system.SystemColumn;
+import com.runaxsoftware.qdrant.jdbc.system.SystemTable;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -27,10 +29,16 @@ import java.util.Set;
  *
  * <p>Each collection is a table and each alias a view. Qdrant has no catalogs or schemas, but
  * tools such as DataGrip show both levels anyway, as unnamed placeholders when a driver reports
- * none. So every table and view sits in one catalog, {@value #CATALOG}, and one schema,
+ * none. So every table and view sits in one catalog, {@value #CATALOG}, and in the schema
  * {@value #SCHEMA}. Catalog and schema filters that name anything else match nothing. Columns
  * come from {@link SchemaInference}: every table has an {@code _id} primary key, and payload
  * indexes show up as table indexes.
+ *
+ * <p>The driver's own {@link SystemTable}s, which describe the server rather than any
+ * collection's points, sit in a second schema, {@code system}, so their names can't clash with
+ * a collection's. They're listed as {@code SYSTEM TABLE}s, their columns are fixed, and they
+ * have no primary key and no indexes. Listing them and describing their columns calls Qdrant
+ * not at all; reading their rows is a statement's job.
  *
  * <p>A view has the columns of the collection its alias points at, under the view's name, and
  * its remarks name that collection. It has no primary key and no indexes, like a view or an
@@ -64,12 +72,13 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
     public static final String CATALOG = "qdrant";
 
     /**
-     * The one schema, which every collection and alias is in.
+     * The schema every collection and alias is in.
      */
     public static final String SCHEMA = "collections";
 
     private static final String TABLE_TYPE = "TABLE";
     private static final String VIEW_TYPE = "VIEW";
+    private static final String SYSTEM_TABLE_TYPE = "SYSTEM TABLE";
     private static final String VIEW_REMARKS = "Alias of ";
     private static final String PRIMARY_KEY_SUFFIX = "_pkey";
     private static final String INDEX_SUFFIX = "_idx";
@@ -106,6 +115,10 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
         return getSchemas(null, null);
     }
 
+    /**
+     * The two schemas, sorted by name as JDBC orders them: {@value #SCHEMA} for the collections
+     * and {@value SystemTable#SCHEMA} for the tables that describe the server.
+     */
     @Override
     public ResultSet getSchemas(String catalog, String schemaPattern) throws SQLException {
         checkOpen();
@@ -114,15 +127,19 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
         if (inScope(catalog, schemaPattern)) {
             rows.add(new Object[]{SCHEMA, CATALOG});
         }
+        if (inSystemScope(catalog, schemaPattern)) {
+            rows.add(new Object[]{SystemTable.SCHEMA, CATALOG});
+        }
 
         return MetadataColumns.SCHEMAS.rows(rows);
     }
 
     /**
-     * Lists the collections as tables and the aliases as views: tables first, then views, each
-     * sorted by name, as JDBC orders them. A view's remarks name its collection. Asks Qdrant only
-     * for the kinds the type filter takes in, always afresh, and has the {@link SchemaReader}
-     * keep the lists it read for the calls that follow.
+     * Lists the system tables, then the collections as tables and the aliases as views, each
+     * kind sorted by name, as JDBC orders them (by type, then name). A view's remarks name its
+     * collection. Asks Qdrant only for the kinds the type filter takes in, always afresh, and
+     * has the {@link SchemaReader} keep the lists it read for the calls that follow. The system
+     * tables are the driver's own, so listing them calls Qdrant not at all.
      *
      * <p>Makes the reader forget every schema the pattern matches, including ones deleted since
      * it read them, and the collection behind each view it lists, so the columns and indexes
@@ -136,6 +153,13 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
         boolean views = includes(types, VIEW_TYPE);
         SchemaReader reader = connection.schemaReader();
 
+        if (inSystemScope(catalog, schemaPattern) && includes(types, SYSTEM_TABLE_TYPE)) {
+            for (SystemTable table : sortedSystemTables(tableNamePattern)) {
+                rows.add(tableRow(SystemTable.SCHEMA, table.tableName(), SYSTEM_TABLE_TYPE,
+                    table.remarks()));
+            }
+        }
+
         if (inScope(catalog, schemaPattern) && (tables || views)) {
             List<String> collections = tables
                 ? sortedCollections(tableNamePattern, reader.listCollections()) : List.of();
@@ -143,9 +167,10 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
                 ? sortedAliases(tableNamePattern, reader.listAliases()) : List.of();
             forgetListed(tableNamePattern, aliases);
 
-            for (String name : collections) rows.add(tableRow(name, TABLE_TYPE, null));
+            for (String name : collections) rows.add(tableRow(SCHEMA, name, TABLE_TYPE, null));
             for (QdrantAlias alias : aliases) {
-                rows.add(tableRow(alias.name(), VIEW_TYPE, VIEW_REMARKS + alias.collection()));
+                rows.add(tableRow(SCHEMA, alias.name(), VIEW_TYPE,
+                    VIEW_REMARKS + alias.collection()));
             }
         }
 
@@ -157,6 +182,7 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
         checkOpen();
 
         List<Object[]> rows = new ArrayList<>();
+        rows.add(new Object[]{SYSTEM_TABLE_TYPE});
         rows.add(new Object[]{TABLE_TYPE});
         rows.add(new Object[]{VIEW_TYPE});
 
@@ -164,9 +190,11 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
     }
 
     /**
-     * Describes the columns of the tables and views the pattern matches, sorted by their name.
-     * A view has the columns of the collection its alias points at. A pattern without
-     * wildcards that the kept lists don't have lists them again first.
+     * Describes the columns of the tables and views the pattern matches, then of the system
+     * tables it matches, each kind sorted by table name: JDBC orders columns by schema, and
+     * {@value #SCHEMA} sorts before {@code system}. A view has the columns of the collection its
+     * alias points at. A pattern without wildcards that the kept lists don't have lists them
+     * again first.
      */
     @Override
     public ResultSet getColumns(String catalog, String schemaPattern, String tableNamePattern, String columnNamePattern) throws SQLException {
@@ -185,6 +213,20 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
 
                     if (LikePattern.matches(columnNamePattern, column.name())) {
                         rows.add(columnRow(table.name(), column, i + 1));
+                    }
+                }
+            }
+        }
+
+        if (inSystemScope(catalog, schemaPattern)) {
+            for (SystemTable table : sortedSystemTables(tableNamePattern)) {
+                List<SystemColumn> columns = table.columns();
+
+                for (int i = 0; i < columns.size(); i++) {
+                    SystemColumn column = columns.get(i);
+
+                    if (LikePattern.matches(columnNamePattern, column.name())) {
+                        rows.add(systemColumnRow(table, column, i + 1));
                     }
                 }
             }
@@ -301,13 +343,24 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
     }
 
     /**
-     * Whether the filters take in the one catalog and schema. {@code null} doesn't filter, and
-     * neither does an empty string, which tools also pass to mean "any".
+     * Whether the filters take in the one catalog and the collections' schema. {@code null}
+     * doesn't filter, and neither does an empty string, which tools also pass to mean "any".
      */
     private static boolean inScope(String catalog, String schemaPattern) {
+        return inScope(catalog, schemaPattern, SCHEMA);
+    }
+
+    /**
+     * Whether the filters take in the one catalog and the system tables' schema.
+     */
+    private static boolean inSystemScope(String catalog, String schemaPattern) {
+        return inScope(catalog, schemaPattern, SystemTable.SCHEMA);
+    }
+
+    private static boolean inScope(String catalog, String schemaPattern, String schema) {
         return (catalog == null || catalog.isEmpty() || catalog.equals(CATALOG))
             && (schemaPattern == null || schemaPattern.isEmpty()
-            || LikePattern.matches(schemaPattern, SCHEMA));
+            || LikePattern.matches(schemaPattern, schema));
     }
 
     private static boolean includes(String[] types, String tableType) {
@@ -317,8 +370,24 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
         return false;
     }
 
-    private static Object[] tableRow(String name, String type, String remarks) {
-        return new Object[]{CATALOG, SCHEMA, name, type, remarks, null, null, null, null, null};
+    /**
+     * The system tables the pattern matches, sorted by name, as JDBC orders them.
+     */
+    private static List<SystemTable> sortedSystemTables(String tableNamePattern) {
+        List<SystemTable> tables = new ArrayList<>();
+
+        for (SystemTable table : SystemTable.values()) {
+            if (LikePattern.matches(tableNamePattern, table.tableName())) {
+                tables.add(table);
+            }
+        }
+
+        tables.sort(Comparator.comparing(SystemTable::tableName));
+        return tables;
+    }
+
+    private static Object[] tableRow(String schema, String name, String type, String remarks) {
+        return new Object[]{CATALOG, schema, name, type, remarks, null, null, null, null, null};
     }
 
     /**
@@ -422,6 +491,13 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
         Integer radix = numericPrecision(type) == null ? null : 10;
 
         return new Object[]{CATALOG, SCHEMA, table, column.name(), type.sqlType(), type.typeName(), size, null, null, radix, column.nullable() ? columnNullable : columnNoNulls, column.remarks(), null, null, null, null, position, column.nullable() ? "YES" : "NO", null, null, null, null, "NO", "NO",};
+    }
+
+    private static Object[] systemColumnRow(SystemTable table, SystemColumn column, int position) {
+        ColumnType type = column.type();
+        Integer precision = numericPrecision(type);
+
+        return new Object[]{CATALOG, SystemTable.SCHEMA, table.tableName(), column.name(), type.sqlType(), type.typeName(), precision, null, null, precision == null ? null : 10, column.nullable() ? columnNullable : columnNoNulls, column.remarks(), null, null, null, null, position, column.nullable() ? "YES" : "NO", null, null, null, null, "NO", "NO",};
     }
 
     private static Object[] typeInfoRow(ColumnType type) {

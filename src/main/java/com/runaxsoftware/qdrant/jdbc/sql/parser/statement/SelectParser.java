@@ -13,10 +13,12 @@ public final class SelectParser {
 
     private final TokenStream tokenStream;
     private final ExpressionParser expressionParser;
+    private final TableParser tableParser;
 
     public SelectParser(TokenStream tokenStream) {
         this.tokenStream = tokenStream;
         this.expressionParser = new ExpressionParser(tokenStream);
+        this.tableParser = new TableParser(tokenStream);
     }
 
     public Statement parse() throws SQLSyntaxErrorException {
@@ -30,9 +32,9 @@ public final class SelectParser {
         }
 
         // FROM is optional: SELECT 'keep alive' reads no collection
-        String table = null;
+        TableName table = null;
         if (this.tokenStream.matchKeyword("FROM")) {
-            table = this.tokenStream.expectIdentifier();
+            table = this.tableParser.parse();
         } else if (this.tokenStream.peekIdentifier()) {
             // "SELECT name docs" is a missing FROM; aliases need AS
             throw this.tokenStream.error("Expected FROM");

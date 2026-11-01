@@ -81,10 +81,26 @@ class MetadataIntegrationTest {
     }
 
     @Test
-    void listsNoTablesForOtherTableTypes() throws SQLException {
-        try (ResultSet rows = metaData.getTables(null, null, "%", new String[] {"SYSTEM TABLE"})) {
+    void listsNoCollectionsForOtherTableTypes() throws SQLException {
+        try (ResultSet rows = metaData.getTables(null, "collections", "%",
+            new String[] {"SYSTEM TABLE"})) {
             assertFalse(rows.next());
         }
+    }
+
+    @Test
+    void listsTheSystemTablesInTheSystemSchema() throws SQLException {
+        List<String> listed = new ArrayList<>();
+
+        try (ResultSet rows = metaData.getTables(null, "system", "%", null)) {
+            while (rows.next()) {
+                listed.add(rows.getString("TABLE_SCHEM") + "." + rows.getString("TABLE_NAME")
+                    + " " + rows.getString("TABLE_TYPE"));
+            }
+        }
+
+        assertEquals(List.of("system.aliases SYSTEM TABLE", "system.collections SYSTEM TABLE"),
+            listed);
     }
 
     @Test
@@ -293,6 +309,9 @@ class MetadataIntegrationTest {
 
             assertTrue(schemas.next());
             assertEquals("collections", schemas.getString("TABLE_SCHEM"));
+            assertEquals("qdrant", schemas.getString("TABLE_CATALOG"));
+            assertTrue(schemas.next());
+            assertEquals("system", schemas.getString("TABLE_SCHEM"), "the system tables' schema");
             assertEquals("qdrant", schemas.getString("TABLE_CATALOG"));
             assertFalse(schemas.next());
         }

@@ -15,6 +15,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Or;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.OrderItem;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Parameter;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.SelectItem;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.TableName;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -33,7 +34,7 @@ class ParserTest {
 
     @Test
     void parsesSelectStar() throws SQLSyntaxErrorException {
-        assertEquals(new SelectStatement(List.of(), "docs", null, List.of(), null, null),
+        assertEquals(new SelectStatement(List.of(), TableName.of("docs"), null, List.of(), null, null),
                 Parser.parse("SELECT * FROM docs"));
     }
 
@@ -48,12 +49,30 @@ class ParserTest {
         SelectStatement select = select("SELECT \"specs.color\" FROM \"My Docs\"");
 
         assertEquals(List.of(column("specs.color")), select.items());
-        assertEquals("My Docs", select.table());
+        assertEquals(TableName.of("My Docs"), select.table());
+    }
+
+    @Test
+    void parsesAQualifiedTableName() throws SQLSyntaxErrorException {
+        assertEquals(TableName.of("system", "collections"),
+                select("SELECT * FROM system.collections").table());
+        assertEquals(TableName.of("collections", "docs"),
+                select("SELECT * FROM collections.docs").table());
+        assertEquals(new TableName("qdrant", "system", "collections"),
+                select("SELECT * FROM qdrant.system.collections").table());
+    }
+
+    @Test
+    void parsesTheQuotedPartsOfAQualifiedTableName() throws SQLSyntaxErrorException {
+        assertEquals(TableName.of("system", "collections"),
+                select("SELECT * FROM \"system\".\"collections\"").table());
+        assertEquals(TableName.of("collections", "My Docs"),
+                select("SELECT * FROM collections.\"My Docs\"").table());
     }
 
     @Test
     void readsKeywordsInAnyCaseAndKeepsTheCaseOfNames() throws SQLSyntaxErrorException {
-        assertEquals(new SelectStatement(List.of(column("Name")), "MyDocs", eq("lang", "en"), List.of(), 5L, null),
+        assertEquals(new SelectStatement(List.of(column("Name")), TableName.of("MyDocs"), eq("lang", "en"), List.of(), 5L, null),
                 Parser.parse("select Name from MyDocs Where lang = 'en' limit 5"));
     }
 
@@ -174,7 +193,7 @@ class ParserTest {
     @Test
     void parsesEveryClauseTogether() throws SQLSyntaxErrorException {
         assertEquals(
-                new SelectStatement(List.of(column("name")), "docs", eq("lang", "en"),
+                new SelectStatement(List.of(column("name")), TableName.of("docs"), eq("lang", "en"),
                         List.of(new OrderItem("price", true)), 10L, 5L),
                 Parser.parse("SELECT name FROM docs WHERE lang = 'en' ORDER BY price DESC LIMIT 10 OFFSET 5"));
     }
@@ -194,6 +213,20 @@ class ParserTest {
     @Test
     void rejectsAMissingFrom() {
         assertError("Expected FROM, found 'docs' at line 1, column 13", "SELECT name docs");
+    }
+
+    @Test
+    void rejectsATableNameWithTooManyParts() {
+        assertError("A table name has at most catalog, schema, and name, found 'collections' at "
+                        + "line 1, column 33",
+                "SELECT * FROM qdrant.system.too.collections");
+    }
+
+    @Test
+    void rejectsATableNamePartThatIsMissing() {
+        assertError("Expected a name, found the end of the statement at line 1, column 22",
+                "SELECT * FROM system.");
+        assertError("Expected a name, found '.' at line 1, column 15", "SELECT * FROM .docs");
     }
 
     @Test

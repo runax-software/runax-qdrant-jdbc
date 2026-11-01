@@ -68,6 +68,7 @@ src/main/java/com/runaxsoftware/qdrant/jdbc/
   statement/                                   # Statements: plan and run SQL
   resultset/                                   # Read-only result sets
   sql/                                         # SQL parser, planner, and executor
+  system/                                      # The system schema's read-only tables
   embedding/                                   # Text embedding providers
 src/test/java/com/runaxsoftware/qdrant/jdbc/   # Unit tests, in the package of the class
                                                # they test, and *IntegrationTest classes

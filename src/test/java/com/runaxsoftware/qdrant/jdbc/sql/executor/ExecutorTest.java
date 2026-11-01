@@ -21,6 +21,9 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.Parser;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.Planner;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConstantPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.SystemTablePlan;
+import com.runaxsoftware.qdrant.jdbc.system.SystemColumn;
+import com.runaxsoftware.qdrant.jdbc.system.SystemTable;
 
 import org.junit.jupiter.api.Test;
 
@@ -46,6 +49,16 @@ class ExecutorTest {
 
     private final Executor executor = new Executor(request -> {
         throw new AssertionError("Scrolled " + request.collection());
+    });
+
+    // An executor whose system tables hold two rows each, in the reader's own order
+    private static final Executor SYSTEM = new Executor(request -> {
+        throw new AssertionError("Scrolled " + request.collection());
+    }, table -> switch (table) {
+        case ALIASES -> List.of(
+            new Object[]{"best", "articles"}, new Object[]{"current", "products"});
+        case COLLECTIONS -> List.of(
+            collectionRow("articles", 7L), collectionRow("products", 42L));
     });
 
     // Constant plans
@@ -311,7 +324,102 @@ class ExecutorTest {
         }
     }
 
+    // System table plans
+
+    @Test
+    void runsASystemTablePlanAsRowsOwnedByTheStatement() throws SQLException {
+        ExecutionResult result = SYSTEM.execute(
+            new SystemTablePlan(SystemTable.ALIASES, SystemTable.ALIASES.columns(), null),
+            STATEMENT);
+
+        assertTrue(result.hasResultSet());
+        assertEquals(-1, result.updateCount());
+
+        try (ResultSet rows = result.resultSet()) {
+            assertSame(STATEMENT, rows.getStatement());
+            assertTrue(rows.next());
+            assertEquals("best", rows.getString("alias_name"));
+            assertEquals("articles", rows.getString("collection_name"));
+            assertTrue(rows.next());
+            assertEquals("current", rows.getString("alias_name"));
+            assertFalse(rows.next());
+        }
+    }
+
+    @Test
+    void describesTheColumnsOfASystemTable() throws SQLException {
+        SystemColumn count = SystemTable.COLLECTIONS.column("points_count").orElseThrow();
+
+        try (ResultSet rows = SYSTEM.execute(
+            new SystemTablePlan(SystemTable.COLLECTIONS, List.of(count.as("points")), null),
+            STATEMENT).resultSet()) {
+            ResultSetMetaData columns = rows.getMetaData();
+
+            assertEquals(1, columns.getColumnCount());
+            assertEquals("points", columns.getColumnLabel(1));
+            assertEquals(Types.BIGINT, columns.getColumnType(1));
+            assertEquals("BIGINT", columns.getColumnTypeName(1));
+            assertEquals("collections", columns.getTableName(1));
+            assertEquals(ResultSetMetaData.columnNullable, columns.isNullable(1));
+        }
+    }
+
+    @Test
+    void readsOnlyTheColumnsASystemTablePlanNames() throws SQLException {
+        SystemTable table = SystemTable.COLLECTIONS;
+        List<SystemColumn> columns = List.of(
+            table.column("status").orElseThrow(), table.column("name").orElseThrow());
+
+        try (ResultSet rows = SYSTEM.execute(
+            new SystemTablePlan(table, columns, null), STATEMENT).resultSet()) {
+            assertTrue(rows.next());
+            assertEquals(2, rows.getMetaData().getColumnCount());
+            assertEquals("green", rows.getString(1));
+            assertEquals("articles", rows.getString(2));
+        }
+    }
+
+    @Test
+    void stopsASystemTableAtItsLimit() throws SQLException {
+        assertEquals(1, systemRows(SystemTable.ALIASES, 1L, STATEMENT));
+        assertEquals(2, systemRows(SystemTable.ALIASES, 5L, STATEMENT));
+        assertEquals(0, systemRows(SystemTable.ALIASES, 0L, STATEMENT));
+    }
+
+    @Test
+    void stopsASystemTableAtTheStatementsMaximumRows() throws SQLException {
+        assertEquals(1, systemRows(SystemTable.ALIASES, null, statement(1, 0)));
+        assertEquals(1, systemRows(SystemTable.ALIASES, 2L, statement(1, 0)));
+        assertEquals(1, systemRows(SystemTable.ALIASES, 1L, statement(5, 0)));
+    }
+
+    @Test
+    void reportsWhatReadingASystemTableReported() {
+        SQLException failure = new SQLException("Qdrant: Service internal error", "HY000");
+        Executor failing = new Executor(request -> {
+            throw new AssertionError("Scrolled " + request.collection());
+        }, table -> {
+            throw failure;
+        });
+
+        assertSame(failure, assertThrows(SQLException.class, () -> failing.execute(
+            new SystemTablePlan(SystemTable.ALIASES, SystemTable.ALIASES.columns(), null),
+            STATEMENT)));
+    }
+
     // Helpers
+
+    private static int systemRows(SystemTable table, Long limit, Statement statement)
+        throws SQLException {
+        int count = 0;
+
+        try (ResultSet rows = SYSTEM.execute(
+            new SystemTablePlan(table, table.columns(), limit), statement).resultSet()) {
+            while (rows.next()) count++;
+        }
+
+        return count;
+    }
 
     // A statement that answers maxRows and fetchSize and fails on anything else
     private static Statement statement(long maxRows, int fetchSize) {
@@ -328,6 +436,18 @@ class ExecutorTest {
                         throw new AssertionError("Called Statement." + method.getName());
                 }
             });
+    }
+
+    // A system.collections row with only the columns these tests read
+    private static Object[] collectionRow(String name, long points) {
+        SystemTable table = SystemTable.COLLECTIONS;
+        Object[] row = new Object[table.columns().size()];
+
+        row[table.indexOf(table.column("name").orElseThrow())] = name;
+        row[table.indexOf(table.column("status").orElseThrow())] = "green";
+        row[table.indexOf(table.column("points_count").orElseThrow())] = points;
+
+        return row;
     }
 
     private static ScrollPlan scroll(Long limit) {

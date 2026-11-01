@@ -3,6 +3,7 @@ package com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Expression;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.OrderItem;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.SelectItem;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.TableName;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Statement;
 
 import java.util.List;
@@ -12,7 +13,7 @@ import java.util.List;
  */
 public record SelectStatement(
     List<SelectItem> items,
-    String table,
+    TableName table,
     Expression where,
     List<OrderItem> orderBy,
     Long limit,

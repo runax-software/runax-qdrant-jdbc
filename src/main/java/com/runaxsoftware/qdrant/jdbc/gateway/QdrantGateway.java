@@ -81,8 +81,16 @@ public class QdrantGateway implements AutoCloseable {
     }
 
     public QdrantCollection collection(String collection) throws SQLException {
-        return RestModels.collection(collection,
-            request(HttpMethod.GET, "/collections/" + segment(collection), null));
+        return RestModels.collection(collection, collectionInfo(collection));
+    }
+
+    /**
+     * A collection as Qdrant describes it, unparsed, for the system tables: they report fields
+     * whose shape depends on the Qdrant version, so they read the answer itself rather than a
+     * model of it. Fails with SQL state {@code 42S02} when there's no such collection.
+     */
+    public JsonNode collectionInfo(String collection) throws SQLException {
+        return request(HttpMethod.GET, "/collections/" + segment(collection), null);
     }
 
     public ScrollPage scroll(ScrollRequest scroll) throws SQLException {
