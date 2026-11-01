@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SYSTEM TABLE`s with their columns, no primary key and no indexes, and without calling
   Qdrant at all. A `getTables` or `getColumns` call that doesn't filter by schema now returns
   them along with the collections. ([#13])
+- Similarity search with a vector written out: `SELECT _id, _score, title FROM docs ORDER BY
+  similarity(dense, [0.1, 0.2, 0.3, 0.4]) DESC LIMIT 10` runs one call to Qdrant's Query API
+  and returns the points it ranked, closest first, with `_score` as a `DOUBLE` column.
+  `_score` is only in a search, and a star doesn't include it. The vector to search is a
+  vector column of the collection — its name for a named vector, `_vector` for a collection's
+  single unnamed one — and the driver checks its dimensions against the vector in the
+  statement before anything runs. A search says how many points to rank, through `LIMIT` or
+  the statement's maximum rows, rather than the driver picking a number. ([#15])
 - Table aliases and qualified names: `FROM docs t` (with or without `AS`), and `t.*`,
   `t.name`, `t.price AS cost`, `WHERE t.lang = 'en'` and `ORDER BY t.price` under that name
   or under the table's own name, as SQL does — a name given to the table replaces its own.
@@ -71,3 +79,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#8]: https://github.com/runax-software/runax-qdrant-jdbc/pull/8
 [#13]: https://github.com/runax-software/runax-qdrant-jdbc/pull/13
 [#14]: https://github.com/runax-software/runax-qdrant-jdbc/pull/14
+[#15]: https://github.com/runax-software/runax-qdrant-jdbc/pull/15

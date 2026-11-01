@@ -16,6 +16,7 @@ import com.runaxsoftware.qdrant.jdbc.schema.TableSchema;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.Parser;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConstantPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.SystemTablePlan;
 import com.runaxsoftware.qdrant.jdbc.system.SystemColumn;
@@ -50,12 +51,26 @@ class PlannerTest {
                     new ColumnDefinition("specs", ColumnKind.PAYLOAD_FIELD, ColumnType.JSON, 0, "specs", ""),
                     new ColumnDefinition("specs.color", ColumnKind.PAYLOAD_FIELD, ColumnType.TEXT, 0, "specs.color", "")));
 
+    private static final TableSchema NAMED = new TableSchema(
+            new QdrantCollection("named", 2, List.of(
+                    new VectorField("dense", VectorKind.DENSE, 2, "Cosine"),
+                    new VectorField("colbert", VectorKind.MULTIVECTOR, 2, "Cosine"),
+                    new VectorField("sparse", VectorKind.SPARSE, 0, null)), Map.of()),
+            List.of(
+                    new ColumnDefinition("_id", ColumnKind.ID, ColumnType.TEXT, 0, null, ""),
+                    new ColumnDefinition("dense", ColumnKind.VECTOR, ColumnType.VECTOR, 2, "dense", ""),
+                    new ColumnDefinition("colbert", ColumnKind.VECTOR, ColumnType.MULTIVECTOR, 2, "colbert", ""),
+                    new ColumnDefinition("sparse", ColumnKind.VECTOR, ColumnType.SPARSE_VECTOR, 0, "sparse", "")));
+
     private static final Catalog CATALOG = name -> {
         if (name.equals("docs")) {
             return DOCS;
         }
         if (name.equals("products")) {
             return PRODUCTS;
+        }
+        if (name.equals("named")) {
+            return NAMED;
         }
 
         throw new SQLException("Collection " + name + " doesn't exist", "42S02");
@@ -164,6 +179,169 @@ class PlannerTest {
             "SELECT 1 FROM docs"})
     void rejectsWhatASelectWithFromCantDoYet(String sql) {
         assertThrows(SQLFeatureNotSupportedException.class, () -> plan(sql, CATALOG));
+    }
+
+    // Similarity search
+
+    @Test
+    void plansASearchOfTheCollectionsVector() throws SQLException {
+        QueryPlan plan = query("SELECT _id, _score, title FROM docs "
+                + "ORDER BY similarity(_vector, [0.1, 0.2, 0.3, 0.4]) DESC LIMIT 10");
+
+        assertEquals("docs", plan.collection());
+        assertEquals("", plan.vector(), "the collection's single unnamed vector");
+        assertEquals(List.of(0.1, 0.2, 0.3, 0.4), plan.query());
+        assertEquals(List.of("_id", "_score", "title"), names(plan.columns()));
+        assertEquals(10L, plan.limit());
+        assertTrue(plan.withPayload(), "title is a payload field");
+        assertFalse(plan.withVector(), "no column names a vector");
+    }
+
+    @Test
+    void plansASearchOfANamedVector() throws SQLException {
+        QueryPlan plan = query("SELECT _id FROM named ORDER BY similarity(dense, [1, 2]) DESC");
+
+        assertEquals("dense", plan.vector());
+        assertEquals(List.of(1.0, 2.0), plan.query());
+        assertEquals(null, plan.limit(), "the statement's maximum rows may still bound it");
+        assertFalse(plan.withPayload());
+    }
+
+    @Test
+    void readsTheSearchedVectorUnderTheTablesName() throws SQLException {
+        assertEquals("", query("SELECT _id FROM docs t "
+                + "ORDER BY similarity(t._vector, [0.1, 0.2, 0.3, 0.4]) DESC").vector());
+        assertEquals("", query("SELECT _id FROM docs "
+                + "ORDER BY SIMILARITY(docs._vector, [0.1, 0.2, 0.3, 0.4]) DESC").vector());
+    }
+
+    @Test
+    void fetchesTheVectorOnlyWhenTheSearchNamesItAsAColumn() throws SQLException {
+        assertTrue(query("SELECT _vector, _score FROM docs "
+                + "ORDER BY similarity(_vector, [0.1, 0.2, 0.3, 0.4]) DESC").withVector());
+        assertFalse(query("SELECT _score FROM docs "
+                + "ORDER BY similarity(_vector, [0.1, 0.2, 0.3, 0.4]) DESC").withVector());
+    }
+
+    @Test
+    void leavesTheScoreOutOfAStar() throws SQLException {
+        assertEquals(List.of("_id", "_payload", "title", "price"),
+                names(query("SELECT * FROM docs "
+                        + "ORDER BY similarity(_vector, [0.1, 0.2, 0.3, 0.4]) DESC").columns()));
+    }
+
+    @Test
+    void describesTheScoreAsADouble() throws SQLException {
+        ColumnDefinition score = query("SELECT _score FROM docs "
+                + "ORDER BY similarity(_vector, [0.1, 0.2, 0.3, 0.4]) DESC").columns().get(0);
+
+        assertEquals("_score", score.name());
+        assertEquals(ColumnKind.SCORE, score.kind());
+        assertEquals(ColumnType.FLOAT, score.type());
+    }
+
+    @Test
+    void renamesTheScore() throws SQLException {
+        assertEquals(List.of("closeness"), names(query("SELECT _score AS closeness FROM docs "
+                + "ORDER BY similarity(_vector, [0.1, 0.2, 0.3, 0.4]) DESC").columns()));
+    }
+
+    @Test
+    void rejectsTheScoreOutsideASearch() {
+        SQLSyntaxErrorException error = assertThrows(SQLSyntaxErrorException.class,
+                () -> plan("SELECT _id, _score FROM docs", CATALOG));
+
+        assertEquals("Column '_score' is only in a similarity search: add ORDER BY "
+                + "similarity(vector, [0.1, ...]) DESC", error.getMessage());
+        assertEquals("42S22", error.getSQLState());
+    }
+
+    @Test
+    void rejectsAVectorOfTheWrongSize() {
+        SQLSyntaxErrorException error = assertThrows(SQLSyntaxErrorException.class,
+                () -> plan("SELECT _id FROM docs ORDER BY similarity(_vector, [0.1, 0.2]) DESC",
+                        CATALOG));
+
+        assertEquals("Vector '_vector' of docs has 4 dimensions, the vector searching it has 2",
+                error.getMessage());
+        assertEquals("42000", error.getSQLState());
+    }
+
+    @Test
+    void rejectsSearchingWhatIsNotAVector() {
+        SQLSyntaxErrorException error = assertThrows(SQLSyntaxErrorException.class,
+                () -> plan("SELECT _id FROM docs ORDER BY similarity(title, [0.1]) DESC", CATALOG));
+
+        assertEquals("Column 'title' of docs isn't a vector: a similarity search searches a "
+                + "vector column", error.getMessage());
+
+        assertEquals("42S22", assertThrows(SQLSyntaxErrorException.class,
+                () -> plan("SELECT _id FROM docs ORDER BY similarity(nope, [0.1]) DESC", CATALOG))
+                .getSQLState());
+    }
+
+    @Test
+    void rejectsSearchingASparseOrMultiVector() {
+        for (String vector : List.of("sparse", "colbert")) {
+            SQLException error = assertThrows(SQLFeatureNotSupportedException.class,
+                    () -> plan("SELECT _id FROM named ORDER BY similarity(" + vector
+                            + ", [0.1, 0.2]) DESC", CATALOG));
+
+            assertTrue(error.getMessage().contains("isn't supported yet"), error.getMessage());
+        }
+    }
+
+    @Test
+    void rejectsASearchThatIsNotRankedBestFirst() {
+        for (String ordering : List.of("", " ASC")) {
+            assertThrows(SQLFeatureNotSupportedException.class,
+                    () -> plan("SELECT _id FROM docs ORDER BY similarity(_vector, "
+                            + "[0.1, 0.2, 0.3, 0.4])" + ordering, CATALOG));
+        }
+    }
+
+    @Test
+    void rejectsWhatASearchCantTakeYet() {
+        // A vector to embed, a parameter, and a vector written as a string
+        for (String query : List.of("embed('refund')", "?", "'[0.1, 0.2, 0.3, 0.4]'")) {
+            assertThrows(SQLException.class,
+                    () -> plan("SELECT _id FROM docs ORDER BY similarity(_vector, " + query
+                            + ") DESC", CATALOG), query);
+        }
+    }
+
+    @Test
+    void rejectsACallThatIsNotASearch() {
+        SQLException error = assertThrows(SQLFeatureNotSupportedException.class,
+                () -> plan("SELECT _id FROM docs ORDER BY closeness(_vector, [0.1]) DESC",
+                        CATALOG));
+
+        assertTrue(error.getMessage().startsWith("'closeness' isn't a function this driver has"),
+                error.getMessage());
+    }
+
+    @Test
+    void rejectsOrderingBySeveralThings() {
+        assertThrows(SQLFeatureNotSupportedException.class,
+                () -> plan("SELECT _id FROM docs ORDER BY similarity(_vector, "
+                        + "[0.1, 0.2, 0.3, 0.4]) DESC, price", CATALOG));
+    }
+
+    @Test
+    void rejectsASearchOfASystemTable() {
+        assertThrows(SQLFeatureNotSupportedException.class,
+                () -> plan("SELECT name FROM system.collections "
+                        + "ORDER BY similarity(name, [0.1]) DESC", NO_LOOKUPS));
+    }
+
+    @Test
+    void rejectsWhatASearchStillCantDo() {
+        String search = " ORDER BY similarity(_vector, [0.1, 0.2, 0.3, 0.4]) DESC";
+
+        assertThrows(SQLFeatureNotSupportedException.class,
+                () -> plan("SELECT _id FROM docs WHERE price > 1" + search, CATALOG));
+        assertThrows(SQLFeatureNotSupportedException.class,
+                () -> plan("SELECT _id FROM docs" + search + " LIMIT 5 OFFSET 2", CATALOG));
     }
 
     // Table aliases and qualified names
@@ -378,7 +556,15 @@ class PlannerTest {
         return (ScrollPlan) plan(sql, CATALOG);
     }
 
+    private QueryPlan query(String sql) throws SQLException {
+        return (QueryPlan) plan(sql, CATALOG);
+    }
+
     private static List<String> names(ScrollPlan plan) {
-        return plan.columns().stream().map(ColumnDefinition::name).toList();
+        return names(plan.columns());
+    }
+
+    private static List<String> names(List<ColumnDefinition> columns) {
+        return columns.stream().map(ColumnDefinition::name).toList();
     }
 }

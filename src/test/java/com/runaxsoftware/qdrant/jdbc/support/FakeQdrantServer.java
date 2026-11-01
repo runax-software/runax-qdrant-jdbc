@@ -24,8 +24,8 @@ import java.util.concurrent.Executors;
 
 /**
  * A stand-in for Qdrant's REST API, for unit tests: the version at {@code GET /}, listing and
- * reading collections, listing aliases, and scrolling points. Like Qdrant, it reads and scrolls
- * a collection by an alias's name too. Answers have the shapes Qdrant 1.20 sends.
+ * reading collections, listing aliases, scrolling points, and searching them. Like Qdrant, it
+ * reads, scrolls, and searches a collection by an alias's name too. Answers have the shapes Qdrant 1.20 sends.
  * Collections, failures, delays, and a required API key are set per test; requests are recorded
  * for assertions. Like Qdrant, it answers {@code GET /} without an API key, answers a missing
  * or wrong key with plain text, and answers routes it doesn't have (such as {@code POST /})
@@ -66,6 +66,11 @@ public final class FakeQdrantServer implements AutoCloseable {
          * {@code POST /collections/{name}/points/scroll}.
          */
         SCROLL,
+
+        /**
+         * {@code POST /collections/{name}/points/query}.
+         */
+        QUERY,
 
         /**
          * {@code GET /aliases}.
@@ -247,6 +252,16 @@ public final class FakeQdrantServer implements AutoCloseable {
     }
 
     /**
+     * The bodies of the searches received, in order.
+     */
+    public List<JsonNode> queryRequests() {
+        return requests.stream()
+            .filter(request -> request.path().endsWith("/points/query"))
+            .map(Request::body)
+            .toList();
+    }
+
+    /**
      * The {@code api-key} header of each request, or an empty string when there was none.
      */
     public List<String> apiKeys() {
@@ -382,6 +397,7 @@ public final class FakeQdrantServer implements AutoCloseable {
                 case COLLECTIONS -> ok(exchange, Json.object("collections", names()));
                 case COLLECTION -> collectionInfo(exchange, segments[2]);
                 case SCROLL -> scroll(exchange, segments[2], body);
+                case QUERY -> query(exchange, segments[2], body);
                 case ALIASES -> ok(exchange, Json.object("aliases", aliasList()));
             }
         } finally {
@@ -414,6 +430,11 @@ public final class FakeQdrantServer implements AutoCloseable {
         if (method.equals("POST") && segments.length == 5 && segments[3].equals("points")
             && segments[4].equals("scroll")) {
             return Endpoint.SCROLL;
+        }
+
+        if (method.equals("POST") && segments.length == 5 && segments[3].equals("points")
+            && segments[4].equals("query")) {
+            return Endpoint.QUERY;
         }
 
         return null;
@@ -501,6 +522,41 @@ public final class FakeQdrantServer implements AutoCloseable {
 
         ok(exchange, Json.object("points", page,
             "next_page_offset", end < all.size() ? all.get(end).get("id") : null));
+    }
+
+    /**
+     * Answers a search with the collection's points in the order they were stored, scored from
+     * 1.0 down in steps of 0.1, so a test knows which rows to expect without this ranking
+     * anything itself. Qdrant's own ordering is its business, not the driver's.
+     */
+    private void query(HttpExchange exchange, String name, JsonNode request) throws IOException {
+        if (find(name) == null) {
+            notFound(exchange, name);
+            return;
+        }
+
+        List<ObjectNode> all = points.get(resolve(name));
+        int limit = request == null ? 10 : request.path("limit").asInt(10);
+        boolean withPayload = request != null && request.path("with_payload").asBoolean(false);
+        boolean withVector = request != null && request.path("with_vector").asBoolean(false);
+        List<JsonNode> scored = new ArrayList<>();
+
+        for (ObjectNode point : all.subList(0, Math.min(all.size(), limit))) {
+            ObjectNode returned = Json.object("id", point.get("id"), "version", 0,
+                "score", Math.round((1.0 - scored.size() * 0.1) * 100) / 100.0);
+
+            if (withPayload && point.has("payload")) {
+                returned.set("payload", point.get("payload"));
+            }
+
+            if (withVector && point.has("vector")) {
+                returned.set("vector", point.get("vector"));
+            }
+
+            scored.add(returned);
+        }
+
+        ok(exchange, Json.object("points", scored));
     }
 
     // 1, 1.0 and a BigInteger 1 are the same point ID

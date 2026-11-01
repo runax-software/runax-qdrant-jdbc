@@ -4,17 +4,23 @@ import com.runaxsoftware.qdrant.jdbc.metadata.QdrantDatabaseMetaData;
 import com.runaxsoftware.qdrant.jdbc.resultset.ResultColumn;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnKind;
+import com.runaxsoftware.qdrant.jdbc.schema.ColumnType;
+import com.runaxsoftware.qdrant.jdbc.schema.DriverColumns;
 import com.runaxsoftware.qdrant.jdbc.schema.TableSchema;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Column;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Expression;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.FunctionCall;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Literal;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.OrderItem;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Parameter;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.SelectItem;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Star;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.TableName;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.VectorLiteral;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConstantPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.SystemTablePlan;
 import com.runaxsoftware.qdrant.jdbc.system.SystemColumn;
@@ -35,9 +41,24 @@ final class SelectPlanner {
     // The name PostgreSQL gives a SELECT item that isn't a column and has no alias
     private static final String UNNAMED = "?column?";
 
+    // The function a search orders by, lower case: the driver's own names ignore case
+    private static final String SIMILARITY = "similarity";
+
+    // The driver's score column, which a search has and a scroll doesn't
+    private static final String SCORE = DriverColumns.SCORE.columnName();
+
     // The catalog and the collections' schema, the names DatabaseMetaData reports
     private static final String CATALOG = QdrantDatabaseMetaData.CATALOG;
     private static final String COLLECTIONS_SCHEMA = QdrantDatabaseMetaData.SCHEMA;
+
+    /**
+     * What a statement's ORDER BY asks Qdrant to rank by.
+     *
+     * @param vector the Qdrant name of the vector to search, empty for an unnamed one
+     * @param query  the vector to search with
+     */
+    private record Search(String vector, List<Double> query) {
+    }
 
     public Plan plan(SelectStatement statement, Catalog catalog) throws SQLException {
         if (statement.table() == null) {
@@ -46,9 +67,6 @@ final class SelectPlanner {
 
         if (statement.where() != null) {
             throw new SQLFeatureNotSupportedException("WHERE isn't supported yet");
-        }
-        if (!statement.orderBy().isEmpty()) {
-            throw new SQLFeatureNotSupportedException("ORDER BY isn't supported yet");
         }
         if (statement.offset() != null) {
             throw new SQLFeatureNotSupportedException("OFFSET isn't supported yet");
@@ -72,13 +90,113 @@ final class SelectPlanner {
         }
 
         TableSchema schema = catalog.table(table.name());
-        List<ColumnDefinition> columns = resolve(statement.items(), schema, statement.alias());
+        Search search = search(statement, schema);
+        List<ColumnDefinition> columns =
+            resolve(statement.items(), schema, statement.alias(), search != null);
 
         boolean withPayload = columns.stream().anyMatch(
             x -> x.kind() == ColumnKind.PAYLOAD || x.kind() == ColumnKind.PAYLOAD_FIELD);
         boolean withVector = columns.stream().anyMatch(x -> x.kind() == ColumnKind.VECTOR);
 
-        return new ScrollPlan(schema.name(), columns, withPayload, withVector, statement.limit());
+        return search == null
+            ? new ScrollPlan(schema.name(), columns, withPayload, withVector, statement.limit())
+            : new QueryPlan(schema.name(), columns, search.vector(), search.query(), withPayload,
+                withVector, statement.limit());
+    }
+
+    /**
+     * The search the statement's ORDER BY asks for, or {@code null} when it orders by nothing.
+     * The only ordering Qdrant runs on its own is a ranking, so every other ORDER BY is an
+     * error rather than sorting the driver would have to do itself.
+     */
+    private static Search search(SelectStatement statement, TableSchema schema)
+        throws SQLException {
+        if (statement.orderBy().isEmpty()) {
+            return null;
+        }
+        if (statement.orderBy().size() > 1) {
+            throw new SQLFeatureNotSupportedException(
+                "Ordering by more than one thing isn't supported yet");
+        }
+
+        OrderItem item = statement.orderBy().get(0);
+
+        if (!(item.expression() instanceof FunctionCall call)) {
+            throw new SQLFeatureNotSupportedException("ORDER BY isn't supported yet, except "
+                + "ORDER BY " + SIMILARITY + "(vector, [0.1, ...]) DESC");
+        }
+        if (!call.is(SIMILARITY)) {
+            throw new SQLFeatureNotSupportedException("'" + call.name() + "' isn't a function "
+                + "this driver has; a search orders by " + SIMILARITY + "(vector, [0.1, ...]) "
+                + "DESC");
+        }
+        if (!item.descending()) {
+            throw new SQLFeatureNotSupportedException("A similarity search returns the closest "
+                + "points first, so it needs ORDER BY " + SIMILARITY + "(...) DESC");
+        }
+        if (call.arguments().size() != 2) {
+            throw new SQLSyntaxErrorException(SIMILARITY + " takes a vector column and a vector, "
+                + "as " + SIMILARITY + "(dense, [0.1, 0.2])", "42000");
+        }
+
+        ColumnDefinition vector = searched(call.arguments().get(0), schema, statement.alias());
+        VectorLiteral query = vectorLiteral(call.arguments().get(1), vector);
+
+        if (vector.size() != query.size()) {
+            throw new SQLSyntaxErrorException("Vector '" + vector.name() + "' of " + schema.name()
+                + " has " + vector.size() + " dimensions, the vector searching it has "
+                + query.size(), "42000");
+        }
+
+        return new Search(vector.source(), query.values());
+    }
+
+    /**
+     * The collection's vector a search reads, which is a vector column and not a payload field
+     * or the point ID.
+     */
+    private static ColumnDefinition searched(Expression argument, TableSchema schema, String alias)
+        throws SQLException {
+        if (!(argument instanceof Column column)) {
+            throw new SQLSyntaxErrorException("A similarity search names the vector to search "
+                + "first, as " + SIMILARITY + "(dense, [0.1, 0.2])", "42000");
+        }
+
+        ColumnDefinition definition = find(schema, column, alias, false);
+
+        if (definition.kind() != ColumnKind.VECTOR) {
+            throw new SQLSyntaxErrorException("Column '" + definition.name() + "' of "
+                + schema.name() + " isn't a vector: a similarity search searches a vector column",
+                "42000");
+        }
+        if (definition.type() != ColumnType.VECTOR) {
+            throw new SQLFeatureNotSupportedException("Searching '" + definition.name() + "', a "
+                + definition.type().typeName() + " of " + schema.name()
+                + ", isn't supported yet: a vector written out searches a dense vector");
+        }
+
+        return definition;
+    }
+
+    /**
+     * The vector a search searches with. Only a vector written out is supported so far: text to
+     * embed and the other forms a search could take come later.
+     */
+    private static VectorLiteral vectorLiteral(Expression argument, ColumnDefinition vector)
+        throws SQLException {
+        if (argument instanceof VectorLiteral literal) {
+            return literal;
+        }
+        if (argument instanceof Parameter) {
+            throw new SQLFeatureNotSupportedException("Parameters aren't supported yet");
+        }
+        if (argument instanceof FunctionCall call) {
+            throw new SQLFeatureNotSupportedException("'" + call.name() + "' isn't supported yet: "
+                + "a similarity search takes a vector written out, as [0.1, 0.2]");
+        }
+
+        throw new SQLSyntaxErrorException("A similarity search takes a vector written out in "
+            + "brackets, as " + SIMILARITY + "(" + vector.name() + ", [0.1, 0.2])", "42000");
     }
 
     /**
@@ -86,6 +204,10 @@ final class SelectPlanner {
      * catalog lookup and never calls Qdrant.
      */
     private static Plan systemTable(SelectStatement statement, TableName name) throws SQLException {
+        if (!statement.orderBy().isEmpty()) {
+            throw new SQLFeatureNotSupportedException("ORDER BY isn't supported yet");
+        }
+
         SystemTable table = SystemTable.named(name.name()).orElseThrow(
             () -> new SQLSyntaxErrorException("Unknown table '" + name.qualified() + "': the "
                 + SystemTable.SCHEMA + " schema has " + systemTableNames(), "42S02"));
@@ -205,13 +327,16 @@ final class SelectPlanner {
 
     /**
      * The collection's columns a select list reads, in its order: a star stands for every
-     * column but the vectors, which are fetched only when a statement names them. A column or
-     * star may be named under the collection or the statement's alias for it.
+     * column but the vectors, which are fetched only when a statement names them, and the
+     * score, which a collection has no column for. A column or star may be named under the
+     * collection or the statement's alias for it.
      *
-     * @param alias the name the statement gives the collection, or {@code null}
+     * @param alias     the name the statement gives the collection, or {@code null}
+     * @param searching whether the statement is a search, which is what has a score
      */
-    private static List<ColumnDefinition> resolve(
-        List<SelectItem> items, TableSchema schema, String alias) throws SQLException {
+    private static List<ColumnDefinition> resolve(List<SelectItem> items, TableSchema schema,
+                                                  String alias, boolean searching)
+        throws SQLException {
         var columns = new ArrayList<ColumnDefinition>();
 
         for (SelectItem item : items) {
@@ -229,7 +354,7 @@ final class SelectPlanner {
                     "Constants in a SELECT with FROM aren't supported yet");
             }
 
-            ColumnDefinition definition = find(schema, column, alias);
+            ColumnDefinition definition = find(schema, column, alias, searching);
 
             columns.add(item.alias() == null ? definition : new ColumnDefinition(item.alias(),
                 definition.kind(), definition.type(), definition.size(), definition.source(),
@@ -245,9 +370,13 @@ final class SelectPlanner {
      * {@code specs.color} is for the column {@code "specs.color"}, so the whole name is looked
      * up before the qualifier is reported as unknown.
      */
-    private static ColumnDefinition find(TableSchema schema, Column column, String alias)
-        throws SQLException {
+    private static ColumnDefinition find(TableSchema schema, Column column, String alias,
+                                         boolean searching) throws SQLException {
         if (column.qualifier() == null || namesTable(column.qualifier(), alias, schema.name(), false)) {
+            if (column.name().equals(SCORE)) {
+                return score(searching);
+            }
+
             return schema.column(column.name()).orElseThrow(
                 () -> unknownColumn(column.qualified(), schema.name()));
         }
@@ -255,6 +384,19 @@ final class SelectPlanner {
         return schema.column(column.qualified()).orElseThrow(() -> payloadPath(column, schema)
             ? unknownColumn(column.qualified(), schema.name())
             : unknownTable(column.qualifier(), column.qualified(), alias, schema.name()));
+    }
+
+    /**
+     * The score column, which only a search has: the points a scroll reads are in the
+     * collection's own order and no closer to anything.
+     */
+    private static ColumnDefinition score(boolean searching) throws SQLException {
+        if (!searching) {
+            throw new SQLSyntaxErrorException("Column '" + SCORE + "' is only in a similarity "
+                + "search: add ORDER BY " + SIMILARITY + "(vector, [0.1, ...]) DESC", "42S22");
+        }
+
+        return ColumnDefinition.score();
     }
 
     /**

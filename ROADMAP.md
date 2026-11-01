@@ -16,9 +16,10 @@ Planned work, roughly in the order it will land. The SQL each item accepts is sp
   through Qdrant's scroll cursor instead of loading everything. Vectors are fetched only
   when a query names their column.
 - [ ] **COUNT(\*)** through the count API.
-- [ ] **Similarity search with vector literals** —
-  `ORDER BY similarity(vector, [0.1, ...])` through the Query API, with a `_score`
-  column.
+- [x] **Similarity search with vector literals** —
+  `ORDER BY similarity(vector, [0.1, ...]) DESC` through the Query API, with a `_score`
+  column. Dense vectors only: searching a sparse vector or a multivector, and the other forms
+  a search can take, come with the items below.
 - [ ] **DataGrip compatibility** — harmless defaults for the `Connection` and
   `Statement` methods DataGrip calls on every connection, and support for the SQL it
   generates when opening, filtering, and sorting a table. The defaults and the statement
@@ -34,7 +35,8 @@ Planned work, roughly in the order it will land. The SQL each item accepts is sp
 - [ ] **Embedding model per vector** — kept in the collection's metadata for each named
   vector, not per connection, so a query can't silently use the wrong model.
 - [ ] **GROUP BY** with `COUNT(*)` through the facet API.
-- [ ] **ORDER BY** on range-indexed payload fields.
+- [ ] **ORDER BY** on range-indexed payload fields. Only `ORDER BY similarity(...) DESC`
+  works so far; every other ordering is an error.
 - [ ] **Prepared statements** with parameters.
 - [ ] **Grid edits** — `UPDATE ... WHERE _id = ?` from DataGrip's data editor, mapped to
   Qdrant's set-payload call.

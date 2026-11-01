@@ -3,9 +3,12 @@ package com.runaxsoftware.qdrant.jdbc.gateway;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantCollection;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.QueryRequest;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.ScoredPoint;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScrollPage;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScrollRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ServerVersion;
@@ -103,6 +106,26 @@ public class QdrantGateway implements AutoCloseable {
 
         return RestModels.scrollPage(
             request(HttpMethod.POST, "/collections/" + segment(scroll.collection()) + "/points/scroll", body));
+    }
+
+    /**
+     * The points nearest a vector, best first, through Qdrant's Query API. One call answers a
+     * whole search: it returns the request's limit of points and no cursor, unlike a scroll.
+     */
+    public List<ScoredPoint> query(QueryRequest query) throws SQLException {
+        ObjectNode body = JSON.createObjectNode()
+            .put("limit", query.limit())
+            .put("with_payload", query.withPayload())
+            .put("with_vector", query.withVector());
+
+        ArrayNode vector = body.putObject("query").putArray("nearest");
+        for (double value : query.query()) vector.add(value);
+
+        // A collection's single unnamed vector is the one Qdrant searches when none is named
+        if (!query.vector().isEmpty()) body.put("using", query.vector());
+
+        return RestModels.scoredPoints(request(HttpMethod.POST,
+            "/collections/" + segment(query.collection()) + "/points/query", body));
     }
 
     /**
