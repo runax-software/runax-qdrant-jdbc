@@ -16,6 +16,12 @@ public final class Parser {
         var tokenStream = new TokenStream(sql, new Lexer(sql).tokenize());
 
         Statement statement = parseStatement(tokenStream);
+
+        // One semicolon may end the statement; a second statement after it is an error
+        if (tokenStream.matchSymbol(";") && tokenStream.peek().type() != TokenType.EOF) {
+            throw tokenStream.error("Expected the end of the statement: run one statement at a "
+                + "time");
+        }
         if (tokenStream.peek().type() != TokenType.EOF) {
             throw tokenStream.error("Expected the end of the statement");
         }
