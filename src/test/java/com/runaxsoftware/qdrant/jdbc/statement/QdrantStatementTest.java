@@ -58,27 +58,55 @@ class QdrantStatementTest {
     }
 
     @Test
-    void doesNotRunSqlYet() {
+    void readsTheRowsOfACollection() throws SQLException {
+        try (ResultSet rows = statement.executeQuery("SELECT _id, name AS title, price FROM products")) {
+            assertEquals(List.of("_id", "title", "price"), List.of(rows.getMetaData().getColumnLabel(1),
+                rows.getMetaData().getColumnLabel(2), rows.getMetaData().getColumnLabel(3)));
+            assertSame(statement, rows.getStatement());
+
+            assertTrue(rows.next());
+            assertEquals("1", rows.getString("_id"));
+            assertEquals("Lamp", rows.getString("title"));
+            assertEquals(39.9, rows.getDouble("price"));
+            assertFalse(rows.next());
+        }
+    }
+
+    @Test
+    void runsASelectFromACollectionInEveryExecute() throws SQLException {
         List<Executable> calls = List.of(
-            () -> statement.executeQuery(SQL),
-            () -> statement.execute(SQL),
-            () -> statement.execute(SQL, Statement.RETURN_GENERATED_KEYS),
-            () -> statement.execute(SQL, new int[] {1}),
-            () -> statement.execute(SQL, new String[] {"id"}),
-            () -> statement.executeUpdate(SQL),
-            () -> statement.executeUpdate(SQL, Statement.NO_GENERATED_KEYS),
-            () -> statement.executeUpdate(SQL, new int[] {1}),
-            () -> statement.executeUpdate(SQL, new String[] {"id"}),
-            () -> statement.executeLargeUpdate(SQL),
-            () -> statement.executeLargeUpdate(SQL, Statement.NO_GENERATED_KEYS),
-            () -> statement.executeLargeUpdate(SQL, new int[] {1}),
-            () -> statement.executeLargeUpdate(SQL, new String[] {"id"}));
+            () -> assertTrue(statement.execute(SQL)),
+            () -> assertTrue(statement.execute(SQL, Statement.RETURN_GENERATED_KEYS)),
+            () -> assertTrue(statement.execute(SQL, new int[] {1})),
+            () -> assertTrue(statement.execute(SQL, new String[] {"id"})));
 
         for (Executable call : calls) {
-            SQLFeatureNotSupportedException error =
-                assertThrows(SQLFeatureNotSupportedException.class, call);
-            assertTrue(error.getMessage().contains("isn't supported yet"));
+            assertDoesNotThrow(call);
+            assertTrue(statement.getResultSet().next());
         }
+    }
+
+    @Test
+    void readsPagesOfTheFetchSizeUpToTheMaximumRows() throws SQLException {
+        server.collection("products", unnamedVector(4, "Cosine", Map.of()), List.of(
+            point(1, Json.object("name", "a")), point(2, Json.object("name", "b")),
+            point(3, Json.object("name", "c")), point(4, Json.object("name", "d")),
+            point(5, Json.object("name", "e"))));
+        statement.setFetchSize(2);
+        statement.setMaxRows(3);
+
+        try (ResultSet rows = statement.executeQuery("SELECT name FROM products")) {
+            List<String> names = new java.util.ArrayList<>();
+            while (rows.next()) {
+                names.add(rows.getString(1));
+            }
+            assertEquals(List.of("a", "b", "c"), names);
+        }
+
+        assertEquals(List.of(2, 1), server.scrollRequests().stream()
+            .skip(1)  // the first scroll is the column sample, read when the SQL is planned
+            .map(request -> request.path("limit").asInt())
+            .toList());
     }
 
     @Test
@@ -90,25 +118,24 @@ class QdrantStatementTest {
     }
 
     @Test
-    void readsKeptColumnsOnlyOnce() {
-        assertThrows(SQLFeatureNotSupportedException.class,
-            () -> statement.executeQuery("SELECT name FROM products"));
-        assertThrows(SQLFeatureNotSupportedException.class,
-            () -> statement.executeQuery("SELECT price FROM products"));
+    void readsKeptColumnsOnlyOnce() throws SQLException {
+        statement.executeQuery("SELECT name FROM products");
+        statement.executeQuery("SELECT price FROM products");
 
         assertEquals(1, reads("products"));
     }
 
     @Test
-    void findsAFieldAddedSinceTheColumnsWereKept() {
-        assertThrows(SQLFeatureNotSupportedException.class,
-            () -> statement.executeQuery("SELECT name FROM products"));
+    void findsAFieldAddedSinceTheColumnsWereKept() throws SQLException {
+        statement.executeQuery("SELECT name FROM products");
         server.collection("products", unnamedVector(4, "Cosine", Map.of()),
             List.of(point(1, Json.object("name", "Lamp", "price", 39.9, "color", "red"))));
 
-        // Planned, not "unknown column": the kept columns are read again when color isn't there
-        assertThrows(SQLFeatureNotSupportedException.class,
-            () -> statement.executeQuery("SELECT color FROM products"));
+        // Not "unknown column": the kept columns are read again when color isn't there
+        try (ResultSet rows = statement.executeQuery("SELECT color FROM products")) {
+            assertTrue(rows.next());
+            assertEquals("red", rows.getString("color"));
+        }
         assertEquals(2, reads("products"));
     }
 
