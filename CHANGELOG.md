@@ -130,7 +130,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A statement ending with `;`, as DataGrip and SQL scripts send it, failed with `Unexpected
   character ';'`. One semicolon at the end is now accepted; a second statement after it is
-  still an error that says to run one statement at a time. ([#SEMI])
+  still an error that says to run one statement at a time. ([#25])
 - Opening a collection in DataGrip's data editor failed with `Expected the end of the
   statement, found '.'`: it sends `SELECT t.* FROM collections.<name> t`, which the driver
   couldn't parse. Before the schema-qualified names landed the same statement failed in the
@@ -178,3 +178,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#22]: https://github.com/runax-software/runax-qdrant-jdbc/pull/22
 [#23]: https://github.com/runax-software/runax-qdrant-jdbc/pull/23
 [#24]: https://github.com/runax-software/runax-qdrant-jdbc/pull/24
+[#25]: https://github.com/runax-software/runax-qdrant-jdbc/pull/25
