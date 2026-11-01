@@ -365,6 +365,32 @@ For each `embed()` the driver asks the embedder for:
 A failure in the embedder fails the statement with an `SQLException` that names the model.
 `document()` and `image()` don't use the embedder: Qdrant embeds the input itself.
 
+## Prepared statements
+
+**What runs today:** `Connection.prepareStatement` parses the SQL once and reports syntax errors
+then; unknown collections and columns are reported when it runs, since the columns may change in
+between. A `?` stands for one constant wherever a constant goes: in `WHERE`, in the select list,
+and as the vector of `similarity(…)`. A value takes the placeholder's place in the parsed
+statement, never in the SQL text, so it can't change what the statement means.
+
+| Java value | Constant |
+| --- | --- |
+| `String`, `UUID`, `Character` | Text |
+| `Integer`, `Long`, `Short`, `Byte`, `BigInteger`, a whole `BigDecimal` | Whole number |
+| `Double`, `Float`, any other `BigDecimal` | Decimal number |
+| `Boolean` | Boolean |
+| `Timestamp`, `Instant`, `OffsetDateTime`, `ZonedDateTime`, `java.util.Date` | RFC 3339 text in UTC, for date-time fields |
+| `java.sql.Date`, `LocalDate` | The start of that day in UTC |
+| `float[]`, `double[]`, `Number[]`, a `List` of numbers | A vector |
+| `setNull` | `NULL`, which a comparison rejects: write `IS NULL` instead |
+
+`addBatch()` and `executeBatch()` run the statement once per set of values, in order; Qdrant has
+no transactions, so when one fails, the sets before it stay applied and the
+`BatchUpdateException` reports their counts. `getParameterMetaData()` reports how many
+placeholders there are, each of type `OTHER`, since a payload field's type comes from its
+points; `getMetaData()` returns `null` until the statement runs. `LIMIT ?` and `OFFSET ?` aren't
+supported yet.
+
 ## Request options
 
 | Option | Qdrant parameter |

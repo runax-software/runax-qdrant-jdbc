@@ -23,9 +23,9 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.SQLFeatureNotSupportedException;
 import java.sql.SQLNonTransientConnectionException;
 import java.sql.Statement;
 import java.util.ArrayList;
@@ -77,14 +77,18 @@ class ConnectionIntegrationTest {
     }
 
     @Test
-    void reportsAMissingCollectionAndRefusesPreparedStatementsForNow() throws SQLException {
+    void reportsAMissingCollectionFromAStatementAndAPreparedOne() throws SQLException {
         try (Connection connection = connect(TestQdrant.properties());
-             Statement statement = connection.createStatement()) {
+             Statement statement = connection.createStatement();
+             PreparedStatement prepared = connection.prepareStatement(
+                 "SELECT * FROM jdbc_no_such_collection WHERE x = ?")) {
             SQLException missing = assertThrows(SQLException.class,
                 () -> statement.executeQuery("SELECT * FROM jdbc_no_such_collection"));
             assertEquals("42S02", missing.getSQLState());
-            assertThrows(SQLFeatureNotSupportedException.class,
-                () -> connection.prepareStatement("SELECT 1"));
+
+            prepared.setInt(1, 1);
+            assertEquals("42S02", assertThrows(SQLException.class, prepared::executeQuery)
+                .getSQLState(), "a missing collection is found when it runs, not when prepared");
         }
     }
 
