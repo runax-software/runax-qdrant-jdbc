@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `getGeneratedKeys` returns. Values are read as their column's type; a field the collection
   doesn't have yet is added, `"specs.color"` builds its object, and `_payload` gives the whole
   payload. A vector is written out, given as JSON text, or made with `embed('text')`, by Qdrant
-  as it stores the point or by the driver before. Batches of a prepared `INSERT` work. ([#INS])
+  as it stores the point or by the driver before. Batches of a prepared `INSERT` work. ([#31])
 - `UPDATE docs SET lang = 'de', year = 2024 WHERE _id = 7`, so DataGrip's data editor saves
   edited cells. The changes go in one call to Qdrant's batch update API: fields are set
   together, `"specs.color"` is set inside its object, `NULL` deletes a field, a field the
@@ -213,3 +213,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#26]: https://github.com/runax-software/runax-qdrant-jdbc/pull/26
 [#27]: https://github.com/runax-software/runax-qdrant-jdbc/pull/27
 [#28]: https://github.com/runax-software/runax-qdrant-jdbc/pull/28
+[#31]: https://github.com/runax-software/runax-qdrant-jdbc/pull/31
