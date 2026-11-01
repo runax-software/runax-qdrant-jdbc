@@ -3,6 +3,7 @@ package com.runaxsoftware.qdrant.jdbc.sql.planner;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.Ordering;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadIndexType;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.Document;
 import com.runaxsoftware.qdrant.jdbc.metadata.QdrantDatabaseMetaData;
 import com.runaxsoftware.qdrant.jdbc.resultset.ResultColumn;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
@@ -70,13 +71,17 @@ final class SelectPlanner {
     private static final String CATALOG = QdrantDatabaseMetaData.CATALOG;
     private static final String COLLECTIONS_SCHEMA = QdrantDatabaseMetaData.SCHEMA;
 
+    // The function that hands Qdrant text to embed itself
+    private static final String DOCUMENT = "document";
+
     /**
      * What a statement's ORDER BY asks Qdrant to rank by.
      *
-     * @param vector the Qdrant name of the vector to search, empty for an unnamed one
-     * @param query  the vector to search with
+     * @param vector   the Qdrant name of the vector to search, empty for an unnamed one
+     * @param query    the vector to search with, empty when Qdrant embeds a document
+     * @param document the text for Qdrant to embed, or {@code null}
      */
-    private record Search(String vector, List<Double> query) {
+    private record Search(String vector, List<Double> query, Document document) {
     }
 
     public Plan plan(SelectStatement statement, Catalog catalog) throws SQLException {
@@ -132,7 +137,7 @@ final class SelectPlanner {
 
         if (search != null) {
             return new QueryPlan(schema.name(), columns, search.vector(), search.query(),
-                withPayload, withVector, statement.limit(), filter);
+                withPayload, withVector, statement.limit(), filter, search.document());
         }
 
         Ordering ordering = order == null
@@ -362,7 +367,21 @@ final class SelectPlanner {
         }
 
         ColumnDefinition vector = searched(call.arguments().get(0), schema, alias);
-        VectorLiteral query = vectorLiteral(call.arguments().get(1), vector);
+        Expression with = call.arguments().get(1);
+
+        // Qdrant embeds the text with a model that makes the vector's kind, dense or sparse
+        if (with instanceof FunctionCall function && function.is(DOCUMENT)) {
+            return new Search(vector.source(), List.of(), document(function, vector));
+        }
+
+        if (vector.type() != ColumnType.VECTOR) {
+            throw new SQLFeatureNotSupportedException("Searching '" + vector.name() + "', a "
+                + vector.type().typeName() + " of " + schema.name() + ", with a vector written "
+                + "out isn't supported yet: search it with " + DOCUMENT + "('text', 'model'), "
+                + "which Qdrant embeds");
+        }
+
+        VectorLiteral query = vectorLiteral(with, vector);
 
         if (vector.size() != query.size()) {
             throw new SQLSyntaxErrorException("Vector '" + vector.name() + "' of " + schema.name()
@@ -370,7 +389,45 @@ final class SelectPlanner {
                 + query.size(), "42000");
         }
 
-        return new Search(vector.source(), query.values());
+        return new Search(vector.source(), query.values(), null);
+    }
+
+    /**
+     * The text and model of {@code document('refund policy', 'qdrant/bm25')}, which Qdrant
+     * embeds itself. The model is named in the statement: which models exist is Qdrant's to
+     * say, and a wrong one is its error to report.
+     */
+    private static Document document(FunctionCall call, ColumnDefinition vector)
+        throws SQLException {
+        String usage = DOCUMENT + "('refund policy', 'model'), as " + SIMILARITY + "("
+            + vector.name() + ", " + DOCUMENT + "('refund policy', 'qdrant/bm25'))";
+
+        if (call.arguments().size() != 2) {
+            throw new SQLSyntaxErrorException(DOCUMENT + " takes the text and the model that "
+                + "embeds it: " + usage, "42000");
+        }
+
+        String text = text(call.arguments().get(0), usage);
+        String model = text(call.arguments().get(1), usage);
+
+        if (model.isBlank()) {
+            throw new SQLSyntaxErrorException(DOCUMENT + " needs a model's name: " + usage,
+                "42000");
+        }
+
+        return new Document(text, model);
+    }
+
+    private static String text(Expression argument, String usage) throws SQLException {
+        if (argument instanceof Literal literal && literal.value() instanceof String text) {
+            return text;
+        }
+        if (argument instanceof Parameter) {
+            throw new SQLFeatureNotSupportedException("Parameters are given through a "
+                + "PreparedStatement");
+        }
+
+        throw new SQLSyntaxErrorException(DOCUMENT + " takes text in quotes: " + usage, "42000");
     }
 
     /**
@@ -391,18 +448,12 @@ final class SelectPlanner {
                 + schema.name() + " isn't a vector: a similarity search searches a vector column",
                 "42000");
         }
-        if (definition.type() != ColumnType.VECTOR) {
-            throw new SQLFeatureNotSupportedException("Searching '" + definition.name() + "', a "
-                + definition.type().typeName() + " of " + schema.name()
-                + ", isn't supported yet: a vector written out searches a dense vector");
-        }
-
         return definition;
     }
 
     /**
-     * The vector a search searches with. Only a vector written out is supported so far: text to
-     * embed and the other forms a search could take come later.
+     * The vector a search searches with, written out. Text for Qdrant to embed is a
+     * {@code document(...)}, read above; the other forms a search could take come later.
      */
     private static VectorLiteral vectorLiteral(Expression argument, ColumnDefinition vector)
         throws SQLException {
@@ -414,7 +465,8 @@ final class SelectPlanner {
         }
         if (argument instanceof FunctionCall call) {
             throw new SQLFeatureNotSupportedException("'" + call.name() + "' isn't supported yet: "
-                + "a similarity search takes a vector written out, as [0.1, 0.2]");
+                + "a similarity search takes a vector written out, as [0.1, 0.2], or "
+                + DOCUMENT + "('text', 'model') for Qdrant to embed");
         }
 
         throw new SQLSyntaxErrorException("A similarity search takes a vector written out in "

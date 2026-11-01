@@ -50,6 +50,9 @@ public final class Executor {
 
     private static final String UNKNOWN_TABLE = "42S02";
 
+    // What Qdrant answers when it's asked to embed with a model and has no inference service
+    private static final String NO_INFERENCE = "InferenceService URL not configured";
+
     private final Scroller scroller;
     private final Searcher searcher;
     private final Counter counter;
@@ -246,6 +249,25 @@ public final class Executor {
         }
     }
 
+    /**
+     * The search's points. A Qdrant without an inference service can't embed a document with a
+     * hosted model, and says so in terms of its own configuration, so the error says what to do.
+     */
+    private List<ScoredPoint> search(QueryRequest request) throws SQLException {
+        try {
+            return searcher.search(request);
+        } catch (SQLException e) {
+            if (request.document() == null || !String.valueOf(e.getMessage()).contains(NO_INFERENCE)) {
+                throw e;
+            }
+
+            throw new SQLException("This Qdrant can't embed text with '"
+                + request.document().model() + "': it runs no inference service, which hosted "
+                + "models need (Qdrant Cloud has one). Every Qdrant can embed with qdrant/bm25, "
+                + "into a sparse vector", e.getSQLState(), e);
+        }
+    }
+
     private static Writer writer(QdrantGateway gateway) {
         return new Writer() {
             @Override
@@ -351,8 +373,9 @@ public final class Executor {
      * search, so the rows are read at once rather than paged.
      */
     private List<Object[]> searchRows(QueryPlan plan, long limit) throws SQLException {
-        List<ScoredPoint> found = searcher.search(new QueryRequest(plan.collection(),
-            plan.vector(), plan.query(), limit, plan.withPayload(), plan.withVector(), plan.filter()));
+        List<ScoredPoint> found = search(new QueryRequest(plan.collection(), plan.vector(),
+            plan.query(), limit, plan.withPayload(), plan.withVector(), plan.filter(),
+            plan.document()));
         List<ColumnDefinition> columns = plan.columns();
         var rows = new ArrayList<Object[]>(found.size());
 

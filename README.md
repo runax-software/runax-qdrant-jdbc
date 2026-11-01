@@ -86,9 +86,19 @@ LIMIT 10
 vector), and `_score` is how close Qdrant scored each point. A search says how many points
 to rank, with `LIMIT` or the statement's maximum rows.
 
-A search takes a `WHERE` too, which Qdrant applies before ranking. Planned, and described in
-the dialect spec: `embed('refund policy')` in place of the vector, which turns text into one
-with the embedding model configured for that vector.
+A search takes a `WHERE` too, which Qdrant applies before ranking. Qdrant can also embed the
+text itself with `document('text', 'model')`: every Qdrant runs `qdrant/bm25` into a sparse
+vector, and Qdrant Cloud runs hosted dense models.
+
+```sql
+SELECT _id, _score, title
+FROM docs
+ORDER BY similarity(keywords, document('refund policy', 'qdrant/bm25')) DESC
+LIMIT 10
+```
+
+Planned, and described in the dialect spec: `embed('refund policy')`, which the driver embeds
+with the model configured for that vector.
 
 ```sql
 SELECT _id, _score, _payload

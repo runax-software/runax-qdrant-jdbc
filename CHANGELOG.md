@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Server-side inference in a search: `ORDER BY similarity(keywords, document('refund policy',
+  'qdrant/bm25')) DESC LIMIT 10` asks Qdrant to embed the text with the model and search with
+  what it made, so the driver runs no model. It searches sparse vectors and multivectors as
+  well as dense ones, since the model makes the vector. Every Qdrant runs `qdrant/bm25`; hosted
+  dense models need Qdrant Cloud's inference, and a Qdrant without it answers with an error
+  that says so. ([#24])
 - Prepared statements: `connection.prepareStatement("SELECT _id FROM docs WHERE lang = ? AND
   year >= ?")`, with `setString`, `setInt`, `setLong`, `setDouble`, `setBoolean`,
   `setBigDecimal`, `setTimestamp`, `setDate`, `setNull`, and `setObject` (a `UUID`, `Instant`,

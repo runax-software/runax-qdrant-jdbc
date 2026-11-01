@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.Document;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetHit;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.Ordering;
@@ -838,6 +839,47 @@ class ExecutorTest {
     private static FacetPlan facet(Long limit) {
         return new FacetPlan("docs", "lang",
             List.of(new FacetColumn("count", ColumnType.INTEGER, true)), null, limit);
+    }
+
+    // Qdrant embedding a document
+
+    @Test
+    void sendsTheDocumentForQdrantToEmbed() throws SQLException {
+        List<QueryRequest> requests = new ArrayList<>();
+        Executor recording = new Executor(request -> {
+            throw new AssertionError("Scrolled");
+        }, query -> {
+            requests.add(query);
+            return List.of();
+        }, collection -> 0, table -> List.of());
+
+        recording.execute(document("qdrant/bm25"), STATEMENT).resultSet().close();
+
+        assertEquals(new Document("refund policy", "qdrant/bm25"), requests.get(0).document());
+        assertEquals("keywords", requests.get(0).vector());
+    }
+
+    @Test
+    void explainsThatAQdrantWithoutInferenceCantUseAHostedModel() {
+        Executor local = new Executor(request -> {
+            throw new AssertionError("Scrolled");
+        }, query -> {
+            throw new SQLException("Qdrant: Service internal error: InferenceService URL not "
+                + "configured - please provide valid address in config", "HY000");
+        }, collection -> 0, table -> List.of());
+
+        SQLException error = assertThrows(SQLException.class,
+            () -> local.execute(document("sentence-transformers/all-minilm-l6-v2"), STATEMENT));
+
+        assertEquals("This Qdrant can't embed text with 'sentence-transformers/all-minilm-l6-v2': "
+            + "it runs no inference service, which hosted models need (Qdrant Cloud has one). "
+            + "Every Qdrant can embed with qdrant/bm25, into a sparse vector", error.getMessage());
+        assertEquals("HY000", error.getSQLState());
+    }
+
+    private static QueryPlan document(String model) {
+        return new QueryPlan("docs", List.of(ID, SCORE), "keywords", List.of(), false, false, 5L,
+            null, new Document("refund policy", model));
     }
 
     private static ScrollPlan ordered(Long limit) {

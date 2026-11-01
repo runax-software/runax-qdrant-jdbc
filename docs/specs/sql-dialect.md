@@ -146,9 +146,13 @@ vector in the statement before the search runs. `_score` is a `DOUBLE` column th
 search has, and `*` doesn't include it. A search says how many points to rank, through `LIMIT`
 or the statement's maximum rows: Qdrant ranks the points nearest the vector rather than
 reading the whole collection, so a search without either is an error rather than a number the
-driver picked. `ASC` is an error too, since Qdrant returns the closest points first. The rest
-of this section, `OFFSET` included, is still the target; a `WHERE` filters the points
-Qdrant ranks, as in a scroll.
+driver picked. `ASC` is an error too, since Qdrant returns the closest points first. The
+query may also be `document('text', 'model')`, which Qdrant embeds with that model before it
+searches, over any kind of vector the model makes: every Qdrant runs `qdrant/bm25` into a
+sparse vector, and Qdrant Cloud runs hosted dense models. The driver doesn't check a
+document's dimensions, since the model makes them; a Qdrant without an inference service
+answers a hosted model with an error that says so. The rest of this section, `OFFSET`
+included, is still the target; a `WHERE` filters the points Qdrant ranks, as in a scroll.
 
 ```sql
 SELECT _id, _score, title

@@ -17,6 +17,7 @@ import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.Ordering;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantCollection;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.Document;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QueryRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScoredPoint;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScrollPage;
@@ -339,6 +340,18 @@ class QdrantGatewayTest {
 
         assertEquals(filter, server.scrollRequests().get(0).get("filter"));
         assertEquals(filter, server.queryRequests().get(0).get("filter"));
+    }
+
+    @Test
+    void sendsADocumentForQdrantToEmbed() throws SQLException {
+        server.collection("events", plainCollection(), points(3));
+
+        gateway.query(new QueryRequest("events", "keywords", List.of(), 2, false, false, null,
+            new Document("refund policy", "qdrant/bm25")));
+
+        assertEquals(Json.object("limit", 2, "with_payload", false, "with_vector", false,
+            "query", Json.object("text", "refund policy", "model", "qdrant/bm25"),
+            "using", "keywords"), server.queryRequests().get(0));
     }
 
     @Test

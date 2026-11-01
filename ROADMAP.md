@@ -37,7 +37,10 @@ Planned work, roughly in the order it will land. The SQL each item accepts is sp
   the guide (in the README) are done; Maven Central isn't.
 - [ ] **`embed('text')`** through the embedder abstraction (OpenAI and other providers),
   which is being built separately.
-- [ ] **Qdrant Cloud inference** — let Qdrant embed the text server-side where available.
+- [x] **Qdrant Cloud inference** — let Qdrant embed the text server-side where available:
+  `similarity(keywords, document('refund policy', 'qdrant/bm25'))` in a search. Every Qdrant
+  runs BM25 into sparse vectors; hosted dense models need Qdrant Cloud's inference.
+  `document()` in `INSERT` comes with `INSERT`.
 - [ ] **Embedding model per vector** — kept in the collection's metadata for each named
   vector, not per connection, so a query can't silently use the wrong model.
 - [x] **GROUP BY** with `COUNT(*)` through the facet API, on a field indexed as keyword,
