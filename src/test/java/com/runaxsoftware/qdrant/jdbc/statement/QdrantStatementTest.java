@@ -73,6 +73,46 @@ class QdrantStatementTest {
     }
 
     @Test
+    void readsTheRowsOfASystemTable() throws SQLException {
+        server.alias("current", "products");
+
+        try (ResultSet rows = statement.executeQuery(
+            "SELECT name, points_count, status FROM system.collections")) {
+            assertEquals(List.of("name", "points_count", "status"),
+                List.of(rows.getMetaData().getColumnLabel(1), rows.getMetaData().getColumnLabel(2),
+                    rows.getMetaData().getColumnLabel(3)));
+            assertSame(statement, rows.getStatement());
+
+            assertTrue(rows.next());
+            assertEquals("products", rows.getString("name"));
+            assertEquals(42L, rows.getLong("points_count"));
+            assertEquals("green", rows.getString("status"));
+            assertFalse(rows.next());
+        }
+
+        try (ResultSet rows = statement.executeQuery("SELECT * FROM qdrant.system.aliases")) {
+            assertTrue(rows.next());
+            assertEquals("current", rows.getString("alias_name"));
+            assertEquals("products", rows.getString("collection_name"));
+            assertFalse(rows.next());
+        }
+    }
+
+    @Test
+    void reportsAnUnknownSystemTableOrColumnBeforeRunning() throws SQLException {
+        SQLSyntaxErrorException table = assertThrows(SQLSyntaxErrorException.class,
+            () -> statement.executeQuery("SELECT * FROM system.telemetry"));
+        assertEquals("42S02", table.getSQLState());
+
+        SQLSyntaxErrorException column = assertThrows(SQLSyntaxErrorException.class,
+            () -> statement.executeQuery("SELECT points FROM system.collections"));
+        assertEquals("42S22", column.getSQLState());
+
+        // A system table's columns are the driver's own, so none of this read any collection
+        assertEquals(0, reads("products"));
+    }
+
+    @Test
     void runsASelectFromACollectionInEveryExecute() throws SQLException {
         List<Executable> calls = List.of(
             () -> assertTrue(statement.execute(SQL)),

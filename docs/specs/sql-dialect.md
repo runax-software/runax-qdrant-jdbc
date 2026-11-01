@@ -35,6 +35,7 @@ SQL the driver will accept, so the [roadmap](../../ROADMAP.md) can be built agai
 | Score of a search | `_score` column |
 | Payload index | Index |
 | Collection metadata | Table comment and driver settings (see [Embeddings](#embeddings)) |
+| Server and collection state | Read-only tables in the `system` schema (see [System tables](#system-tables)) |
 
 Column types follow the payload index or the sampled values, as the driver already reports
 them: `VARCHAR`, `BIGINT`, `DOUBLE`, `BOOLEAN`, `TIMESTAMP WITH TIME ZONE`, `JSON`, `VECTOR`,
@@ -308,6 +309,39 @@ SELECT /*+ hnsw_ef=256 shard_key='eu' */ _id, _score    -- for one statement
 FROM docs ORDER BY similarity(dense, embed('refund')) DESC LIMIT 10;
 ```
 
+## System tables
+
+Read-only tables that describe the server rather than any collection's points. They sit in
+the `system` schema, next to `collections`, the schema the collections themselves are in, so
+their names can't clash with a collection's. `DatabaseMetaData` lists them as
+`SYSTEM TABLE`s, with fixed columns, no primary key, and no indexes.
+
+| Table | Qdrant | Columns |
+| --- | --- | --- |
+| `system.collections` | `GET /collections`, then `GET /collections/{name}` for each | `name`, `status`, `optimizer_status`, `points_count`, `indexed_vectors_count`, `segments_count`, `shard_number`, `replication_factor`, `write_consistency_factor`, `on_disk_payload`, `vectors`, `sparse_vectors`, `payload_indexes` |
+| `system.aliases` | `GET /aliases` | `alias_name`, `collection_name` |
+
+```sql
+SELECT name, status, points_count FROM system.collections;
+SELECT alias_name, collection_name FROM qdrant.system.aliases;
+```
+
+Values Qdrant leaves out of its answer, such as the counts of a collection that isn't ready,
+are null. Fields whose shape depends on the Qdrant version or on how the collection was
+created, such as a collection's vector parameters, are JSON columns holding what Qdrant sent
+rather than a column per field. A collection name is matched exactly, as Qdrant matches it,
+but the driver's own names — the catalog, the two schemas, and the system tables and their
+columns — are matched whatever the case.
+
+`system.collections` reads one collection at a time, because Qdrant describes them only one
+at a time: it costs one call per collection. Nothing read here is cached; every statement
+sees the server as it is now.
+
+Planned tables, which each describe state Qdrant already exposes: snapshots, shard keys,
+cluster info and peers, telemetry, metrics, and issues. The read-only `CALL` procedures
+below move to these tables as they land. `GET /metrics` answers in Prometheus' text format
+rather than JSON, so it needs more than a new table.
+
 ## Operations
 
 | SQL | Qdrant |
@@ -341,8 +375,8 @@ These are errors, not emulated:
 - Server internals: telemetry (`/telemetry`), Prometheus metrics (`/metrics`), cluster and
   Raft consensus state (`/cluster`), and Qdrant's performance hints (`/issues`). The driver
   doesn't read them yet; use Qdrant's REST API directly or a monitoring tool such as
-  Prometheus. They may later become read-only system tables (see
-  the roadmap).
+  Prometheus. They're planned as [system tables](#system-tables), where collections and
+  aliases already are.
 
 ## Open questions
 

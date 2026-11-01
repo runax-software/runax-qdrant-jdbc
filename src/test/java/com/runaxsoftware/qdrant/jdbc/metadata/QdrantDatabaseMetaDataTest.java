@@ -73,8 +73,7 @@ class QdrantDatabaseMetaDataTest {
 
     @Test
     void listsCollectionsSortedByName() throws SQLException {
-        assertEquals(List.of("Mixed-Case", "articles", "ghost", "products"),
-            column(metaData.getTables(null, null, null, null), "TABLE_NAME"));
+        assertEquals(List.of("Mixed-Case", "articles", "ghost", "products"), tables(null, null));
     }
 
     @Test
@@ -106,15 +105,20 @@ class QdrantDatabaseMetaDataTest {
         assertEquals(4, tables("%", new String[] {"VIEW", "table"}).size());
         assertEquals(List.of(), tables("%", new String[] {"VIEW", "SYSTEM TABLE"}));
         assertEquals(List.of(), tables("%", new String[0]));
+        assertEquals(List.of("aliases", "collections"),
+            systemTables("%", new String[] {"VIEW", "SYSTEM TABLE"}));
     }
 
     @Test
     void matchesFiltersForItsCatalogAndSchema() throws SQLException {
-        assertEquals(4, column(metaData.getTables("", "", "%", null), "TABLE_NAME").size());
-        assertEquals(4, column(metaData.getTables(null, "%", "%", null), "TABLE_NAME").size());
+        // 4 collections, and the 2 system tables wherever the schema filter takes them in too
+        assertEquals(6, column(metaData.getTables("", "", "%", null), "TABLE_NAME").size());
+        assertEquals(6, column(metaData.getTables(null, "%", "%", null), "TABLE_NAME").size());
         assertEquals(4, column(metaData.getTables("qdrant", "collections", "%", null),
             "TABLE_NAME").size());
         assertEquals(4, column(metaData.getTables(null, "coll%", "%", null), "TABLE_NAME").size());
+        assertEquals(2, column(metaData.getTables("qdrant", "system", "%", null),
+            "TABLE_NAME").size());
         assertEquals(List.of(), column(metaData.getTables("other", null, "%", null), "TABLE_NAME"));
         assertEquals(List.of(), column(metaData.getTables("QDRANT", null, "%", null), "TABLE_NAME"));
         assertEquals(List.of(), column(metaData.getTables(null, "public", "%", null), "TABLE_NAME"));
@@ -123,8 +127,8 @@ class QdrantDatabaseMetaDataTest {
     @Test
     void putsEveryRowInTheOneCatalogAndSchema() throws SQLException {
         List<ResultSet> results = List.of(
-            metaData.getTables(null, null, "%", null),
-            metaData.getColumns(null, null, "%", "%"),
+            metaData.getTables(null, "collections", "%", null),
+            metaData.getColumns(null, "collections", "%", "%"),
             metaData.getPrimaryKeys(null, null, "products"),
             metaData.getIndexInfo(null, null, "products", false, true));
 
@@ -612,7 +616,7 @@ class QdrantDatabaseMetaDataTest {
     // Views
 
     @Test
-    void listsAliasesAsViewsAfterTheTables() throws SQLException {
+    void listsSystemTablesThenCollectionsThenViews() throws SQLException {
         server.alias("current", "products").alias("best", "articles");
         List<String> listed = new ArrayList<>();
 
@@ -625,6 +629,9 @@ class QdrantDatabaseMetaDataTest {
         }
 
         assertEquals(List.of(
+            "qdrant.system.aliases SYSTEM TABLE Every alias, with the collection it points at",
+            "qdrant.system.collections SYSTEM TABLE Every collection on the server, with its "
+                + "state and parameters",
             "qdrant.collections.Mixed-Case TABLE null",
             "qdrant.collections.articles TABLE null",
             "qdrant.collections.ghost TABLE null",
@@ -642,6 +649,8 @@ class QdrantDatabaseMetaDataTest {
         assertEquals(List.of("Current-2"), tables("Current\\-_", new String[] {"VIEW", "TABLE"}));
         assertEquals(4, tables("%", new String[] {"TABLE"}).size());
         assertEquals(List.of(), tables("%", new String[] {"SYSTEM TABLE"}));
+        assertEquals(List.of("aliases", "collections"),
+            systemTables("%", new String[] {"SYSTEM TABLE"}));
         assertEquals(List.of(), column(metaData.getTables("other", null, "%", null),
             "TABLE_NAME"));
     }
@@ -760,10 +769,92 @@ class QdrantDatabaseMetaDataTest {
         assertEquals(List.of(), columns("dangling"));
     }
 
+    // System tables
+
+    @Test
+    void listsTheSystemTablesWithoutCallingQdrant() throws SQLException {
+        int collections = server.calls(Endpoint.COLLECTIONS);
+
+        assertEquals(List.of("aliases", "collections"), systemTables("%", null));
+        assertEquals(List.of("collections"), systemTables("coll%", null));
+        assertEquals(List.of(), systemTables("products", null));
+        assertEquals(List.of(), systemTables("%", new String[] {"TABLE", "VIEW"}));
+
+        assertEquals(collections, server.calls(Endpoint.COLLECTIONS));
+        assertEquals(0, server.calls(Endpoint.ALIASES));
+    }
+
+    @Test
+    void putsTheSystemTablesInTheirOwnSchema() throws SQLException {
+        try (ResultSet tables = metaData.getTables(null, "system", "aliases", null)) {
+            assertTrue(tables.next());
+            assertEquals("qdrant", tables.getString("TABLE_CAT"));
+            assertEquals("system", tables.getString("TABLE_SCHEM"));
+            assertEquals("aliases", tables.getString("TABLE_NAME"));
+            assertEquals("SYSTEM TABLE", tables.getString("TABLE_TYPE"));
+            assertEquals("Every alias, with the collection it points at",
+                tables.getString("REMARKS"));
+            assertFalse(tables.next());
+        }
+    }
+
+    @Test
+    void describesEachColumnOfASystemTable() throws SQLException {
+        assertEquals(List.of(
+            "aliases.alias_name 1 VARCHAR YES The alias name",
+            "aliases.collection_name 2 VARCHAR YES The collection the alias points at"),
+            describe(metaData.getColumns(null, "system", "aliases", "%")));
+
+        try (ResultSet columns = metaData.getColumns(null, "system", "collections",
+            "points_count")) {
+            assertTrue(columns.next());
+            assertEquals("qdrant", columns.getString("TABLE_CAT"));
+            assertEquals("system", columns.getString("TABLE_SCHEM"));
+            assertEquals(Types.BIGINT, columns.getInt("DATA_TYPE"));
+            assertEquals("BIGINT", columns.getString("TYPE_NAME"));
+            assertEquals(19, columns.getInt("COLUMN_SIZE"));
+            assertEquals(10, columns.getInt("NUM_PREC_RADIX"));
+            assertEquals(4, columns.getInt("ORDINAL_POSITION"));
+            assertFalse(columns.next());
+        }
+    }
+
+    /**
+     * A collection may be named like a system table: the two sit in different schemas, and JDBC
+     * orders columns by schema, so the collection's come first.
+     */
+    @Test
+    void describesACollectionsColumnsBeforeTheSystemTableOfTheSameName() throws SQLException {
+        server.collection("aliases", unnamedVector(2, "Dot", Map.of()), List.of());
+        List<String> described = new ArrayList<>();
+
+        try (ResultSet columns = metaData.getColumns(null, null, "aliases", "%")) {
+            while (columns.next()) {
+                described.add(columns.getString("TABLE_SCHEM") + "."
+                    + columns.getString("TABLE_NAME") + "." + columns.getString("COLUMN_NAME"));
+            }
+        }
+
+        assertEquals(List.of(
+            "collections.aliases._id",
+            "collections.aliases._payload",
+            "collections.aliases._vector",
+            "system.aliases.alias_name",
+            "system.aliases.collection_name"), described);
+    }
+
+    @Test
+    void givesTheSystemTablesNoKeyAndNoIndexes() throws SQLException {
+        assertFalse(metaData.getPrimaryKeys("qdrant", "system", "collections").next());
+        assertFalse(metaData.getIndexInfo("qdrant", "system", "collections", false, true).next());
+        assertFalse(metaData.getPrimaryKeys(null, "system", "aliases").next());
+        assertFalse(metaData.getIndexInfo(null, "system", "aliases", false, true).next());
+    }
+
     // Schemas, catalogs, types
 
     @Test
-    void hasOneCatalogAndSchema() throws SQLException {
+    void hasOneCatalogAndTwoSchemas() throws SQLException {
         try (ResultSet schemas = metaData.getSchemas();
              ResultSet catalogs = metaData.getCatalogs()) {
             assertEquals(List.of("TABLE_SCHEM", "TABLE_CATALOG"), labels(schemas));
@@ -771,6 +862,9 @@ class QdrantDatabaseMetaDataTest {
 
             assertTrue(schemas.next());
             assertEquals("collections", schemas.getString("TABLE_SCHEM"));
+            assertEquals("qdrant", schemas.getString("TABLE_CATALOG"));
+            assertTrue(schemas.next());
+            assertEquals("system", schemas.getString("TABLE_SCHEM"));
             assertEquals("qdrant", schemas.getString("TABLE_CATALOG"));
             assertFalse(schemas.next());
 
@@ -782,17 +876,22 @@ class QdrantDatabaseMetaDataTest {
 
     @Test
     void filtersSchemasByCatalogAndPattern() throws SQLException {
-        assertEquals(List.of("collections"), column(metaData.getSchemas(null, "%"), "TABLE_SCHEM"));
+        assertEquals(List.of("collections", "system"),
+            column(metaData.getSchemas(null, "%"), "TABLE_SCHEM"));
         assertEquals(List.of("collections"), column(metaData.getSchemas("qdrant", "coll%"),
             "TABLE_SCHEM"));
-        assertEquals(List.of("collections"), column(metaData.getSchemas("", ""), "TABLE_SCHEM"));
+        assertEquals(List.of("system"), column(metaData.getSchemas("qdrant", "system"),
+            "TABLE_SCHEM"));
+        assertEquals(List.of("collections", "system"),
+            column(metaData.getSchemas("", ""), "TABLE_SCHEM"));
         assertEquals(List.of(), column(metaData.getSchemas("other", null), "TABLE_SCHEM"));
         assertEquals(List.of(), column(metaData.getSchemas(null, "public"), "TABLE_SCHEM"));
     }
 
     @Test
-    void hasTablesAndViews() throws SQLException {
-        assertEquals(List.of("TABLE", "VIEW"), column(metaData.getTableTypes(), "TABLE_TYPE"));
+    void hasSystemTablesTablesAndViews() throws SQLException {
+        assertEquals(List.of("SYSTEM TABLE", "TABLE", "VIEW"),
+            column(metaData.getTableTypes(), "TABLE_TYPE"));
     }
 
     @Test
@@ -1023,12 +1122,17 @@ class QdrantDatabaseMetaDataTest {
 
     // Helpers
 
+    // The collections' own schema, so the system tables don't come into what these assert
     private List<String> tables(String pattern, String[] types) throws SQLException {
-        return column(metaData.getTables(null, null, pattern, types), "TABLE_NAME");
+        return column(metaData.getTables(null, "collections", pattern, types), "TABLE_NAME");
+    }
+
+    private List<String> systemTables(String pattern, String[] types) throws SQLException {
+        return column(metaData.getTables(null, "system", pattern, types), "TABLE_NAME");
     }
 
     private List<String> columns(String table) throws SQLException {
-        return column(metaData.getColumns(null, null, table, "%"), "COLUMN_NAME");
+        return column(metaData.getColumns(null, "collections", table, "%"), "COLUMN_NAME");
     }
 
     private List<String> indexes(String table) throws SQLException {

@@ -97,7 +97,7 @@ class IntrospectionIntegrationTest {
                 }
             }
 
-            assertEquals(List.of("TABLE", "VIEW"), tableTypes);
+            assertEquals(List.of("SYSTEM TABLE", "TABLE", "VIEW"), tableTypes);
             List<String> tables = new ArrayList<>();
             List<String> views = new ArrayList<>();
 
