@@ -20,12 +20,14 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.SelectItem;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Star;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.TableName;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.VectorLiteral;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Assignment;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.ColumnSpec;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateTableStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DeleteStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropTableStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.TruncateStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.UpdateStatement;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -409,14 +411,14 @@ class ParserTest {
 
     @Test
     void rejectsStatementsItDoesntRead() {
-        assertError("Expected SELECT, DELETE, TRUNCATE, DROP, CREATE, SET, RESET or SHOW, found "
-            + "'INSERT' at line 1, column 1", "INSERT INTO docs");
+        assertError("Expected SELECT, UPDATE, DELETE, TRUNCATE, DROP, CREATE, SET, RESET or SHOW, "
+            + "found 'INSERT' at line 1, column 1", "INSERT INTO docs");
     }
 
     @Test
     void rejectsAnEmptyStatement() {
-        assertError("Expected SELECT, DELETE, TRUNCATE, DROP, CREATE, SET, RESET or SHOW, found "
-            + "the end of the statement at line 1, column 1", "");
+        assertError("Expected SELECT, UPDATE, DELETE, TRUNCATE, DROP, CREATE, SET, RESET or SHOW, "
+            + "found the end of the statement at line 1, column 1", "");
     }
 
     // DELETE, TRUNCATE and DROP TABLE
@@ -446,6 +448,28 @@ class ParserTest {
             Parser.parse("drop table if exists docs"));
         assertEquals(new DropTableStatement(TableName.of("if"), false), Parser.parse("DROP TABLE if"),
             "a collection may be called if");
+    }
+
+    // UPDATE
+
+    @Test
+    void parsesAnUpdateAsADataEditorWritesIt() throws SQLSyntaxErrorException {
+        assertEquals(new UpdateStatement(TableName.of("collections", "docs"), "t", List.of(
+                new Assignment(Column.of("lang"), new Parameter(1)),
+                new Assignment(new Column("t", "year"), new Literal(2024L)),
+                new Assignment(Column.of("specs.color"), new Literal(null))),
+                new Comparison(Column.of("_id"), "=", new Parameter(2))),
+            Parser.parse("UPDATE collections.docs AS t SET lang = ?, t.year = 2024, "
+                + "\"specs.color\" = NULL WHERE _id = ?"));
+        assertEquals(new UpdateStatement(TableName.of("docs"), null, List.of(
+                new Assignment(Column.of("lang"), new Literal("de"))), null),
+            Parser.parse("update docs set lang = 'de'"));
+    }
+
+    @Test
+    void rejectsAnUpdateWithoutSet() {
+        assertError("Expected SET, found 'lang' at line 1, column 15", "UPDATE docs t lang = 1");
+        assertError("Expected =, found 'de' at line 1, column 22", "UPDATE docs SET lang 'de'");
     }
 
     // CREATE TABLE
@@ -552,8 +576,8 @@ class ParserTest {
                 + "at line 1, column 11", "SELECT 1; SELECT 2");
         assertError("Expected the end of the statement: run one statement at a time, found ';' at "
                 + "line 1, column 10", "SELECT 1;;");
-        assertError("Expected SELECT, DELETE, TRUNCATE, DROP, CREATE, SET, RESET or SHOW, found "
-                + "';' at line 1, column 1", ";");
+        assertError("Expected SELECT, UPDATE, DELETE, TRUNCATE, DROP, CREATE, SET, RESET or SHOW, "
+                + "found ';' at line 1, column 1", ";");
     }
 
     @Test

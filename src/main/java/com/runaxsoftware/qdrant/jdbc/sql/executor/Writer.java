@@ -3,6 +3,7 @@ package com.runaxsoftware.qdrant.jdbc.sql.executor;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import java.sql.SQLException;
+import java.util.List;
 
 /**
  * Where write plans change what Qdrant holds: an interface rather than the gateway, so the
@@ -19,6 +20,11 @@ interface Writer {
      * Deletes the points the filter matches.
      */
     void deletePoints(String collection, JsonNode filter) throws SQLException;
+
+    /**
+     * Applies payload changes, in order, in one batch.
+     */
+    void updatePoints(String collection, List<JsonNode> operations) throws SQLException;
 
     /**
      * Deletes the collection; fails with SQL state {@code 42S02} when there's none.

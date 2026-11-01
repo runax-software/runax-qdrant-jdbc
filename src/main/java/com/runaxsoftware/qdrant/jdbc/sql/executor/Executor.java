@@ -24,6 +24,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.SystemTablePlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdatePointsPlan;
 import com.runaxsoftware.qdrant.jdbc.system.QdrantSystemTables;
 import com.runaxsoftware.qdrant.jdbc.system.SystemTableReader;
 
@@ -204,6 +205,10 @@ public final class Executor {
             return ExecutionResult.updated(delete(delete));
         }
 
+        if (plan instanceof UpdatePointsPlan update) {
+            return ExecutionResult.updated(update(update));
+        }
+
         if (plan instanceof DropCollectionPlan drop) {
             drop(drop);
             return ExecutionResult.updated(0);
@@ -253,6 +258,20 @@ public final class Executor {
 
         if (count > 0) {
             writer.deletePoints(plan.collection(), plan.filter());
+        }
+
+        return count;
+    }
+
+    /**
+     * Changes the plan's points and returns how many there were, counted first, as a delete's
+     * are: Qdrant doesn't say how many points a payload change reached.
+     */
+    private long update(UpdatePointsPlan plan) throws SQLException {
+        long count = writer.count(plan.collection(), plan.filter());
+
+        if (count > 0) {
+            writer.updatePoints(plan.collection(), plan.operations());
         }
 
         return count;
@@ -351,6 +370,12 @@ public final class Executor {
             @Override
             public void deletePoints(String collection, JsonNode filter) throws SQLException {
                 gateway.deletePoints(collection, filter);
+            }
+
+            @Override
+            public void updatePoints(String collection, List<JsonNode> operations)
+                throws SQLException {
+                gateway.updatePoints(collection, operations);
             }
 
             @Override

@@ -8,6 +8,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.statement.DropParser;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.statement.OptionParser;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.statement.SelectParser;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.statement.TruncateParser;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.statement.UpdateParser;
 
 import java.sql.SQLSyntaxErrorException;
 
@@ -46,12 +47,15 @@ public final class Parser {
         if (tokenStream.peekKeyword("CREATE")) {
             return new CreateParser(tokenStream).parse();
         }
+        if (tokenStream.peekKeyword("UPDATE")) {
+            return new UpdateParser(tokenStream).parse();
+        }
         if (tokenStream.peekKeyword("SET") || tokenStream.peekWord("RESET")
             || tokenStream.peekWord("SHOW")) {
             return new OptionParser(tokenStream).parse();
         }
 
-        throw tokenStream.error("Expected SELECT, DELETE, TRUNCATE, DROP, CREATE, SET, RESET or "
-            + "SHOW");
+        throw tokenStream.error("Expected SELECT, UPDATE, DELETE, TRUNCATE, DROP, CREATE, SET, "
+            + "RESET or SHOW");
     }
 }

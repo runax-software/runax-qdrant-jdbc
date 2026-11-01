@@ -11,9 +11,11 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Or;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.OrderItem;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Parameter;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.SelectItem;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Assignment;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DeleteStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Statement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.UpdateStatement;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -64,6 +66,15 @@ public final class Parameters {
             return new SelectStatement(items, select.table(), select.alias(),
                 bind(select.where(), values), select.groupBy(), orderBy, select.limit(),
                 select.offset());
+        }
+        if (statement instanceof UpdateStatement update) {
+            var assignments = new ArrayList<Assignment>();
+            for (Assignment assignment : update.assignments()) {
+                assignments.add(new Assignment(assignment.column(), bind(assignment.value(), values)));
+            }
+
+            return new UpdateStatement(update.table(), update.alias(), assignments,
+                bind(update.where(), values));
         }
         if (statement instanceof DeleteStatement delete) {
             return new DeleteStatement(delete.table(), delete.alias(), bind(delete.where(), values));

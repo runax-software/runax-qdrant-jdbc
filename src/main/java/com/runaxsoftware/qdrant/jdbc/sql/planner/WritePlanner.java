@@ -62,7 +62,7 @@ final class WritePlanner {
     }
 
     // The collection a statement names; the system schema's tables are read-only
-    private static String collection(TableName table, String verb) throws SQLException {
+    static String collection(TableName table, String verb) throws SQLException {
         SelectPlanner.checkCatalog(table);
 
         if (SystemTable.isSystemSchema(table.schema())) {
