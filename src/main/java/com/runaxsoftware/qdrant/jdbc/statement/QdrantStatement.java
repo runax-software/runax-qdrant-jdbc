@@ -13,6 +13,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.TableName;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DeleteStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Statement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.UpdateStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.Planner;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropCollectionPlan;
@@ -34,7 +35,7 @@ import java.util.List;
  * instead; a SELECT from one of the {@code system} schema's tables reads the server's own state
  * at once; a SELECT without FROM (such as a tool's {@code SELECT 'keep alive'}) returns its row.
  * The statement's maximum rows limit every result, and its fetch size sets how many points one
- * page reads. DELETE, TRUNCATE, DROP TABLE and CREATE TABLE change what Qdrant holds and return a count
+ * page reads. UPDATE, DELETE, TRUNCATE, DROP TABLE and CREATE TABLE change what Qdrant holds and return a count
  * instead, unless the connection is read-only.
  *
  * <p>The columns come from the connection's {@link SchemaReader}, which keeps them for a while,
@@ -261,6 +262,7 @@ public class QdrantStatement extends AbstractStatement {
     private static String collectionRead(Statement statement) {
         TableName table = statement instanceof SelectStatement select ? select.table()
             : statement instanceof DeleteStatement delete ? delete.table()
+            : statement instanceof UpdateStatement update ? update.table()
             : null;
 
         return table == null || SystemTable.isSystemSchema(table.schema()) ? null : table.name();

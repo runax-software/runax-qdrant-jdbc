@@ -19,6 +19,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Not;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Or;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Parameter;
 
+import java.math.BigInteger;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.SQLSyntaxErrorException;
@@ -209,6 +210,9 @@ final class FilterPlanner {
                 ids.add(id);
             } else if (value instanceof String text && isUuid(text)) {
                 ids.add(text);
+            } else if (value instanceof String text && isUnsigned(text)) {
+                // Tools send the ID column's text, and Qdrant takes no number written as text
+                ids.add(JSON.numberNode(new BigInteger(text)));
             } else {
                 throw new SQLSyntaxErrorException("A point ID is a whole number of 0 or more, "
                     + "or a UUID in quotes, not " + written(value), "42000");
@@ -389,6 +393,11 @@ final class FilterPlanner {
         if (value instanceof Boolean bool) return JSON.booleanNode(bool);
 
         return JSON.textNode((String) value);
+    }
+
+    // A whole number Qdrant can hold as an ID: 0 up to the largest unsigned 64-bit one
+    private static boolean isUnsigned(String text) {
+        return text.matches("\\d{1,20}") && new BigInteger(text).bitLength() <= 64;
     }
 
     private static boolean isUuid(String text) {

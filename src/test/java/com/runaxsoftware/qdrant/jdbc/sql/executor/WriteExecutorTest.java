@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DeletePointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropCollectionPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdatePointsPlan;
 import com.runaxsoftware.qdrant.jdbc.support.Json;
 
 import org.junit.jupiter.api.Test;
@@ -54,6 +55,11 @@ class WriteExecutorTest {
             @Override
             public void deletePoints(String collection, JsonNode filter) {
                 calls.add("delete " + collection + " " + filter);
+            }
+
+            @Override
+            public void updatePoints(String collection, List<JsonNode> operations) {
+                calls.add("update " + collection + " " + operations);
             }
 
             @Override
@@ -123,6 +129,27 @@ class WriteExecutorTest {
 
         assertEquals("28000", assertThrows(SQLException.class,
             () -> executor.execute(new DropCollectionPlan("docs", true), statement())).getSQLState());
+    }
+
+    @Test
+    void countsThePointsThenChangesThemInOneBatch() throws SQLException {
+        List<JsonNode> operations = List.of(Json.object("set_payload",
+            Json.object("payload", Json.object("lang", "de"), "filter", FILTER)));
+
+        ExecutionResult result = executor.execute(new UpdatePointsPlan("docs", FILTER, operations),
+            statement());
+
+        assertEquals(3, result.updateCount());
+        assertEquals(List.of("count docs " + FILTER, "update docs " + operations), calls);
+    }
+
+    @Test
+    void sendsNoUpdateWhenNothingMatches() throws SQLException {
+        matching = 0;
+
+        assertEquals(0, executor.execute(new UpdatePointsPlan("docs", FILTER, List.of()), statement())
+            .updateCount());
+        assertEquals(List.of("count docs " + FILTER), calls);
     }
 
     // CREATE TABLE

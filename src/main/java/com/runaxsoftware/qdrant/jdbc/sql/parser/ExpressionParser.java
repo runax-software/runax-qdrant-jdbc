@@ -167,6 +167,7 @@ public final class ExpressionParser {
             case KEYWORD -> switch (token.text()) {
                 case "TRUE" -> new Literal(true);
                 case "FALSE" -> new Literal(false);
+                case "NULL" -> new Literal(null);
                 default -> throw this.tokenStream.error("Expected a value");
             };
             default -> throw this.tokenStream.error("Expected a value");

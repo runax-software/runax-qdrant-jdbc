@@ -271,6 +271,16 @@ else writes to the collection between the two calls. A `DELETE` without `WHERE` 
 that points to `TRUNCATE`, so a forgotten condition can't empty a collection. A read-only
 connection (`setReadOnly(true)`) refuses every write with SQLState `25006`.
 
+`UPDATE docs SET … WHERE …` runs too, as one call to the batch update API: fields are set
+together, a field inside an object (`"specs.color"`, or `specs.color` without quotes) is set
+under its object's `key`, `NULL` deletes a field, and `_payload` replaces or clears the whole
+payload before the other fields are set. A field the collection doesn't have yet is added. A
+value is read as its column's type, so a cell's text works as a tool sends it: `'49.5'` into
+a `DOUBLE`, `'false'` into a `BOOLEAN`, `'["a"]'` into a `JSON` column. The update count is
+the matching points, counted first, as for `DELETE`. An `UPDATE` without `WHERE` is an error,
+as are changing `_id` and changing vectors, which is still the target. A point ID compared
+with text that holds a whole number (`_id = '7'`, as DataGrip sends it) matches that number.
+
 | SQL | Qdrant |
 | --- | --- |
 | `INSERT INTO docs (_id, dense, lang) VALUES (…)` | Upsert in `insert_only` mode |

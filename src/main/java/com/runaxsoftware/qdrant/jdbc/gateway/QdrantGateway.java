@@ -201,6 +201,21 @@ public class QdrantGateway implements AutoCloseable {
     }
 
     /**
+     * Applies payload changes in order, through Qdrant's batch update API: one call, so the
+     * changes of one UPDATE reach Qdrant together.
+     *
+     * @param operations the batch's operations, as Qdrant takes them
+     */
+    public void updatePoints(String collection, List<JsonNode> operations) throws SQLException {
+        ObjectNode body = JSON.createObjectNode();
+        ArrayNode list = body.putArray("operations");
+        operations.forEach(list::add);
+
+        request(HttpMethod.POST,
+            "/collections/" + segment(collection) + "/points/batch" + writeParameters(), body);
+    }
+
+    /**
      * Deletes a collection, with its points and indexes. Fails with SQL state {@code 42S02} when
      * there's no such collection.
      */
