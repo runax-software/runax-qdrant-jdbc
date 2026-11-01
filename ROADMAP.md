@@ -21,7 +21,9 @@ Planned work, roughly in the order it will land. The SQL each item accepts is sp
   column.
 - [ ] **DataGrip compatibility** — harmless defaults for the `Connection` and
   `Statement` methods DataGrip calls on every connection, and support for the SQL it
-  generates when opening, filtering, and sorting a table.
+  generates when opening, filtering, and sorting a table. The defaults and the statement
+  that opens a table (`SELECT t.* FROM collections.docs t`, through table aliases and
+  qualified names) are done; filtering and sorting need `WHERE` and `ORDER BY`.
 - [x] **Integration tests** against Qdrant in Docker, run by CI on every pull request.
 - [ ] **Packaging** — one self-contained jar, a DataGrip setup guide, and publishing to
   Maven Central as `com.runaxsoftware:qdrant-jdbc`. The jar (`./gradlew shadowJar`) and

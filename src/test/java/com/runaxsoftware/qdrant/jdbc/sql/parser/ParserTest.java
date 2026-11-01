@@ -1,6 +1,7 @@
 package com.runaxsoftware.qdrant.jdbc.sql.parser;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.And;
@@ -15,6 +16,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Or;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.OrderItem;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Parameter;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.SelectItem;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Star;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.TableName;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import org.junit.jupiter.api.Test;
@@ -34,7 +36,7 @@ class ParserTest {
 
     @Test
     void parsesSelectStar() throws SQLSyntaxErrorException {
-        assertEquals(new SelectStatement(List.of(), TableName.of("docs"), null, List.of(), null, null),
+        assertEquals(new SelectStatement(star(), TableName.of("docs"), null, null, List.of(), null, null),
                 Parser.parse("SELECT * FROM docs"));
     }
 
@@ -71,8 +73,63 @@ class ParserTest {
     }
 
     @Test
+    void parsesTheNameAStatementGivesItsTable() throws SQLSyntaxErrorException {
+        assertEquals("t", select("SELECT * FROM docs t").alias());
+        assertEquals("t", select("SELECT * FROM docs AS t").alias());
+        assertEquals("My Docs", select("SELECT * FROM docs AS \"My Docs\"").alias());
+        assertEquals("d", select("SELECT * FROM collections.docs d").alias());
+        assertNull(select("SELECT * FROM docs").alias());
+        assertNull(select("SELECT * FROM docs WHERE lang = 'en'").alias());
+        assertNull(select("SELECT * FROM docs LIMIT 5").alias());
+        assertNull(select("SELECT * FROM docs ORDER BY price").alias());
+    }
+
+    /**
+     * What DataGrip's data editor sends when a collection is opened.
+     */
+    @Test
+    void parsesAQualifiedStar() throws SQLSyntaxErrorException {
+        SelectStatement select = select("SELECT t.* FROM collections.sample_products t");
+
+        assertEquals(List.of(new SelectItem(new Star("t"), null)), select.items());
+        assertEquals(TableName.of("collections", "sample_products"), select.table());
+        assertEquals("t", select.alias());
+    }
+
+    @Test
+    void parsesAStarAsAnItemOfTheSelectList() throws SQLSyntaxErrorException {
+        assertEquals(star(), select("SELECT * FROM docs").items());
+        assertEquals(List.of(new SelectItem(new Star("t"), null), column("name")),
+                select("SELECT t.*, name FROM docs t").items());
+    }
+
+    @Test
+    void parsesQualifiedColumns() throws SQLSyntaxErrorException {
+        assertEquals(List.of(new SelectItem(new Column("t", "name"), null),
+                        new SelectItem(new Column("t", "price"), "cost")),
+                select("SELECT t.name, t.price AS cost FROM docs t").items());
+
+        SelectStatement select =
+                select("SELECT * FROM docs t WHERE t.lang = 'en' ORDER BY t.price DESC");
+
+        assertEquals(new Comparison(new Column("t", "lang"), "=", new Literal("en")),
+                select.where());
+        assertEquals(List.of(new OrderItem(new Column("t", "price"), true)), select.orderBy());
+    }
+
+    @Test
+    void readsADottedNameWithoutATableAsTheNameItIs() throws SQLSyntaxErrorException {
+        // Which of the two it is, the planner decides: a quoted path is one name
+        assertEquals(List.of(new SelectItem(new Column("specs", "color"), null)),
+                select("SELECT specs.color FROM docs").items());
+        assertEquals(List.of(column("specs.color")),
+                select("SELECT \"specs.color\" FROM docs").items());
+    }
+
+    @Test
     void readsKeywordsInAnyCaseAndKeepsTheCaseOfNames() throws SQLSyntaxErrorException {
-        assertEquals(new SelectStatement(List.of(column("Name")), TableName.of("MyDocs"), eq("lang", "en"), List.of(), 5L, null),
+        assertEquals(new SelectStatement(List.of(column("Name")), TableName.of("MyDocs"), null, eq("lang", "en"),
+                        List.of(), 5L, null),
                 Parser.parse("select Name from MyDocs Where lang = 'en' limit 5"));
     }
 
@@ -81,7 +138,7 @@ class ParserTest {
     @Test
     void parsesASelectOfConstantsWithoutFrom() throws SQLSyntaxErrorException {
         assertEquals(new SelectStatement(List.of(new SelectItem(new Literal("keep alive"), null)), null, null,
-                        List.of(), null, null),
+                        null, List.of(), null, null),
                 Parser.parse("select 'keep alive'"));
         assertEquals(List.of(new SelectItem(new Literal(1L), null), new SelectItem(new Literal(2.5), null),
                         new SelectItem(new Literal(true), null)),
@@ -90,7 +147,7 @@ class ParserTest {
 
     @Test
     void parsesAliases() throws SQLSyntaxErrorException {
-        assertEquals(List.of(new SelectItem(new Literal(1L), "one"), new SelectItem(new Column("name"), "title")),
+        assertEquals(List.of(new SelectItem(new Literal(1L), "one"), new SelectItem(Column.of("name"), "title")),
                 select("SELECT 1 AS one, name AS title FROM docs").items());
     }
 
@@ -119,7 +176,7 @@ class ParserTest {
     @ParameterizedTest
     @ValueSource(strings = {"=", "<>", "!=", "<", "<=", ">", ">="})
     void readsEveryComparisonOperator(String operator) throws SQLSyntaxErrorException {
-        assertEquals(new Comparison(new Column("price"), operator, new Literal(10L)),
+        assertEquals(new Comparison(Column.of("price"), operator, new Literal(10L)),
                 where("price " + operator + " 10"));
     }
 
@@ -127,8 +184,8 @@ class ParserTest {
     void numbersParametersInOrderFromOne() throws SQLSyntaxErrorException {
         assertEquals(
                 new And(
-                        new Comparison(new Column("a"), "=", new Parameter(1)),
-                        new InList(new Column("b"), List.of(new Parameter(2), new Parameter(3)), false)),
+                        new Comparison(Column.of("a"), "=", new Parameter(1)),
+                        new InList(Column.of("b"), List.of(new Parameter(2), new Parameter(3)), false)),
                 where("a = ? AND b IN (?, ?)"));
     }
 
@@ -136,16 +193,16 @@ class ParserTest {
 
     @Test
     void parsesInAndNotIn() throws SQLSyntaxErrorException {
-        assertEquals(new InList(new Column("lang"), List.of(new Literal("en"), new Literal("de")), false),
+        assertEquals(new InList(Column.of("lang"), List.of(new Literal("en"), new Literal("de")), false),
                 where("lang IN ('en', 'de')"));
-        assertEquals(new InList(new Column("lang"), List.of(new Literal("en")), true),
+        assertEquals(new InList(Column.of("lang"), List.of(new Literal("en")), true),
                 where("lang NOT IN ('en')"));
     }
 
     @Test
     void parsesIsNullAndIsNotNull() throws SQLSyntaxErrorException {
-        assertEquals(new IsNull(new Column("tags"), false), where("tags IS NULL"));
-        assertEquals(new IsNull(new Column("tags"), true), where("tags IS NOT NULL"));
+        assertEquals(new IsNull(Column.of("tags"), false), where("tags IS NULL"));
+        assertEquals(new IsNull(Column.of("tags"), true), where("tags IS NOT NULL"));
     }
 
     @Test
@@ -177,8 +234,8 @@ class ParserTest {
     @Test
     void parsesOrderByWithDirections() throws SQLSyntaxErrorException {
         assertEquals(
-                List.of(new OrderItem("price", true), new OrderItem("name", false),
-                        new OrderItem("_id", false)),
+                List.of(new OrderItem(Column.of("price"), true), new OrderItem(Column.of("name"), false),
+                        new OrderItem(Column.of("_id"), false)),
                 select("SELECT * FROM docs ORDER BY price DESC, name ASC, _id").orderBy());
     }
 
@@ -193,8 +250,9 @@ class ParserTest {
     @Test
     void parsesEveryClauseTogether() throws SQLSyntaxErrorException {
         assertEquals(
-                new SelectStatement(List.of(column("name")), TableName.of("docs"), eq("lang", "en"),
-                        List.of(new OrderItem("price", true)), 10L, 5L),
+                new SelectStatement(List.of(column("name")), TableName.of("docs"), null,
+                        eq("lang", "en"), List.of(new OrderItem(Column.of("price"), true)), 10L,
+                        5L),
                 Parser.parse("SELECT name FROM docs WHERE lang = 'en' ORDER BY price DESC LIMIT 10 OFFSET 5"));
     }
 
@@ -266,8 +324,8 @@ class ParserTest {
 
     @Test
     void rejectsLeftoverText() {
-        assertError("Expected the end of the statement, found 'extra' at line 1, column 20",
-                "SELECT * FROM docs extra");
+        assertError("Expected the end of the statement, found 'extra' at line 1, column 22",
+                "SELECT * FROM docs t extra");
     }
 
     @Test
@@ -286,12 +344,16 @@ class ParserTest {
         return select("SELECT * FROM docs WHERE " + condition).where();
     }
 
+    private static List<SelectItem> star() {
+        return List.of(new SelectItem(Star.of(), null));
+    }
+
     private static SelectItem column(String name) {
-        return new SelectItem(new Column(name), null);
+        return new SelectItem(Column.of(name), null);
     }
 
     private static Comparison eq(String column, Object value) {
-        return new Comparison(new Column(column), "=", new Literal(value));
+        return new Comparison(Column.of(column), "=", new Literal(value));
     }
 
     private static void assertError(String message, String sql) {

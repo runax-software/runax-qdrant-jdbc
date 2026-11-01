@@ -72,6 +72,42 @@ class QdrantStatementTest {
         }
     }
 
+    /**
+     * The statement DataGrip's data editor sends when a collection is opened: the star and the
+     * columns are named under the name it gives the collection in FROM.
+     */
+    @Test
+    void readsACollectionNamedUnderAnAlias() throws SQLException {
+        try (ResultSet rows = statement.executeQuery(
+            "SELECT t.* FROM collections.products t")) {
+            assertEquals(List.of("_id", "name", "price", "_payload"),
+                List.of(rows.getMetaData().getColumnLabel(1), rows.getMetaData().getColumnLabel(2),
+                    rows.getMetaData().getColumnLabel(3), rows.getMetaData().getColumnLabel(4)));
+
+            assertTrue(rows.next());
+            assertEquals("1", rows.getString("_id"));
+            assertEquals("Lamp", rows.getString("name"));
+            assertFalse(rows.next());
+        }
+
+        try (ResultSet rows = statement.executeQuery(
+            "SELECT t.name, t.price AS cost FROM products AS t LIMIT 1")) {
+            assertTrue(rows.next());
+            assertEquals("Lamp", rows.getString("name"));
+            assertEquals(39.9, rows.getDouble("cost"));
+        }
+    }
+
+    @Test
+    void reportsAQualifierThatNamesNoTableBeforeRunning() throws SQLException {
+        SQLException error = assertThrows(SQLException.class,
+            () -> statement.executeQuery("SELECT x.name FROM products t"));
+
+        assertEquals("42S02", error.getSQLState());
+        assertEquals("Unknown table or alias 'x' in 'x.name': this statement reads products as t",
+            error.getMessage());
+    }
+
     @Test
     void readsTheRowsOfASystemTable() throws SQLException {
         server.alias("current", "products");

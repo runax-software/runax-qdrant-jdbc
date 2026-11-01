@@ -29,7 +29,7 @@ SQL the driver will accept, so the [roadmap](../../ROADMAP.md) can be built agai
 | Alias | View |
 | Point | Row |
 | Point ID (unsigned 64-bit integer or UUID) | `_id` column, primary key |
-| Payload field (`name`, `id`, nested `specs.color`) | Column (`name`, `id`, `"specs.color"`) |
+| Payload field (`name`, `id`, nested `specs.color`) | Column (`name`, `id`, `"specs.color"`, or `specs.color` where no table is named that) |
 | Whole payload | `_payload` column (JSON) |
 | Unnamed vector / named vector | `_vector` column / column named after the vector |
 | Score of a search | `_score` column |
@@ -50,6 +50,18 @@ MongoDB's `_id`), or with a vector's name, gets no column of its own; it stays r
 through the payload, as `_payload->>'_id'`. Other payload fields that start with `_` are
 ordinary columns.
 
+### Qualified names
+
+A statement may name the table it reads and name its columns under it, as tools generate:
+`SELECT t.* FROM collections.docs t`. A name given to the table in FROM replaces the table's
+own, as SQL does, so `docs.name` is an error once the statement says `FROM docs t`.
+
+A nested payload field is one column whose name holds a dot, `"specs.color"`. Written without
+quotes, `specs.color` reads as that column too, as long as the statement names no table
+`specs`: the name is looked up whole when its first part names nothing in FROM. A qualifier
+that names neither the table nor a field of it is an error, `42S02`, naming the table the
+statement does read.
+
 ### JSON values
 
 Objects and arrays use PostgreSQL's JSON operators and functions:
@@ -68,6 +80,8 @@ Objects and arrays use PostgreSQL's JSON operators and functions:
 | SQL | Qdrant |
 | --- | --- |
 | `SELECT … FROM docs` | Scroll, paged lazily with the scroll cursor |
+| `FROM docs t`, `FROM docs AS t` | A name for the table, which its columns may be named under |
+| `SELECT t.*`, `SELECT t.name`, `WHERE t.lang = 'en'` | The same columns, named under the table or that name |
 | `SELECT name, price …` | `with_payload` limited to the named fields |
 | Vector column in the select list | `with_vectors` for that vector only; `*` returns no vectors |
 | `WHERE _id = 7`, `WHERE _id IN (7, '5c56…')` | Retrieve by ID |
