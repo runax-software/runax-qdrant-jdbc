@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import java.sql.SQLException;
 import java.sql.SQLNonTransientConnectionException;
 import java.time.Duration;
+import java.util.List;
 import java.util.Properties;
 
 class ConnectionSettingsTest {
@@ -29,6 +30,7 @@ class ConnectionSettingsTest {
         assertEquals(Duration.ofSeconds(30), settings.timeout());
         assertEquals(100, settings.sampleSize());
         assertEquals(Duration.ofHours(1), settings.schemaCache());
+        assertEquals(1000, settings.defaultLimit());
         assertNull(settings.logFile());
     }
 
@@ -36,7 +38,7 @@ class ConnectionSettingsTest {
     void readsPortAndUrlParameters() throws SQLException {
         ConnectionSettings settings = parse(
             "jdbc:qdrant://db.example.com:7000?tls=true&timeout=5&sampleSize=10&schemaCache=60"
-                + "&logFile=/tmp/q.log",
+                + "&defaultLimit=25&logFile=/tmp/q.log",
             new Properties());
 
         assertEquals("db.example.com", settings.host());
@@ -45,6 +47,7 @@ class ConnectionSettingsTest {
         assertEquals(Duration.ofSeconds(5), settings.timeout());
         assertEquals(10, settings.sampleSize());
         assertEquals(Duration.ofSeconds(60), settings.schemaCache());
+        assertEquals(25, settings.defaultLimit());
         assertEquals(Path.of("/tmp/q.log"), settings.logFile());
     }
 
@@ -56,6 +59,7 @@ class ConnectionSettingsTest {
         properties.setProperty(Setting.TIMEOUT.key(), "12");
         properties.setProperty(Setting.SAMPLE_SIZE.key(), "0");
         properties.setProperty(Setting.SCHEMA_CACHE.key(), "0");
+        properties.setProperty(Setting.DEFAULT_LIMIT.key(), "0");
         properties.setProperty(Setting.LOG_FILE.key(), "/tmp/calls.log");
 
         ConnectionSettings settings = parse("jdbc:qdrant://localhost", properties);
@@ -65,6 +69,7 @@ class ConnectionSettingsTest {
         assertEquals(Duration.ofSeconds(12), settings.timeout());
         assertEquals(0, settings.sampleSize());
         assertEquals(Duration.ZERO, settings.schemaCache());
+        assertEquals(0, settings.defaultLimit(), "0 asks a statement for its own limit");
         assertEquals(Path.of("/tmp/calls.log"), settings.logFile());
     }
 
@@ -155,6 +160,19 @@ class ConnectionSettingsTest {
 
         assertEquals("08001", error.getSQLState());
         assertTrue(error.getMessage().contains("sampleSize"), error.getMessage());
+    }
+
+    @Test
+    void rejectsADefaultLimitThatIsNotAWholeNumberOfRows() {
+        for (String value : List.of("lots", "-1", "1.5")) {
+            Properties properties = new Properties();
+            properties.setProperty(Setting.DEFAULT_LIMIT.key(), value);
+
+            SQLException error = assertThrows(SQLException.class,
+                () -> parse("jdbc:qdrant://localhost", properties), value);
+
+            assertTrue(error.getMessage().contains("defaultLimit"), error.getMessage());
+        }
     }
 
     @Test

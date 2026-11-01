@@ -52,9 +52,9 @@ class ExecutionResultTest {
     @Test
     void needsEitherRowsOrACount() {
         IllegalArgumentException neither = assertThrows(IllegalArgumentException.class,
-            () -> new ExecutionResult(null, -1));
+            () -> new ExecutionResult(null, -1, null));
         IllegalArgumentException both = assertThrows(IllegalArgumentException.class,
-            () -> new ExecutionResult(ROWS, 2));
+            () -> new ExecutionResult(ROWS, 2, null));
 
         assertTrue(neither.getMessage().contains("not both or neither"), neither.getMessage());
         assertTrue(both.getMessage().contains("not both or neither"), both.getMessage());
@@ -71,7 +71,7 @@ class ExecutionResultTest {
 
     @Test
     void comparesByValue() {
-        assertEquals(ExecutionResult.updated(7), new ExecutionResult(null, 7));
-        assertEquals(ExecutionResult.rows(ROWS), new ExecutionResult(ROWS, -1));
+        assertEquals(ExecutionResult.updated(7), new ExecutionResult(null, 7, null));
+        assertEquals(ExecutionResult.rows(ROWS), new ExecutionResult(ROWS, -1, null));
     }
 }

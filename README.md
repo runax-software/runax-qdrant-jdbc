@@ -43,6 +43,7 @@ Other settings go in the URL (`?tls=true&timeout=60`) or in the connection prope
 | `tls` | `false` | Connect over TLS, as Qdrant Cloud needs |
 | `timeout` | `30` | Seconds to wait for each call to Qdrant |
 | `sampleSize` | `100` | Points read to work out a collection's columns |
+| `defaultLimit` | `1000` | Rows a read returns when the statement gives no `LIMIT` and sets no maximum rows, for the reads Qdrant answers in one call and pages no further: an ordered read, a similarity search, and a `GROUP BY`. The statement warns when this bounds it; `0` makes such a statement an error instead |
 | `schemaCache` | `3600` | Seconds to keep a collection's columns, and the lists of collections and aliases, before reading them again; listing tables, as DataGrip's Refresh does, reads them again sooner, asking for a table by a name the kept lists don't have lists them again, and `0` reads them every time |
 | `logFile` | — | File to log every JDBC call to, for troubleshooting; the API key is never logged |
 
@@ -142,10 +143,10 @@ try (PreparedStatement statement = connection.prepareStatement(
 | `WHERE` on payload fields | Filter (`must` / `should` / `must_not`) | Fast with payload indexes |
 | `LIMIT` | `limit` | |
 | `OFFSET n` | Scroll | Qdrant pages with a cursor, so the driver skips `n` points |
-| `ORDER BY field` | Scroll `order_by` | Needs a range index on the field, and a `LIMIT` |
+| `ORDER BY field` | Scroll `order_by` | Needs a range index on the field; bounded by `LIMIT`, maximum rows, or `defaultLimit` |
 | `COUNT(*)` | Count API | |
-| `GROUP BY field` + `COUNT(*)` | Facet API | Needs a keyword, integer, bool, or uuid index, and a `LIMIT` |
-| `ORDER BY similarity(v, [0.1, ...]) DESC` | Query API | Score returned as `_score`; needs a `LIMIT` |
+| `GROUP BY field` + `COUNT(*)` | Facet API | Needs a keyword, integer, bool, or uuid index; bounded like an ordered read |
+| `ORDER BY similarity(v, [0.1, ...]) DESC` | Query API | Score returned as `_score`; bounded like an ordered read |
 | `FROM system.collections`, `system.aliases` | Collection and alias APIs | Read-only system tables |
 | `DELETE FROM docs WHERE …` | Delete points by filter | Returns the number deleted; needs a `WHERE` |
 | `TRUNCATE TABLE docs` | Delete every point | The collection and its indexes stay |

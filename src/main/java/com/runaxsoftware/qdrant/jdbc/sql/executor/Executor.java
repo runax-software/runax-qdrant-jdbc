@@ -56,11 +56,23 @@ public final class Executor {
     // What Qdrant answers when it's asked to embed with a model and has no inference service
     private static final String NO_INFERENCE = "InferenceService URL not configured";
 
+    /**
+     * How many rows a one-call read returns, and whether the connection's default limit is what
+     * said so, which the statement warns about: a read bounded by a number the SQL never
+     * mentioned is worth saying out loud.
+     *
+     * @param limit     the rows to read
+     * @param defaulted whether the connection's default limit set it
+     */
+    private record Bounded(long limit, boolean defaulted) {
+    }
+
     private final Scroller scroller;
     private final Searcher searcher;
     private final Counter counter;
     private final Faceter faceter;
     private final SystemTableReader systemTables;
+    private final int defaultLimit;
     private final Writer writer;
     private final Embedders embedders;
 
@@ -69,16 +81,18 @@ public final class Executor {
      *                plans count them, and system table plans read the server's own state from
      */
     public Executor(QdrantGateway gateway) {
-        this(gateway, Embedders.none());
+        this(gateway, Embedders.none(), 0);
     }
 
     /**
-     * @param gateway   as above
-     * @param embedders the providers a search's {@code embed()} calls, unless Qdrant embeds
+     * @param gateway      as above
+     * @param embedders    the providers a search's {@code embed()} calls, unless Qdrant embeds
+     * @param defaultLimit how many rows a one-call read returns when the statement says
+     *                     nothing, or 0 to make such a statement an error
      */
-    public Executor(QdrantGateway gateway, Embedders embedders) {
+    public Executor(QdrantGateway gateway, Embedders embedders, int defaultLimit) {
         this(gateway::scroll, gateway::query, gateway::count, gateway::facet,
-            new QdrantSystemTables(gateway), writer(gateway), embedders);
+            new QdrantSystemTables(gateway), writer(gateway), embedders, defaultLimit);
     }
 
     /**
@@ -100,11 +114,18 @@ public final class Executor {
 
     Executor(Scroller scroller, Searcher searcher, Counter counter, Faceter faceter,
              SystemTableReader systemTables, Writer writer) {
-        this(scroller, searcher, counter, faceter, systemTables, writer, Embedders.none());
+        this(scroller, searcher, counter, faceter, systemTables, writer, Embedders.none(), 0);
     }
 
     Executor(Scroller scroller, Searcher searcher, Counter counter, Faceter faceter,
              SystemTableReader systemTables, Writer writer, Embedders embedders) {
+        this(scroller, searcher, counter, faceter, systemTables, writer, embedders, 0);
+    }
+
+    Executor(Scroller scroller, Searcher searcher, Counter counter, Faceter faceter,
+             SystemTableReader systemTables, Writer writer, Embedders embedders,
+             int defaultLimit) {
+        this.defaultLimit = defaultLimit;
         this.embedders = embedders;
         this.writer = writer;
         this.scroller = scroller;
@@ -136,20 +157,28 @@ public final class Executor {
 
             if (scroll.ordering() == null) {
                 pageSize = fetchsize > 0 ? Math.min(fetchsize, MAX_PAGE_SIZE) : DEFAULT_PAGE_SIZE;
-            } else {
-                limit = orderedLimit(limit);
-                pageSize = onePage(limit);
+
+                return ExecutionResult.rows(
+                    new ScrollResultSet(scroller, scroll, limit, pageSize, statement));
             }
 
-            return ExecutionResult.rows(new ScrollResultSet(scroller, scroll, limit, pageSize, statement));
+            Bounded bounded = orderedLimit(limit);
+            limit = bounded.limit();
+            pageSize = onePage(limit);
+
+            return ExecutionResult.rows(
+                new ScrollResultSet(scroller, scroll, limit, pageSize, statement),
+                warning(bounded, "ORDER BY"));
         }
 
         if (plan instanceof QueryPlan query) {
-            long limit = searchLimit(query, maxRows);
+            Bounded bounded = searchLimit(query, maxRows);
+            long limit = bounded.limit();
 
             return ExecutionResult.rows(new ListResultSet(
                 PointValues.resultColumns(query.columns(), query.collection()),
-                limit == 0 ? List.of() : searchRows(query, limit), statement));
+                limit == 0 ? List.of() : searchRows(query, limit), statement),
+                warning(bounded, "A similarity search"));
         }
 
         if (plan instanceof CountPlan count) {
@@ -163,10 +192,12 @@ public final class Executor {
         }
 
         if (plan instanceof FacetPlan facet) {
-            long limit = groupLimit(facet, maxRows);
+            Bounded bounded = groupLimit(facet, maxRows);
+            long limit = bounded.limit();
 
             return ExecutionResult.rows(new ListResultSet(resultColumns(facet),
-                limit == 0 ? List.of() : facetRows(facet, limit), statement));
+                limit == 0 ? List.of() : facetRows(facet, limit), statement),
+                warning(bounded, "GROUP BY"));
         }
 
         if (plan instanceof DeletePointsPlan delete) {
@@ -194,17 +225,14 @@ public final class Executor {
 
     /**
      * How many points an ordered scroll reads. Qdrant answers one in a single page, with no
-     * next offset to read another, so one says how many: the statement's LIMIT, or its maximum
-     * rows. A read that gives neither is an error rather than the first page the driver
-     * happened to ask for.
+     * next offset to read another, so one says how many: the statement's LIMIT, its maximum
+     * rows, or the connection's default limit. A read that gives none of the three, on a
+     * connection whose default is 0, is an error rather than the first page the driver happened
+     * to ask for.
      */
-    private static long orderedLimit(Long limit) throws SQLException {
-        if (limit == null) {
-            throw new SQLSyntaxErrorException("ORDER BY needs a LIMIT: Qdrant answers an ordered "
-                + "read in one page, so a statement says how many points to read", "42000");
-        }
-
-        return limit;
+    private Bounded orderedLimit(Long limit) throws SQLException {
+        return bound(limit, "ORDER BY needs a LIMIT: Qdrant answers an ordered read in one page, "
+            + "so a statement says how many points to read");
     }
 
     /**
@@ -390,19 +418,14 @@ public final class Executor {
 
     /**
      * How many groups a GROUP BY reads. Qdrant counts the most common values and returns no
-     * cursor, so a statement says how many: its LIMIT, or its maximum rows. One that gives
-     * neither is an error rather than the ten Qdrant counts by default.
+     * cursor, so a statement says how many: its LIMIT, its maximum rows, or the connection's
+     * default limit. One that gives none of the three, on a connection whose default is 0, is an
+     * error rather than the ten Qdrant counts by default.
      */
-    private static long groupLimit(FacetPlan plan, long maxRows) throws SQLException {
-        Long limit = limit(plan.limit(), maxRows);
-
-        if (limit == null) {
-            throw new SQLSyntaxErrorException("GROUP BY needs a LIMIT: Qdrant counts the most "
-                + "common values of a field in one call, so a statement says how many groups to "
-                + "read", "42000");
-        }
-
-        return Math.max(limit, 0);
+    private Bounded groupLimit(FacetPlan plan, long maxRows) throws SQLException {
+        return bound(limit(plan.limit(), maxRows), "GROUP BY needs a LIMIT: Qdrant counts the "
+            + "most common values of a field in one call, so a statement says how many groups "
+            + "to read");
     }
 
     private static List<ResultColumn> resultColumns(FacetPlan plan) {
@@ -437,19 +460,43 @@ public final class Executor {
 
     /**
      * How many points a search asks Qdrant to rank: its LIMIT, or the statement's maximum rows,
-     * whichever is smaller. Qdrant ranks the points nearest the vector rather than reading the
-     * whole collection, so one of the two has to say how many, and a search without either is
-     * an error instead of a number the driver picked.
+     * whichever is smaller, or the connection's default limit when it gives neither. Qdrant
+     * ranks the points nearest the vector rather than reading the whole collection, so
+     * something has to say how many, and a search on a connection whose default is 0 is an
+     * error instead of a number the driver picked.
      */
-    private static long searchLimit(QueryPlan plan, long maxRows) throws SQLException {
-        Long limit = limit(plan.limit(), maxRows);
+    private Bounded searchLimit(QueryPlan plan, long maxRows) throws SQLException {
+        return bound(limit(plan.limit(), maxRows), "A similarity search needs a LIMIT: Qdrant "
+            + "ranks the points nearest the vector, not the whole collection");
+    }
 
-        if (limit == null) {
-            throw new SQLSyntaxErrorException("A similarity search needs a LIMIT: Qdrant ranks "
-                + "the points nearest the vector, not the whole collection", "42000");
+    /**
+     * The rows a one-call read returns: the limit the statement worked out, or the connection's
+     * default limit when it gave none. A connection whose default is 0 asks for the limit
+     * instead, with the message that says why this read needs one.
+     */
+    private Bounded bound(Long limit, String needsALimit) throws SQLException {
+        if (limit != null) {
+            return new Bounded(Math.max(limit, 0), false);
+        }
+        if (defaultLimit == 0) {
+            throw new SQLSyntaxErrorException(needsALimit, "42000");
         }
 
-        return Math.max(limit, 0);
+        return new Bounded(defaultLimit, true);
+    }
+
+    /**
+     * What the statement warns when the connection's default limit bounded a read: the rows are
+     * as many as the driver asked for rather than as many as Qdrant holds, and the SQL never
+     * said so. It says "at most" because a read may well return fewer, and nothing here knows
+     * yet how many a lazy result set will yield.
+     */
+    private static String warning(Bounded bounded, String read) {
+        return bounded.defaulted()
+            ? read + " read at most " + bounded.limit() + " rows, the connection's defaultLimit, "
+                + "because the statement gave no LIMIT and set no maximum rows"
+            : null;
     }
 
     /**

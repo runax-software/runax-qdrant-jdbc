@@ -139,8 +139,9 @@ class SettingValuesTest {
 
     @Test
     void listsTheSettingsInTheOrderToolsShowThem() {
-        assertEquals(List.of("password", "tls", "timeout", "sampleSize", "schemaCache", "logFile",
-            "openaiApiKey", "openaiUrl", "voyageApiKey", "voyageUrl"),
+        assertEquals(List.of("password", "tls", "timeout", "sampleSize", "schemaCache",
+            "defaultLimit", "logFile", "openaiApiKey", "openaiUrl", "voyageApiKey",
+            "voyageUrl"),
             List.of(Setting.values()).stream().map(Setting::key).toList());
     }
 

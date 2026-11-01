@@ -2,6 +2,7 @@ package com.runaxsoftware.qdrant.jdbc;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -22,6 +23,7 @@ import java.sql.Statement;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Properties;
 import java.util.UUID;
 
 /**
@@ -137,6 +139,26 @@ class GroupingIntegrationTest {
         }
     }
 
+    /**
+     * A grouped statement that gives no limit reads the connection's default, and says so.
+     */
+    @Test
+    void boundsAGroupedStatementByTheConnectionsDefaultLimit() throws SQLException {
+        Properties properties = TestQdrant.properties();
+        properties.setProperty("defaultLimit", "2");
+
+        try (Connection bounded = DriverManager.getConnection(TestQdrant.jdbcUrl(), properties);
+             Statement statement = bounded.createStatement();
+             ResultSet rows = statement.executeQuery(
+                 "SELECT tags, COUNT(*) FROM " + products + " GROUP BY tags")) {
+            int read = 0;
+            while (rows.next()) read++;
+
+            assertEquals(2, read, "the default limit, not all three tags");
+            assertNotNull(statement.getWarnings());
+        }
+    }
+
     @Test
     void reportsWhatQdrantWontGroupBy() throws SQLException {
         try (Statement statement = connection.createStatement()) {
@@ -149,11 +171,6 @@ class GroupingIntegrationTest {
             // in_stock has no index at all
             assertThrows(SQLException.class, () -> statement.executeQuery("SELECT in_stock, "
                 + "COUNT(*) FROM " + products + " GROUP BY in_stock LIMIT 5"));
-
-            // A grouped statement with nothing to say how many groups to read
-            assertEquals("42000", assertThrows(SQLException.class,
-                () -> statement.executeQuery("SELECT tags, COUNT(*) FROM " + products
-                    + " GROUP BY tags")).getSQLState());
 
             // A column that isn't the grouped one
             assertEquals("42S22", assertThrows(SQLException.class,

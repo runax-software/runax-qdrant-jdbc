@@ -13,6 +13,10 @@ public enum Setting {
     SAMPLE_SIZE("sampleSize", "100", "How many points to read when working out a collection's columns."),
     SCHEMA_CACHE("schemaCache", "3600", "Seconds to keep a collection's columns before reading them again. "
         + "Listing tables, as a Refresh does, reads them again sooner; 0 reads them every time."),
+    DEFAULT_LIMIT("defaultLimit", "1000", "Rows to read when a statement gives no LIMIT and no "
+        + "maximum rows, for the reads Qdrant answers in one call and pages no further: an "
+        + "ordered read, a similarity search, and a GROUP BY. The statement warns when this "
+        + "bounds it; 0 makes such a statement an error instead of bounding it."),
     LOG_FILE("logFile", null, "File to log every JDBC call to, for troubleshooting. The API key is never logged."),
     OPENAI_API_KEY("openaiApiKey", null, "OpenAI API key, for embed('text', 'openai:...'). Never logged."),
     OPENAI_URL("openaiUrl", "https://api.openai.com/v1", "OpenAI's API URL, or one that answers like it, "

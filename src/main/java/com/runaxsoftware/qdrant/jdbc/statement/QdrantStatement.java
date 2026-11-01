@@ -46,7 +46,8 @@ public class QdrantStatement extends AbstractStatement {
         super(connection);
         this.connection = connection;
         this.schemaReader = connection.schemaReader();
-        this.executor = new Executor(connection.gateway(), connection.embedders());
+        this.executor = new Executor(connection.gateway(), connection.embedders(),
+            connection.defaultLimit());
     }
 
     // Running SQL
@@ -161,6 +162,10 @@ public class QdrantStatement extends AbstractStatement {
         ExecutionResult result = executor.execute(plan, this);
         setResultSet(result.resultSet());
         setUpdateCount(result.updateCount());
+
+        if (result.warning() != null) {
+            warn(result.warning());
+        }
 
         // A dropped collection's columns are gone; a new one by that name has its own
         if (plan instanceof DropCollectionPlan drop) {

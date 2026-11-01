@@ -26,6 +26,7 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.sql.SQLWarning;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.SQLSyntaxErrorException;
 import java.sql.Statement;
@@ -128,7 +129,6 @@ class QdrantStatementTest {
             "SELECT _id FROM products ORDER BY similarity(_vector, [0.1]) DESC LIMIT 1",
             "SELECT _id FROM products ORDER BY similarity(name, [0.1]) DESC LIMIT 1",
             "SELECT _id, _score FROM products LIMIT 1",
-            "SELECT _id FROM products ORDER BY similarity(_vector, [0.1, 0.2, 0.3, 0.4]) DESC",
             "SELECT _id FROM products ORDER BY price DESC LIMIT 1");
 
         for (String sql : rejected) {
@@ -295,6 +295,35 @@ class QdrantStatementTest {
         }
 
         assertEquals(List.of(), server.facetRequests(), "neither reached Qdrant");
+    }
+
+    /**
+     * The warning the driver's own limit raises reaches the statement, which is how JDBC says a
+     * result is correct but not the whole answer.
+     */
+    @Test
+    void warnsWhenItsOwnLimitBoundedTheRead() throws SQLException {
+        server.collection("ordered", FakeQdrantServer.unnamedVector(2, "Cosine",
+                Map.of("price", "float")),
+            List.of(point(1, Json.object("price", 9.5)), point(2, Json.object("price", 1.5))));
+
+        try (ResultSet rows = statement.executeQuery(
+            "SELECT _id FROM ordered ORDER BY price DESC")) {
+            assertTrue(rows.next());
+        }
+
+        SQLWarning warning = statement.getWarnings();
+        assertNotNull(warning, "the read was bounded by the connection's default limit");
+        assertEquals("01000", warning.getSQLState());
+        assertTrue(warning.getMessage().contains("defaultLimit"), warning.getMessage());
+        assertEquals(1000, lastScroll().path("limit").asInt(), "the default limit");
+
+        statement.clearWarnings();
+        assertNull(statement.getWarnings());
+
+        // A statement that says how many rows it wants is warned about nothing
+        statement.executeQuery("SELECT _id FROM ordered ORDER BY price DESC LIMIT 1").close();
+        assertNull(statement.getWarnings());
     }
 
     @Test

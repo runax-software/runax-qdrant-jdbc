@@ -260,6 +260,20 @@ abstract class AbstractStatement implements Statement {
 
     // Warnings
 
+    /**
+     * Adds a warning for the statement to report, after any it already has: a result that's
+     * correct but not the whole answer, such as a read the driver bounded itself.
+     */
+    protected void warn(String message) {
+        SQLWarning warning = new SQLWarning(message, "01000");
+
+        if (warnings == null) {
+            warnings = warning;
+        } else {
+            warnings.setNextWarning(warning);
+        }
+    }
+
     @Override
     public SQLWarning getWarnings() throws SQLException {
         checkOpen();

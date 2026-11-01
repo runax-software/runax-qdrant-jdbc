@@ -2,6 +2,7 @@ package com.runaxsoftware.qdrant.jdbc;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -18,9 +19,11 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.SQLWarning;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Properties;
 import java.util.UUID;
 
 /**
@@ -143,6 +146,40 @@ class OrderingIntegrationTest {
         }
     }
 
+    /**
+     * A read Qdrant answers in one call is bounded by the connection's default limit when the
+     * statement gives none, and the statement says so.
+     */
+    @Test
+    void boundsAnOrderedReadByTheConnectionsDefaultLimit() throws SQLException {
+        try (Connection bounded = connect("2");
+             Statement statement = bounded.createStatement();
+             ResultSet rows = statement.executeQuery(
+                 "SELECT _id FROM " + products + " ORDER BY price DESC")) {
+            List<String> ids = new ArrayList<>();
+            while (rows.next()) ids.add(rows.getString("_id"));
+
+            assertEquals(List.of("3", "2"), ids, "the default limit, not all five");
+
+            SQLWarning warning = statement.getWarnings();
+            assertNotNull(warning, "a read the driver bounded itself warns");
+            assertEquals("01000", warning.getSQLState());
+            assertTrue(warning.getMessage().contains("defaultLimit"), warning.getMessage());
+        }
+    }
+
+    @Test
+    void asksForALimitWhenTheConnectionHasNoDefault() throws SQLException {
+        try (Connection strict = connect("0");
+             Statement statement = strict.createStatement()) {
+            SQLException error = assertThrows(SQLException.class, () -> statement.executeQuery(
+                "SELECT _id FROM " + products + " ORDER BY price DESC"));
+
+            assertEquals("42000", error.getSQLState());
+            assertTrue(error.getMessage().contains("needs a LIMIT"), error.getMessage());
+        }
+    }
+
     @Test
     void reportsWhatQdrantWontOrderBy() throws SQLException {
         try (Statement statement = connection.createStatement()) {
@@ -156,11 +193,6 @@ class OrderingIntegrationTest {
             assertThrows(SQLException.class, () -> statement.executeQuery("SELECT _id FROM "
                 + products + " ORDER BY in_stock LIMIT 2"));
 
-            // An ordered read with nothing to say how many points to read
-            assertEquals("42000", assertThrows(SQLException.class,
-                () -> statement.executeQuery("SELECT _id FROM " + products + " ORDER BY price"))
-                .getSQLState());
-
             // Qdrant reads point IDs upwards only
             assertThrows(SQLException.class, () -> statement.executeQuery("SELECT _id FROM "
                 + products + " ORDER BY _id DESC LIMIT 2"));
@@ -169,6 +201,16 @@ class OrderingIntegrationTest {
             assertThrows(SQLException.class, () -> statement.executeQuery("SELECT _id FROM "
                 + products + " ORDER BY price LIMIT 2 OFFSET 1"));
         }
+    }
+
+    /**
+     * A second connection with its own default limit.
+     */
+    private static Connection connect(String defaultLimit) throws SQLException {
+        Properties properties = TestQdrant.properties();
+        properties.setProperty("defaultLimit", defaultLimit);
+
+        return DriverManager.getConnection(TestQdrant.jdbcUrl(), properties);
     }
 
     private static List<String> read(String sql) throws SQLException {
