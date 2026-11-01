@@ -14,11 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (lang)`. The type defaults to the column's; each type's options are checked, since Qdrant
   drops unknown ones silently, and `stemmer = english` becomes Qdrant's Snowball stemmer. A
   second index on a field is `42S11` and a missing one `42S12`, where Qdrant would replace the
-  first and report the second as dropped. ([#IDX])
+  first and report the second as dropped. ([#33])
 - Views as Qdrant aliases: `CREATE [OR REPLACE] VIEW current AS SELECT * FROM docs_v2`,
   `ALTER VIEW current RENAME TO live`, and `DROP VIEW [IF EXISTS] current`. `OR REPLACE` moves
   the alias in one atomic change; a taken name is `42S01` and a missing view `42S02`, where
-  Qdrant would move the alias or report it as deleted. ([#IDX])
+  Qdrant would move the alias or report it as deleted. ([#33])
 
 - `INSERT INTO docs (_id, lang, dense) VALUES (…), (…)`, as one upsert in Qdrant's
   `insert_only` mode. An ID that's already taken fails with `23505` before anything is
@@ -192,7 +192,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The columns the driver keeps followed an `INSERT` or `UPDATE` that added a field only when a
   later `SELECT` named it; now the collection's columns are read again after either, so a
   `CREATE INDEX` on the new field finds its type. After an index change or a `DROP TABLE`, the
-  columns kept under the collection's aliases are forgotten too. ([#IDX])
+  columns kept under the collection's aliases are forgotten too. ([#33])
 - A statement ending with `;`, as DataGrip and SQL scripts send it, failed with `Unexpected
   character ';'`. One semicolon at the end is now accepted; a second statement after it is
   still an error that says to run one statement at a time. ([#25])
@@ -249,3 +249,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#28]: https://github.com/runax-software/runax-qdrant-jdbc/pull/28
 [#30]: https://github.com/runax-software/runax-qdrant-jdbc/pull/30
 [#31]: https://github.com/runax-software/runax-qdrant-jdbc/pull/31
+[#33]: https://github.com/runax-software/runax-qdrant-jdbc/pull/33
