@@ -208,6 +208,68 @@ class ParserTest {
                 "SELECT * FROM docs ORDER BY similarity(dense, [0.1]");
     }
 
+    // Counting
+
+    @Test
+    void parsesACountOfEveryPoint() throws SQLSyntaxErrorException {
+        assertEquals(List.of(new SelectItem(count("COUNT"), null)),
+                select("SELECT COUNT(*) FROM docs").items());
+        assertEquals(List.of(new SelectItem(count("count"), "total")),
+                select("select count(*) as total from docs t").items());
+    }
+
+    @Test
+    void parsesWhatACountCantBe() throws SQLSyntaxErrorException {
+        // Each of these parses and the planner is what reports it: a count of a field,
+        assertEquals(List.of(new SelectItem(new FunctionCall("COUNT",
+                        List.of(Column.of("price"))), null)),
+                select("SELECT COUNT(price) FROM docs").items());
+
+        // another aggregate,
+        assertEquals(List.of(new SelectItem(new FunctionCall("SUM",
+                        List.of(Column.of("price"))), null)),
+                select("SELECT SUM(price) FROM docs").items());
+
+        // and a count among other items
+        assertEquals(List.of(column("lang"), new SelectItem(count("COUNT"), null)),
+                select("SELECT lang, COUNT(*) FROM docs").items());
+    }
+
+    @Test
+    void rejectsADistinctCount() {
+        SQLSyntaxErrorException error = assertThrows(SQLSyntaxErrorException.class,
+                () -> Parser.parse("SELECT COUNT(DISTINCT lang) FROM docs"));
+
+        assertEquals("DISTINCT isn't supported in a call: Qdrant counts points, and a field's "
+                + "distinct values come from its facet API at line 1, column 14",
+                error.getMessage());
+        assertEquals("42000", error.getSQLState());
+    }
+
+    @Test
+    void rejectsSelectDistinct() {
+        SQLSyntaxErrorException error = assertThrows(SQLSyntaxErrorException.class,
+                () -> Parser.parse("SELECT DISTINCT lang FROM docs"));
+
+        assertEquals("SELECT DISTINCT isn't supported yet: a field's distinct values come from "
+                + "Qdrant's facet API at line 1, column 8", error.getMessage());
+        assertEquals("42000", error.getSQLState());
+    }
+
+    @Test
+    void rejectsGroupBy() {
+        SQLSyntaxErrorException error = assertThrows(SQLSyntaxErrorException.class,
+                () -> Parser.parse("SELECT lang, COUNT(*) FROM docs GROUP BY lang"));
+
+        assertEquals("GROUP BY isn't supported yet: a count per group comes from Qdrant's facet "
+                + "API at line 1, column 33", error.getMessage());
+        assertEquals("42000", error.getSQLState());
+
+        assertError("GROUP BY isn't supported yet: a count per group comes from Qdrant's facet "
+                        + "API at line 1, column 45",
+                "SELECT COUNT(*) FROM docs WHERE lang = 'en' GROUP BY lang");
+    }
+
     // SELECT without FROM
 
     @Test
@@ -430,6 +492,11 @@ class ParserTest {
 
     private static SelectItem column(String name) {
         return new SelectItem(Column.of(name), null);
+    }
+
+    /** A count of every point, as the statement wrote the function's name. */
+    private static FunctionCall count(String name) {
+        return new FunctionCall(name, List.of(Star.of()));
     }
 
     private static Comparison eq(String column, Object value) {

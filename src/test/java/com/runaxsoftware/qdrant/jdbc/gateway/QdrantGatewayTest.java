@@ -372,6 +372,43 @@ class QdrantGatewayTest {
         assertEquals("42S02", error.getSQLState());
     }
 
+    // Counting
+
+    @Test
+    void countsThePointsOfACollection() throws SQLException {
+        server.collection("events", plainCollection(), points(3));
+
+        assertEquals(3L, gateway.count("events"));
+
+        assertEquals(List.of(Json.object("exact", true)), server.countRequests(),
+            "an exact count, since an estimate answers a different number each time");
+
+        Request request = server.requests().get(0);
+        assertEquals("POST", request.method());
+        assertEquals("/collections/events/points/count", request.path());
+    }
+
+    @Test
+    void countsACollectionWithoutPoints() throws SQLException {
+        server.collection("empty", plainCollection(), List.of());
+
+        assertEquals(0L, gateway.count("empty"));
+    }
+
+    @Test
+    void countsACollectionUnderAnAliassName() throws SQLException {
+        server.collection("events", plainCollection(), points(3)).alias("current", "events");
+
+        assertEquals(3L, gateway.count("current"));
+    }
+
+    @Test
+    void reportsCountingAMissingCollection() {
+        SQLException error = assertThrows(SQLException.class, () -> gateway.count("missing"));
+
+        assertEquals("42S02", error.getSQLState());
+    }
+
     // Any endpoint
 
     @Test

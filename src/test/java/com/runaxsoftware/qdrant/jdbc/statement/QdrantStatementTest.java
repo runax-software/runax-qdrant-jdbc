@@ -109,6 +109,62 @@ class QdrantStatementTest {
         assertEquals(List.of(), server.queryRequests(), "none of them reached Qdrant");
     }
 
+    @Test
+    void countsThePointsOfACollection() throws SQLException {
+        try (ResultSet rows = statement.executeQuery("SELECT COUNT(*) FROM products")) {
+            assertEquals(1, rows.getMetaData().getColumnCount());
+            assertEquals("count", rows.getMetaData().getColumnLabel(1));
+            assertEquals(Types.BIGINT, rows.getMetaData().getColumnType(1));
+            assertSame(statement, rows.getStatement());
+
+            assertTrue(rows.next());
+            assertEquals(1L, rows.getLong(1));
+            assertFalse(rows.next());
+        }
+
+        // One call, which asks for an exact count, and no read of the collection's columns
+        assertEquals(List.of(Json.object("exact", true)), server.countRequests());
+        assertEquals(0, reads("products"));
+    }
+
+    @Test
+    void countsUnderTheNameTheStatementGivesTheCount() throws SQLException {
+        try (ResultSet rows = statement.executeQuery(
+            "select count(*) as total from collections.products t")) {
+            assertEquals("total", rows.getMetaData().getColumnLabel(1));
+            assertTrue(rows.next());
+            assertEquals(1L, rows.getLong("total"));
+        }
+    }
+
+    @Test
+    void returnsNoRowAndCountsNothingForALimitOfNoRows() throws SQLException {
+        try (ResultSet rows = statement.executeQuery("SELECT COUNT(*) FROM products LIMIT 0")) {
+            assertEquals("count", rows.getMetaData().getColumnLabel(1));
+            assertFalse(rows.next());
+        }
+
+        assertEquals(List.of(), server.countRequests());
+    }
+
+    @Test
+    void reportsACountThatCantRunBeforeRunning() {
+        List<String> rejected = List.of(
+            "SELECT COUNT(price) FROM products",
+            "SELECT COUNT(DISTINCT price) FROM products",
+            "SELECT SUM(price) FROM products",
+            "SELECT COUNT(*), name FROM products",
+            "SELECT COUNT(*) FROM system.collections",
+            "SELECT name, COUNT(*) FROM products GROUP BY name",
+            "SELECT COUNT(*) FROM products WHERE price > 1");
+
+        for (String sql : rejected) {
+            assertThrows(SQLException.class, () -> statement.executeQuery(sql), sql);
+        }
+
+        assertEquals(List.of(), server.countRequests(), "none of them reached Qdrant");
+    }
+
     /**
      * The statement DataGrip's data editor sends when a collection is opened: the star and the
      * columns are named under the name it gives the collection in FROM.

@@ -7,6 +7,7 @@ import com.runaxsoftware.qdrant.jdbc.resultset.ListResultSet;
 import com.runaxsoftware.qdrant.jdbc.resultset.ResultColumn;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConstantPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CountPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
@@ -19,6 +20,7 @@ import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.SQLSyntaxErrorException;
 import java.sql.Statement;
+import java.sql.Types;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -39,27 +41,30 @@ public final class Executor {
 
     private final Scroller scroller;
     private final Searcher searcher;
+    private final Counter counter;
     private final SystemTableReader systemTables;
 
     /**
-     * @param gateway where scroll plans read points, query plans rank them, and system table
-     *                plans read the server's own state from
+     * @param gateway where scroll plans read points, query plans rank them, count plans count
+     *                them, and system table plans read the server's own state from
      */
     public Executor(QdrantGateway gateway) {
-        this(gateway::scroll, gateway::query, new QdrantSystemTables(gateway));
+        this(gateway::scroll, gateway::query, gateway::count, new QdrantSystemTables(gateway));
     }
 
     /**
-     * An executor that finds no search results and no system table rows, for plans that read
-     * neither.
+     * An executor that finds no search results, counts no points, and finds no system table
+     * rows, for plans that read none of the three.
      */
     Executor(Scroller scroller) {
-        this(scroller, query -> List.of(), table -> List.of());
+        this(scroller, query -> List.of(), collection -> 0, table -> List.of());
     }
 
-    Executor(Scroller scroller, Searcher searcher, SystemTableReader systemTables) {
+    Executor(Scroller scroller, Searcher searcher, Counter counter,
+             SystemTableReader systemTables) {
         this.scroller = scroller;
         this.searcher = searcher;
+        this.counter = counter;
         this.systemTables = systemTables;
     }
 
@@ -92,6 +97,16 @@ public final class Executor {
             return ExecutionResult.rows(new ListResultSet(
                 PointValues.resultColumns(query.columns(), query.collection()),
                 limit == 0 ? List.of() : searchRows(query, limit), statement));
+        }
+
+        if (plan instanceof CountPlan count) {
+            // A count is always a number, so its column takes no nulls, and it belongs to no
+            // collection: it's one number about one, not a column of it
+            var column = new ResultColumn(count.column(), Types.BIGINT, "BIGINT", "", 0,
+                ResultSetMetaData.columnNoNulls);
+
+            return ExecutionResult.rows(new ListResultSet(List.of(column),
+                countRows(count, limit(count.limit(), maxRows)), statement));
         }
 
         if (plan instanceof SystemTablePlan system) {
@@ -141,6 +156,19 @@ public final class Executor {
         }
 
         return Math.max(limit, 0);
+    }
+
+    /**
+     * The count's single row, or no row at all when the statement asks for none: a limit of no
+     * rows leaves it out, as it does the row of a SELECT without FROM, and then nothing is
+     * counted either.
+     */
+    private List<Object[]> countRows(CountPlan plan, Long limit) throws SQLException {
+        if (limit != null && limit <= 0) {
+            return List.of();
+        }
+
+        return List.<Object[]>of(new Object[]{counter.count(plan.collection())});
     }
 
     /**

@@ -24,8 +24,9 @@ import java.util.concurrent.Executors;
 
 /**
  * A stand-in for Qdrant's REST API, for unit tests: the version at {@code GET /}, listing and
- * reading collections, listing aliases, scrolling points, and searching them. Like Qdrant, it
- * reads, scrolls, and searches a collection by an alias's name too. Answers have the shapes Qdrant 1.20 sends.
+ * reading collections, listing aliases, scrolling points, searching them, and counting them.
+ * Like Qdrant, it reads, scrolls, searches, and counts a collection by an alias's name too.
+ * Answers have the shapes Qdrant 1.20 sends.
  * Collections, failures, delays, and a required API key are set per test; requests are recorded
  * for assertions. Like Qdrant, it answers {@code GET /} without an API key, answers a missing
  * or wrong key with plain text, and answers routes it doesn't have (such as {@code POST /})
@@ -71,6 +72,11 @@ public final class FakeQdrantServer implements AutoCloseable {
          * {@code POST /collections/{name}/points/query}.
          */
         QUERY,
+
+        /**
+         * {@code POST /collections/{name}/points/count}.
+         */
+        COUNT,
 
         /**
          * {@code GET /aliases}.
@@ -262,6 +268,16 @@ public final class FakeQdrantServer implements AutoCloseable {
     }
 
     /**
+     * The bodies of the counts received, in order.
+     */
+    public List<JsonNode> countRequests() {
+        return requests.stream()
+            .filter(request -> request.path().endsWith("/points/count"))
+            .map(Request::body)
+            .toList();
+    }
+
+    /**
      * The {@code api-key} header of each request, or an empty string when there was none.
      */
     public List<String> apiKeys() {
@@ -398,6 +414,7 @@ public final class FakeQdrantServer implements AutoCloseable {
                 case COLLECTION -> collectionInfo(exchange, segments[2]);
                 case SCROLL -> scroll(exchange, segments[2], body);
                 case QUERY -> query(exchange, segments[2], body);
+                case COUNT -> count(exchange, segments[2]);
                 case ALIASES -> ok(exchange, Json.object("aliases", aliasList()));
             }
         } finally {
@@ -435,6 +452,11 @@ public final class FakeQdrantServer implements AutoCloseable {
         if (method.equals("POST") && segments.length == 5 && segments[3].equals("points")
             && segments[4].equals("query")) {
             return Endpoint.QUERY;
+        }
+
+        if (method.equals("POST") && segments.length == 5 && segments[3].equals("points")
+            && segments[4].equals("count")) {
+            return Endpoint.COUNT;
         }
 
         return null;
@@ -557,6 +579,19 @@ public final class FakeQdrantServer implements AutoCloseable {
         }
 
         ok(exchange, Json.object("points", scored));
+    }
+
+    /**
+     * Answers a count with how many points the collection holds, the number Qdrant answers for
+     * an exact count of a whole collection.
+     */
+    private void count(HttpExchange exchange, String name) throws IOException {
+        if (find(name) == null) {
+            notFound(exchange, name);
+            return;
+        }
+
+        ok(exchange, Json.object("count", points.get(resolve(name)).size()));
     }
 
     // 1, 1.0 and a BigInteger 1 are the same point ID
