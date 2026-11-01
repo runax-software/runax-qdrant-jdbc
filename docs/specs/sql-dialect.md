@@ -129,6 +129,16 @@ functions to a column, is an error.
 A search is a `SELECT` ordered by a ranking function. It runs one Query API call, with the
 `WHERE` filter, `LIMIT`, and `OFFSET`, and returns the score as `_score`.
 
+**What runs today:** `similarity(vector, [0.1, ...]) DESC` over a dense vector, with `LIMIT`.
+The vector to search is a vector column of the collection — its own name for a named vector,
+`_vector` for a collection's single unnamed one — and its dimensions are checked against the
+vector in the statement before the search runs. `_score` is a `DOUBLE` column that only a
+search has, and `*` doesn't include it. A search says how many points to rank, through `LIMIT`
+or the statement's maximum rows: Qdrant ranks the points nearest the vector rather than
+reading the whole collection, so a search without either is an error rather than a number the
+driver picked. `ASC` is an error too, since Qdrant returns the closest points first. The rest
+of this section, `WHERE` and `OFFSET` included, is still the target.
+
 ```sql
 SELECT _id, _score, title
 FROM docs

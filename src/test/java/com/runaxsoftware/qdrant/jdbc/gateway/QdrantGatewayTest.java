@@ -14,6 +14,8 @@ import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadIndexType;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.Point;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantCollection;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.QueryRequest;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.ScoredPoint;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScrollPage;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScrollRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ServerVersion;
@@ -302,6 +304,58 @@ class QdrantGatewayTest {
     void reportsScrollingAMissingCollection() {
         SQLException error = assertThrows(SQLException.class,
             () -> gateway.scroll(new ScrollRequest("missing", 10, null, true, false)));
+
+        assertEquals("42S02", error.getSQLState());
+    }
+
+    // Searching
+
+    @Test
+    void sendsTheSearchAsAsked() throws SQLException {
+        server.collection("events", plainCollection(), points(3));
+
+        gateway.query(new QueryRequest("events", "dense", List.of(0.1, 0.2), 2, true, false));
+        gateway.query(new QueryRequest("events", "", List.of(1.0, -0.5), 7, false, true));
+
+        List<JsonNode> requests = server.queryRequests();
+        assertEquals(Json.object("limit", 2, "with_payload", true, "with_vector", false,
+            "query", Json.object("nearest", Json.array(0.1, 0.2)), "using", "dense"),
+            requests.get(0));
+        assertEquals(Json.object("limit", 7, "with_payload", false, "with_vector", true,
+            "query", Json.object("nearest", Json.array(1.0, -0.5))), requests.get(1),
+            "an unnamed vector is the one Qdrant searches when none is named");
+
+        Request request = server.requests().get(0);
+        assertEquals("POST", request.method());
+        assertEquals("/collections/events/points/query", request.path());
+    }
+
+    @Test
+    void readsTheScoredPointsOfASearch() throws SQLException {
+        server.collection("events", plainCollection(), points(3));
+
+        List<ScoredPoint> found = gateway.query(
+            new QueryRequest("events", "", List.of(0.1), 2, true, false));
+
+        assertEquals(2, found.size());
+        assertEquals(1L, found.get(0).point().id().longValue());
+        assertEquals(1.0, found.get(0).score());
+        assertEquals(0.9, found.get(1).score());
+        assertEquals(2L, found.get(1).point().id().longValue());
+    }
+
+    @Test
+    void readsASearchThatFoundNothing() throws SQLException {
+        server.collection("empty", plainCollection(), List.of());
+
+        assertEquals(List.of(),
+            gateway.query(new QueryRequest("empty", "", List.of(0.1), 5, true, false)));
+    }
+
+    @Test
+    void reportsSearchingAMissingCollection() {
+        SQLException error = assertThrows(SQLException.class,
+            () -> gateway.query(new QueryRequest("missing", "", List.of(0.1), 5, true, false)));
 
         assertEquals("42S02", error.getSQLState());
     }

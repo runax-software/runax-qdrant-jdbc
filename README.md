@@ -13,8 +13,8 @@ first target; any JDBC client (DBeaver, BI tools) should work the same way.
   `_id` (the point ID), `_payload` (the whole payload as JSON), and the vectors.
 - **SQL over the Qdrant API** — `WHERE` becomes a Qdrant filter, plus `LIMIT`,
   `COUNT(*)`, `GROUP BY` through facets, and `ORDER BY` on range-indexed fields.
-- **Similarity search** — rank points by similarity to a vector or to text embedded on
-  the fly, with the score as a `_score` column.
+- **Similarity search** — rank points by similarity to a vector, with the score as a
+  `_score` column; embedding text on the fly comes next.
 - **System tables** — `system.collections` and `system.aliases` describe the server
   itself, so a collection's status, point counts, shards, and aliases are SQL rows rather
   than REST calls.
@@ -73,7 +73,22 @@ WHERE lang = 'en' AND year >= 2024
 LIMIT 50
 ```
 
-Similarity search, combined with a filter:
+Similarity search, which runs today with the vector written out:
+
+```sql
+SELECT _id, _score, title
+FROM docs
+ORDER BY similarity(dense, [0.1, 0.2, 0.3, 0.4]) DESC
+LIMIT 10
+```
+
+`dense` is the name of the vector to search (`_vector` for a collection's single unnamed
+vector), and `_score` is how close Qdrant scored each point. A search says how many points
+to rank, with `LIMIT` or the statement's maximum rows.
+
+Planned, and described in the dialect spec: a filter on the same search, and
+`embed('refund policy')` in place of the vector, which turns text into one with the
+embedding model configured for that vector.
 
 ```sql
 SELECT _id, _score, _payload
@@ -82,9 +97,6 @@ WHERE lang = 'en'
 ORDER BY similarity(dense, embed('refund policy')) DESC
 LIMIT 10
 ```
-
-`dense` is the name of the vector to search, and `embed(...)` turns text into a vector
-with the embedding model configured for that vector. A vector literal works in its place.
 
 The server's own state, in the `system` schema next to the `collections` schema the
 collections sit in:
@@ -104,7 +116,7 @@ FROM system.collections
 | `ORDER BY field` | Scroll `order_by` | Needs a range index on the field |
 | `COUNT(*)` | Count API | |
 | `GROUP BY field` + `COUNT(*)` | Facet API | Needs a keyword index on the field |
-| `ORDER BY similarity(...)` | Query API | Score returned as `_score` |
+| `ORDER BY similarity(v, [0.1, ...]) DESC` | Query API | Score returned as `_score`; needs a `LIMIT` |
 | `FROM system.collections`, `system.aliases` | Collection and alias APIs | Read-only system tables |
 | `JOIN`, `SUM`, `AVG`, subqueries | — | Rejected with an error |
 

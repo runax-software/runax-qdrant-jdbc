@@ -72,6 +72,43 @@ class QdrantStatementTest {
         }
     }
 
+    @Test
+    void ranksTheRowsOfASimilaritySearch() throws SQLException {
+        try (ResultSet rows = statement.executeQuery("SELECT _id, _score, name FROM products "
+            + "ORDER BY similarity(_vector, [0.1, 0.2, 0.3, 0.4]) DESC LIMIT 5")) {
+            assertEquals(Types.DOUBLE, rows.getMetaData().getColumnType(2));
+            assertEquals("_score", rows.getMetaData().getColumnLabel(2));
+
+            assertTrue(rows.next());
+            assertEquals("1", rows.getString("_id"));
+            assertEquals(1.0, rows.getDouble("_score"));
+            assertEquals("Lamp", rows.getString("name"));
+            assertFalse(rows.next());
+        }
+
+        // What the driver asked Qdrant for: the vector, the limit, and the payload it needs
+        assertEquals(1, server.queryRequests().size());
+        assertEquals(Json.object("limit", 5, "with_payload", true, "with_vector", false,
+            "query", Json.object("nearest", Json.array(0.1, 0.2, 0.3, 0.4))),
+            server.queryRequests().get(0));
+    }
+
+    @Test
+    void reportsASearchThatCantRunBeforeRunning() throws SQLException {
+        List<String> rejected = List.of(
+            "SELECT _id FROM products ORDER BY similarity(_vector, [0.1]) DESC LIMIT 1",
+            "SELECT _id FROM products ORDER BY similarity(name, [0.1]) DESC LIMIT 1",
+            "SELECT _id, _score FROM products LIMIT 1",
+            "SELECT _id FROM products ORDER BY similarity(_vector, [0.1, 0.2, 0.3, 0.4]) DESC",
+            "SELECT _id FROM products ORDER BY price DESC LIMIT 1");
+
+        for (String sql : rejected) {
+            assertThrows(SQLException.class, () -> statement.executeQuery(sql), sql);
+        }
+
+        assertEquals(List.of(), server.queryRequests(), "none of them reached Qdrant");
+    }
+
     /**
      * The statement DataGrip's data editor sends when a collection is opened: the star and the
      * columns are named under the name it gives the collection in FROM.

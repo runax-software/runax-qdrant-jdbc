@@ -22,5 +22,11 @@ public enum ColumnKind {
     /**
      * One of the collection's vectors.
      */
-    VECTOR
+    VECTOR,
+
+    /**
+     * How close a search scored the point. A collection has no such column of its own: only a
+     * search has a score, so only a search's select list may name {@code _score}.
+     */
+    SCORE
 }

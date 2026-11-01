@@ -5,13 +5,8 @@ import com.runaxsoftware.qdrant.jdbc.gateway.models.Point;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScrollPage;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScrollRequest;
 import com.runaxsoftware.qdrant.jdbc.resultset.AbstractResultSet;
-import com.runaxsoftware.qdrant.jdbc.resultset.ResultColumn;
-import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
-import com.runaxsoftware.qdrant.jdbc.schema.ColumnType;
-import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadPath;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
 
-import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayDeque;
@@ -41,7 +36,7 @@ final class ScrollResultSet extends AbstractResultSet {
      */
     ScrollResultSet(Scroller scroller, ScrollPlan plan, Long limit, int pageSize, Statement statement)
         throws SQLException {
-        super(resultColumns(plan), statement);
+        super(PointValues.resultColumns(plan.columns(), plan.collection()), statement);
         this.scroller = scroller;
         this.plan = plan;
         this.limit = limit;
@@ -80,14 +75,8 @@ final class ScrollResultSet extends AbstractResultSet {
 
     @Override
     protected Object currentValue(int columnIndex) throws SQLException {
-        ColumnDefinition column = plan.columns().get(columnIndex - 1);
-
-        return switch (column.kind()) {
-            case ID -> current.id().asText();
-            case PAYLOAD -> current.payload() == null ? null : current.payload().toString();
-            case PAYLOAD_FIELD -> value(PayloadPath.valueAt(current.payload(), column.source()), column);
-            case VECTOR -> vector(column.source());
-        };
+        // A scroll ranks nothing, so it has no score to pass
+        return PointValues.of(current, null, plan.columns().get(columnIndex - 1));
     }
 
     @Override
@@ -111,50 +100,7 @@ final class ScrollResultSet extends AbstractResultSet {
         }
     }
 
-    private boolean limitReached() {    
+    private boolean limitReached() {
         return limit != null && returned >= limit;
-    }
-
-    private static Object value(JsonNode node, ColumnDefinition column) {
-        if (node == null || node.isNull()) {
-            return null;
-        }
-
-        if (column.type() == ColumnType.JSON) {
-            return node.toString();
-        }
-
-        return node.isIntegralNumber() && node.canConvertToLong()
-            ? node.longValue()
-            : node.isNumber() ? node.doubleValue()
-            : node.isBoolean() ? node.booleanValue()
-            : node.isTextual() ? node.asText()   // the text itself, without JSON's quotes
-            : node.toString();
-    }
-
-    private Object vector(String name) {
-        JsonNode vectors = current.vector();
-
-        if (vectors == null) {
-            return null;
-        }
-
-        JsonNode vector = name.isEmpty() ? vectors : vectors.get(name);
-
-        return vector == null || vector.isNull() ? null : vector.toString();
-    }
-
-    private static List<ResultColumn> resultColumns(ScrollPlan plan) {
-        return plan.columns().stream()
-            .map(x -> new ResultColumn(
-                x.name(),
-                x.type().sqlType(),
-                x.type().typeName(),
-                plan.collection(),
-                x.size(),
-                x.nullable()
-                    ? ResultSetMetaData.columnNullable
-                    : ResultSetMetaData.columnNoNulls))
-            .toList();
     }
 }

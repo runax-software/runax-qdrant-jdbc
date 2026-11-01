@@ -8,6 +8,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.And;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Column;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Comparison;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Expression;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.FunctionCall;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.InList;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.IsNull;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Literal;
@@ -18,6 +19,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Parameter;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.SelectItem;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Star;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.TableName;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.VectorLiteral;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -131,6 +133,79 @@ class ParserTest {
         assertEquals(new SelectStatement(List.of(column("Name")), TableName.of("MyDocs"), null, eq("lang", "en"),
                         List.of(), 5L, null),
                 Parser.parse("select Name from MyDocs Where lang = 'en' limit 5"));
+    }
+
+    // Vector literals and calls
+
+    @Test
+    void parsesASimilaritySearch() throws SQLSyntaxErrorException {
+        SelectStatement select = select("SELECT _id, _score FROM docs "
+                + "ORDER BY similarity(dense, [0.1, 0.2, 0.3]) DESC LIMIT 10");
+
+        assertEquals(List.of(new OrderItem(new FunctionCall("similarity", List.of(
+                        Column.of("dense"), new VectorLiteral(List.of(0.1, 0.2, 0.3)))), true)),
+                select.orderBy());
+        assertEquals(List.of(column("_id"), column("_score")), select.items());
+        assertEquals(10L, select.limit());
+    }
+
+    @Test
+    void parsesAVectorLiteralOfWholeAndNegativeNumbers() throws SQLSyntaxErrorException {
+        assertEquals(new VectorLiteral(List.of(1.0, -0.5, 0.0)),
+                similarity("SELECT * FROM docs ORDER BY similarity(dense, [1, -0.5, 0]) DESC")
+                        .arguments().get(1));
+        assertEquals(new VectorLiteral(List.of(0.25)),
+                similarity("SELECT * FROM docs ORDER BY similarity(dense, [0.25]) DESC")
+                        .arguments().get(1));
+    }
+
+    @Test
+    void parsesACallUnderTheTablesName() throws SQLSyntaxErrorException {
+        assertEquals(List.of(new Column("t", "dense"), new VectorLiteral(List.of(0.1))),
+                similarity("SELECT * FROM docs t ORDER BY similarity(t.dense, [0.1]) DESC")
+                        .arguments());
+    }
+
+    @Test
+    void keepsTheCaseOfAFunctionName() throws SQLSyntaxErrorException {
+        assertEquals("SIMILARITY",
+                similarity("SELECT * FROM docs ORDER BY SIMILARITY(dense, [0.1]) DESC").name());
+    }
+
+    @Test
+    void parsesACallWithoutArguments() throws SQLSyntaxErrorException {
+        assertEquals(new FunctionCall("random", List.of()),
+                similarity("SELECT * FROM docs ORDER BY random() DESC"));
+    }
+
+    @Test
+    void parsesACallInAWhereCondition() throws SQLSyntaxErrorException {
+        assertEquals(new Comparison(new FunctionCall("similarity", List.of(Column.of("dense"),
+                        new VectorLiteral(List.of(0.1)))), ">=", new Literal(0.8)),
+                where("similarity(dense, [0.1]) >= 0.8"));
+    }
+
+    @Test
+    void rejectsAVectorLiteralThatIsEmptyOrNotNumbers() {
+        assertError("Expected a number, found ']' at line 1, column 48",
+                "SELECT * FROM docs ORDER BY similarity(dense, []) DESC");
+        assertError("Expected a number, found 'x' at line 1, column 48",
+                "SELECT * FROM docs ORDER BY similarity(dense, [x]) DESC");
+        // The lexer takes the quotes off a string, so the error shows the text it holds
+        assertError("Expected a number, found 'a' at line 1, column 48",
+                "SELECT * FROM docs ORDER BY similarity(dense, ['a']) DESC");
+    }
+
+    @Test
+    void rejectsAnUnclosedVectorLiteral() {
+        assertError("Expected ], found the end of the statement at line 1, column 56",
+                "SELECT * FROM docs ORDER BY similarity(dense, [0.1, 0.2");
+    }
+
+    @Test
+    void rejectsAnUnclosedCall() {
+        assertError("Expected ), found the end of the statement at line 1, column 52",
+                "SELECT * FROM docs ORDER BY similarity(dense, [0.1]");
     }
 
     // SELECT without FROM
@@ -342,6 +417,11 @@ class ParserTest {
 
     private static Expression where(String condition) throws SQLSyntaxErrorException {
         return select("SELECT * FROM docs WHERE " + condition).where();
+    }
+
+    /** The call a statement's single ORDER BY item is. */
+    private static FunctionCall similarity(String sql) throws SQLSyntaxErrorException {
+        return (FunctionCall) select(sql).orderBy().get(0).expression();
     }
 
     private static List<SelectItem> star() {

@@ -55,8 +55,12 @@ public final class TokenStream {
         return false;
     }
 
+    public boolean peekSymbol(String symbol) {
+        return peek().type() == TokenType.SYMBOL && peek().text().equals(symbol);
+    }
+
     public boolean matchSymbol(String symbol) {
-        if (peek().type() == TokenType.SYMBOL && peek().text().equals(symbol)) {
+        if (peekSymbol(symbol)) {
             advance();
 
             return true;
@@ -83,6 +87,20 @@ public final class TokenStream {
         }
 
         return advance().text();
+    }
+
+    /**
+     * A number, whole or not, such as one value of a vector literal.
+     */
+    public double expectNumber() throws SQLSyntaxErrorException {
+        Token token = peek();
+
+        if (token.type() != TokenType.NUMBER) {
+            throw error("Expected a number");
+        }
+
+        advance();
+        return Double.parseDouble(token.text());
     }
 
     public long expectWholeNumber() throws SQLSyntaxErrorException {

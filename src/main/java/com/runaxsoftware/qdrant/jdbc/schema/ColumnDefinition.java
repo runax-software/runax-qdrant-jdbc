@@ -26,8 +26,6 @@ public record ColumnDefinition(
         return kind != ColumnKind.ID;
     }
 
-    // in ColumnDefinition
-
     /**
      * The point ID column, {@code _id}.
      */
@@ -42,6 +40,14 @@ public record ColumnDefinition(
     static ColumnDefinition payload() {
         return new ColumnDefinition(DriverColumns.PAYLOAD.columnName(), ColumnKind.PAYLOAD,
             ColumnType.JSON, 0, null, DriverColumns.PAYLOAD.remarks());
+    }
+
+    /**
+     * The search score column, {@code _score}, which only a similarity search has.
+     */
+    public static ColumnDefinition score() {
+        return new ColumnDefinition(DriverColumns.SCORE.columnName(), ColumnKind.SCORE,
+            ColumnType.FLOAT, 0, null, DriverColumns.SCORE.remarks());
     }
 
     /**

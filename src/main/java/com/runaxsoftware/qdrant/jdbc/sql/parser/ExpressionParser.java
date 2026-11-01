@@ -48,7 +48,7 @@ public final class ExpressionParser {
             return inner;
         }
 
-        Expression column = parseColumn();
+        Expression column = parseTerm();
 
         if (this.tokenStream.matchKeyword("IS")) {
             boolean negated = this.tokenStream.matchKeyword("NOT");
@@ -85,6 +85,34 @@ public final class ExpressionParser {
     }
 
     /**
+     * A column, or a call such as {@code similarity(dense, [0.1, 0.2])}. Which of the two a
+     * name is, the brackets after it decide.
+     */
+    public Expression parseTerm() throws SQLSyntaxErrorException {
+        if (!this.tokenStream.peekIdentifier()) {
+            return parseColumn();   // reports what it expected
+        }
+
+        String name = this.tokenStream.expectIdentifier();
+        if (!this.tokenStream.matchSymbol("(")) {
+            return this.tokenStream.matchSymbol(".")
+                ? new Column(name, this.tokenStream.expectIdentifier())
+                : Column.of(name);
+        }
+
+        var arguments = new ArrayList<Expression>();
+        if (!this.tokenStream.matchSymbol(")")) {
+            do {
+                arguments.add(parseArgument());
+            } while (this.tokenStream.matchSymbol(","));
+
+            this.tokenStream.expectSymbol(")");
+        }
+
+        return new FunctionCall(name, arguments);
+    }
+
+    /**
      * A column name, which the statement may name under the table or an alias, as in
      * {@code t.name}. A nested payload field is one quoted name, {@code "specs.color"}, so it
      * reads as a column and not as a qualified one.
@@ -97,7 +125,18 @@ public final class ExpressionParser {
             : Column.of(name);
     }
 
+    /**
+     * One argument of a call: a column, a nested call, or a value such as a vector literal.
+     */
+    private Expression parseArgument() throws SQLSyntaxErrorException {
+        return this.tokenStream.peekIdentifier() ? parseTerm() : parseValue();
+    }
+
     public Expression parseValue() throws SQLSyntaxErrorException {
+        if (this.tokenStream.peekSymbol("[")) {
+            return parseVector();
+        }
+
         Token token = this.tokenStream.peek();
         Expression value = switch (token.type()) {
             case STRING -> new Literal(token.text());
@@ -115,5 +154,22 @@ public final class ExpressionParser {
 
         this.tokenStream.advance();
         return value;
+    }
+
+    /**
+     * A dense vector written out, as {@code [0.1, 0.2]}. An empty one searches nothing, so it's
+     * an error rather than a vector of no dimensions.
+     */
+    private VectorLiteral parseVector() throws SQLSyntaxErrorException {
+        this.tokenStream.expectSymbol("[");
+        var values = new ArrayList<Double>();
+
+        do {
+            values.add(this.tokenStream.expectNumber());
+        } while (this.tokenStream.matchSymbol(","));
+
+        this.tokenStream.expectSymbol("]");
+
+        return new VectorLiteral(values);
     }
 }

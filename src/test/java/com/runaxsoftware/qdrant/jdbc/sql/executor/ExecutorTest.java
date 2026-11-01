@@ -11,6 +11,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.Point;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.QueryRequest;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.ScoredPoint;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScrollPage;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScrollRequest;
 import com.runaxsoftware.qdrant.jdbc.resultset.ResultColumn;
@@ -20,6 +22,7 @@ import com.runaxsoftware.qdrant.jdbc.schema.ColumnType;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.Parser;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.Planner;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConstantPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.SystemTablePlan;
 import com.runaxsoftware.qdrant.jdbc.system.SystemColumn;
@@ -44,6 +47,11 @@ class ExecutorTest {
     private static final ColumnDefinition ID =
         new ColumnDefinition("_id", ColumnKind.ID, ColumnType.TEXT, 0, null, "");
 
+    private static final ColumnDefinition SCORE = ColumnDefinition.score();
+
+    private static final ColumnDefinition FIELD =
+        new ColumnDefinition("name", ColumnKind.PAYLOAD_FIELD, ColumnType.TEXT, 0, "name", "");
+
     // A statement without maximum rows or fetch size
     private static final Statement STATEMENT = statement(0, 0);
 
@@ -54,6 +62,8 @@ class ExecutorTest {
     // An executor whose system tables hold two rows each, in the reader's own order
     private static final Executor SYSTEM = new Executor(request -> {
         throw new AssertionError("Scrolled " + request.collection());
+    }, query -> {
+        throw new AssertionError("Searched " + query.collection());
     }, table -> switch (table) {
         case ALIASES -> List.of(
             new Object[]{"best", "articles"}, new Object[]{"current", "products"});
@@ -324,6 +334,98 @@ class ExecutorTest {
         }
     }
 
+    // Query plans
+
+    @Test
+    void runsAQueryPlanAsScoredRowsOwnedByTheStatement() throws SQLException {
+        var requests = new ArrayList<QueryRequest>();
+        ExecutionResult result = search(requests).execute(
+            new QueryPlan("docs", List.of(ID, SCORE, FIELD), "dense", List.of(0.1, 0.2), true,
+                false, 5L), STATEMENT);
+
+        assertTrue(result.hasResultSet());
+        assertEquals(-1, result.updateCount());
+        assertEquals(1, requests.size());
+        assertEquals("docs", requests.get(0).collection());
+        assertEquals("dense", requests.get(0).vector());
+        assertEquals(List.of(0.1, 0.2), requests.get(0).query());
+        assertEquals(5L, requests.get(0).limit());
+        assertTrue(requests.get(0).withPayload());
+        assertFalse(requests.get(0).withVector());
+
+        try (ResultSet rows = result.resultSet()) {
+            assertSame(STATEMENT, rows.getStatement());
+            assertEquals(Types.DOUBLE, rows.getMetaData().getColumnType(2));
+            assertEquals("docs", rows.getMetaData().getTableName(2));
+
+            assertTrue(rows.next());
+            assertEquals("1", rows.getString("_id"));
+            assertEquals(0.9, rows.getDouble("_score"));
+            assertEquals("Lamp", rows.getString("name"));
+
+            assertTrue(rows.next());
+            assertEquals("2", rows.getString("_id"));
+            assertEquals(0.5, rows.getDouble("_score"));
+            assertNull(rows.getString("name"), "the second point has no payload");
+            assertFalse(rows.next());
+        }
+    }
+
+    @Test
+    void asksQdrantForAsManyPointsAsTheSearchReturns() throws SQLException {
+        var requests = new ArrayList<QueryRequest>();
+
+        search(requests).execute(plan(1L), statement(0, 0)).resultSet().close();
+        search(requests).execute(plan(null), statement(3, 0)).resultSet().close();
+        search(requests).execute(plan(7L), statement(3, 0)).resultSet().close();
+        search(requests).execute(plan(2L), statement(9, 0)).resultSet().close();
+
+        assertEquals(List.of(1L, 3L, 3L, 2L),
+            requests.stream().map(QueryRequest::limit).toList());
+    }
+
+    @Test
+    void returnsOnlyTheRowsTheLimitAsksFor() throws SQLException {
+        try (ResultSet rows = search(new ArrayList<>())
+            .execute(plan(1L), STATEMENT).resultSet()) {
+            assertTrue(rows.next());
+            assertFalse(rows.next(), "the fake scores two points, the limit asks for one");
+        }
+    }
+
+    @Test
+    void searchesNothingForALimitOfNoRows() throws SQLException {
+        var requests = new ArrayList<QueryRequest>();
+
+        try (ResultSet rows = search(requests).execute(plan(0L), STATEMENT).resultSet()) {
+            assertFalse(rows.next());
+        }
+
+        assertEquals(List.of(), requests, "no call ranks no points");
+    }
+
+    @Test
+    void rejectsASearchThatSaysNoLimit() {
+        SQLException error = assertThrows(SQLException.class,
+            () -> search(new ArrayList<>()).execute(plan(null), STATEMENT));
+
+        assertEquals("42000", error.getSQLState());
+        assertTrue(error.getMessage().contains("needs a LIMIT"), error.getMessage());
+    }
+
+    @Test
+    void reportsWhatSearchingReported() {
+        SQLException failure = new SQLException("Qdrant: Not found", "42S02");
+        Executor failing = new Executor(request -> {
+            throw new AssertionError("Scrolled " + request.collection());
+        }, query -> {
+            throw failure;
+        }, table -> List.of());
+
+        assertSame(failure, assertThrows(SQLException.class,
+            () -> failing.execute(plan(5L), STATEMENT)));
+    }
+
     // System table plans
 
     @Test
@@ -398,6 +500,8 @@ class ExecutorTest {
         SQLException failure = new SQLException("Qdrant: Service internal error", "HY000");
         Executor failing = new Executor(request -> {
             throw new AssertionError("Scrolled " + request.collection());
+        }, query -> {
+            throw new AssertionError("Searched " + query.collection());
         }, table -> {
             throw failure;
         });
@@ -419,6 +523,29 @@ class ExecutorTest {
         }
 
         return count;
+    }
+
+    /**
+     * An executor whose searches score two points, the first with a payload and the second
+     * without, and which records the requests it was given.
+     */
+    private static Executor search(List<QueryRequest> requests) {
+        return new Executor(request -> {
+            throw new AssertionError("Scrolled " + request.collection());
+        }, query -> {
+            requests.add(query);
+
+            return List.of(
+                new ScoredPoint(new Point(JSON.getNodeFactory().numberNode(1),
+                    JSON.createObjectNode().put("name", "Lamp"), null), 0.9),
+                new ScoredPoint(new Point(JSON.getNodeFactory().numberNode(2), null, null), 0.5))
+                .subList(0, (int) Math.min(2, query.limit()));
+        }, table -> List.of());
+    }
+
+    private static QueryPlan plan(Long limit) {
+        return new QueryPlan("docs", List.of(ID, SCORE), "dense", List.of(0.1, 0.2), false, false,
+            limit);
     }
 
     // A statement that answers maxRows and fetchSize and fails on anything else

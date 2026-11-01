@@ -55,6 +55,19 @@ final class RestModels {
         return new ScrollPage(List.copyOf(points), next == null || next.isNull() ? null : next);
     }
 
+    static List<ScoredPoint> scoredPoints(JsonNode result) {
+        List<ScoredPoint> points = new ArrayList<>();
+
+        for (JsonNode point : result.path("points")) {
+            points.add(new ScoredPoint(
+                new Point(point.get("id"), present(point.get("payload")),
+                    present(point.get("vector"))),
+                point.path("score").asDouble(0)));
+        }
+
+        return List.copyOf(points);
+    }
+
     private static VectorField vectorField(String name, JsonNode config) {
         VectorKind kind = config.path("multivector_config").isObject() ? VectorKind.MULTIVECTOR : VectorKind.DENSE;
         return new VectorField(name, kind, config.path("size")

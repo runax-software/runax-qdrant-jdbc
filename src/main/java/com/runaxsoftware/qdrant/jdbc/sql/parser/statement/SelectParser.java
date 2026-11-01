@@ -47,14 +47,14 @@ public final class SelectParser {
             this.tokenStream.expectKeyword("BY");
 
             do {
-                Column column = this.expressionParser.parseColumn();
+                Expression term = this.expressionParser.parseTerm();
                 boolean descending = this.tokenStream.matchKeyword("DESC");
 
                 if (!descending) {
                     this.tokenStream.matchKeyword("ASC");
                 }
 
-                orderBy.add(new OrderItem(column, descending));
+                orderBy.add(new OrderItem(term, descending));
             } while(this.tokenStream.matchSymbol(","));
         }
 
