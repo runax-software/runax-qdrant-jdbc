@@ -155,7 +155,8 @@ try (PreparedStatement statement = connection.prepareStatement(
 | `JOIN`, `SUM`, `AVG`, subqueries | — | Rejected with an error |
 
 The full mapping, covering writes, DDL, aliases, hybrid search, and the rest of Qdrant's API,
-is in the [SQL dialect spec](docs/specs/sql-dialect.md).
+is in the [SQL dialect spec](docs/specs/sql-dialect.md). What of that runs today, measured
+against a given driver commit and Qdrant version, is in [docs/coverage.md](docs/coverage.md).
 
 ## Building
 
