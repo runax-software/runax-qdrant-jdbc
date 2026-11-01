@@ -1,5 +1,6 @@
 package com.runaxsoftware.qdrant.jdbc.sql.planner;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.runaxsoftware.qdrant.jdbc.metadata.QdrantDatabaseMetaData;
 import com.runaxsoftware.qdrant.jdbc.resultset.ResultColumn;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
@@ -65,9 +66,6 @@ final class SelectPlanner {
             return constants(statement);
         }
 
-        if (statement.where() != null) {
-            throw new SQLFeatureNotSupportedException("WHERE isn't supported yet");
-        }
         if (statement.offset() != null) {
             throw new SQLFeatureNotSupportedException("OFFSET isn't supported yet");
         }
@@ -97,11 +95,14 @@ final class SelectPlanner {
         boolean withPayload = columns.stream().anyMatch(
             x -> x.kind() == ColumnKind.PAYLOAD || x.kind() == ColumnKind.PAYLOAD_FIELD);
         boolean withVector = columns.stream().anyMatch(x -> x.kind() == ColumnKind.VECTOR);
+        JsonNode filter = FilterPlanner.plan(statement.where(), schema.name(),
+            column -> find(schema, column, statement.alias(), search != null));
 
         return search == null
-            ? new ScrollPlan(schema.name(), columns, withPayload, withVector, statement.limit())
+            ? new ScrollPlan(schema.name(), columns, withPayload, withVector, statement.limit(),
+                filter)
             : new QueryPlan(schema.name(), columns, search.vector(), search.query(), withPayload,
-                withVector, statement.limit());
+                withVector, statement.limit(), filter);
     }
 
     /**
@@ -204,6 +205,10 @@ final class SelectPlanner {
      * catalog lookup and never calls Qdrant.
      */
     private static Plan systemTable(SelectStatement statement, TableName name) throws SQLException {
+        if (statement.where() != null) {
+            throw new SQLFeatureNotSupportedException(
+                "WHERE isn't supported yet on the " + SystemTable.SCHEMA + " schema's tables");
+        }
         if (!statement.orderBy().isEmpty()) {
             throw new SQLFeatureNotSupportedException("ORDER BY isn't supported yet");
         }

@@ -86,9 +86,9 @@ LIMIT 10
 vector), and `_score` is how close Qdrant scored each point. A search says how many points
 to rank, with `LIMIT` or the statement's maximum rows.
 
-Planned, and described in the dialect spec: a filter on the same search, and
-`embed('refund policy')` in place of the vector, which turns text into one with the
-embedding model configured for that vector.
+A search takes a `WHERE` too, which Qdrant applies before ranking. Planned, and described in
+the dialect spec: `embed('refund policy')` in place of the vector, which turns text into one
+with the embedding model configured for that vector.
 
 ```sql
 SELECT _id, _score, _payload
