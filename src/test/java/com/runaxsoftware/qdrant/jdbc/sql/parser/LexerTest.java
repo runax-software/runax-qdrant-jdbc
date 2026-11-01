@@ -112,9 +112,9 @@ class LexerTest {
     @Test
     void rejectsAnUnknownCharacterWithItsPosition() {
         SQLSyntaxErrorException error =
-                assertThrows(SQLSyntaxErrorException.class, () -> new Lexer("SELECT ;").tokenize());
+                assertThrows(SQLSyntaxErrorException.class, () -> new Lexer("SELECT #").tokenize());
 
-        assertTrue(error.getMessage().contains("';'"), error.getMessage());
+        assertTrue(error.getMessage().contains("'#'"), error.getMessage());
         assertTrue(error.getMessage().contains("line 1, column 8"), error.getMessage());
     }
 

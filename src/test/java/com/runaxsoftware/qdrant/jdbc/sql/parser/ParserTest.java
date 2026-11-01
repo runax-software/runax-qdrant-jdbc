@@ -538,6 +538,26 @@ class ParserTest {
     }
 
     @Test
+    void acceptsOneSemicolonAtTheEnd() throws SQLSyntaxErrorException {
+        assertEquals(Parser.parse("SELECT * FROM docs LIMIT 5"),
+                Parser.parse("SELECT * FROM docs LIMIT 5;"));
+        assertEquals(Parser.parse("DELETE FROM docs WHERE _id = ?"),
+                Parser.parse("DELETE FROM docs WHERE _id = ?  ;\n"));
+        assertEquals(Parser.parse("SELECT ';' AS semicolon"), Parser.parse("SELECT ';' AS semicolon;"),
+                "a semicolon in quotes is text");
+    }
+
+    @Test
+    void rejectsSemicolonsThatDontEndTheStatement() {
+        assertError("Expected the end of the statement: run one statement at a time, found 'SELECT' "
+                + "at line 1, column 11", "SELECT 1; SELECT 2");
+        assertError("Expected the end of the statement: run one statement at a time, found ';' at "
+                + "line 1, column 10", "SELECT 1;;");
+        assertError("Expected SELECT, DELETE, TRUNCATE, DROP or CREATE, found ';' at line 1, column 1",
+                ";");
+    }
+
+    @Test
     void rejectsLeftoverText() {
         assertError("Expected the end of the statement, found 'extra' at line 1, column 22",
                 "SELECT * FROM docs t extra");

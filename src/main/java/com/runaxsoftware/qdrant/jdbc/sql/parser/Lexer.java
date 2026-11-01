@@ -15,8 +15,8 @@ final class Lexer {
     private static final List<String> TWO_CHAR_SYMBOLS = List.of(
         "<=", ">=", "<>", "!=");
     // '.' separates the parts of a qualified name; a number keeps its own decimal point, below.
-    // '[' and ']' hold a vector literal.
-    private static final String ONE_CHAR_SYMBOLS = "=<>(),*.[]";
+    // '[' and ']' hold a vector literal. ';' may end a statement, as tools and scripts write.
+    private static final String ONE_CHAR_SYMBOLS = "=<>(),*.[];";
 
     private final String sql;
     private int pos;
