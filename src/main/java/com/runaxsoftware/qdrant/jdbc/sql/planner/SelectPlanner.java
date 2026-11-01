@@ -1,6 +1,8 @@
 package com.runaxsoftware.qdrant.jdbc.sql.planner;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.Ordering;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadIndexType;
 import com.runaxsoftware.qdrant.jdbc.metadata.QdrantDatabaseMetaData;
 import com.runaxsoftware.qdrant.jdbc.resultset.ResultColumn;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
@@ -36,6 +38,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 final class SelectPlanner {
@@ -49,6 +52,10 @@ final class SelectPlanner {
     // The one aggregate Qdrant answers itself, lower case, and the name PostgreSQL gives its
     // column when the statement gives it none
     private static final String COUNT = "count";
+
+    // The payload indexes Qdrant can order by: the ones that compare values as a range
+    private static final Set<PayloadIndexType> RANGE_INDEXES = Set.of(
+        PayloadIndexType.INTEGER, PayloadIndexType.FLOAT, PayloadIndexType.DATETIME);
 
     // The driver's score column, which a search has and a scroll doesn't
     private static final String SCORE = DriverColumns.SCORE.columnName();
@@ -98,7 +105,8 @@ final class SelectPlanner {
         }
 
         TableSchema schema = catalog.table(table.name());
-        Search search = search(statement, schema);
+        OrderItem order = order(statement);
+        Search search = order == null ? null : search(order, schema, statement.alias());
         List<ColumnDefinition> columns =
             resolve(statement.items(), schema, statement.alias(), search != null);
 
@@ -108,11 +116,73 @@ final class SelectPlanner {
         JsonNode filter = FilterPlanner.plan(statement.where(), schema.name(),
             column -> find(schema, column, statement.alias(), search != null));
 
-        return search == null
-            ? new ScrollPlan(schema.name(), columns, withPayload, withVector, statement.limit(),
-                filter)
-            : new QueryPlan(schema.name(), columns, search.vector(), search.query(), withPayload,
-                withVector, statement.limit(), filter);
+        if (search != null) {
+            return new QueryPlan(schema.name(), columns, search.vector(), search.query(),
+                withPayload, withVector, statement.limit(), filter);
+        }
+
+        Ordering ordering = order == null
+            ? null : ordering(order, schema, statement.alias());
+
+        return new ScrollPlan(schema.name(), columns, withPayload, withVector, statement.limit(),
+            filter, ordering);
+    }
+
+    /**
+     * The one thing a statement orders by, or {@code null} when it orders by nothing. Qdrant
+     * orders by one field or ranks by one score, so ordering by several is an error rather than
+     * sorting the driver would have to do itself.
+     */
+    private static OrderItem order(SelectStatement statement) throws SQLException {
+        if (statement.orderBy().isEmpty()) {
+            return null;
+        }
+        if (statement.orderBy().size() > 1) {
+            throw new SQLFeatureNotSupportedException(
+                "Ordering by more than one thing isn't supported yet");
+        }
+
+        return statement.orderBy().get(0);
+    }
+
+    /**
+     * The order a scroll reads points in: a payload field with a range index, which is what
+     * Qdrant can order by, or {@code null} for its own order, by point ID.
+     */
+    private static Ordering ordering(OrderItem order, TableSchema schema, String alias)
+        throws SQLException {
+        if (!(order.expression() instanceof Column named)) {
+            throw new SQLFeatureNotSupportedException("ORDER BY takes a column or "
+                + SIMILARITY + "(vector, [0.1, ...]) DESC");
+        }
+
+        ColumnDefinition column = find(schema, named, alias, false);
+
+        if (column.kind() == ColumnKind.ID) {
+            if (order.descending()) {
+                throw new SQLFeatureNotSupportedException("Qdrant reads points in order of their "
+                    + "ID upwards, so ORDER BY " + column.name() + " DESC isn't supported");
+            }
+
+            return null;   // which is the order a scroll reads in anyway
+        }
+
+        if (column.kind() != ColumnKind.PAYLOAD_FIELD) {
+            throw new SQLFeatureNotSupportedException("Ordering by '" + column.name() + "' of "
+                + schema.name() + " isn't supported: Qdrant orders by a payload field");
+        }
+
+        PayloadIndexType index = schema.collection().payloadIndexes().get(column.source());
+
+        // Set.of takes no null, and a field with no index at all is the common case
+        if (index == null || !RANGE_INDEXES.contains(index)) {
+            throw new SQLFeatureNotSupportedException("Ordering by '" + column.name() + "' of "
+                + schema.name() + " needs a range index on it: Qdrant orders by a field indexed "
+                + "as integer, float, or datetime, and this one is "
+                + (index == null ? "not indexed" : "indexed as " + index.qdrantName()));
+        }
+
+        return new Ordering(column.source(), order.descending());
     }
 
     /**
@@ -170,25 +240,13 @@ final class SelectPlanner {
     }
 
     /**
-     * The search the statement's ORDER BY asks for, or {@code null} when it orders by nothing.
-     * The only ordering Qdrant runs on its own is a ranking, so every other ORDER BY is an
-     * error rather than sorting the driver would have to do itself.
+     * The search an ORDER BY asks for, or {@code null} when it orders by a column, which orders
+     * a scroll instead.
      */
-    private static Search search(SelectStatement statement, TableSchema schema)
+    private static Search search(OrderItem item, TableSchema schema, String alias)
         throws SQLException {
-        if (statement.orderBy().isEmpty()) {
-            return null;
-        }
-        if (statement.orderBy().size() > 1) {
-            throw new SQLFeatureNotSupportedException(
-                "Ordering by more than one thing isn't supported yet");
-        }
-
-        OrderItem item = statement.orderBy().get(0);
-
         if (!(item.expression() instanceof FunctionCall call)) {
-            throw new SQLFeatureNotSupportedException("ORDER BY isn't supported yet, except "
-                + "ORDER BY " + SIMILARITY + "(vector, [0.1, ...]) DESC");
+            return null;   // a column, which orders a scroll instead
         }
         if (!call.is(SIMILARITY)) {
             throw new SQLFeatureNotSupportedException("'" + call.name() + "' isn't a function "
@@ -204,7 +262,7 @@ final class SelectPlanner {
                 + "as " + SIMILARITY + "(dense, [0.1, 0.2])", "42000");
         }
 
-        ColumnDefinition vector = searched(call.arguments().get(0), schema, statement.alias());
+        ColumnDefinition vector = searched(call.arguments().get(0), schema, alias);
         VectorLiteral query = vectorLiteral(call.arguments().get(1), vector);
 
         if (vector.size() != query.size()) {

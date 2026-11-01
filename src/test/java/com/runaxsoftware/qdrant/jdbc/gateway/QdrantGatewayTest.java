@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadIndexType;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.Point;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.Ordering;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantCollection;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QueryRequest;
@@ -231,6 +232,22 @@ class QdrantGatewayTest {
         Request request = server.requests().get(0);
         assertEquals("POST", request.method());
         assertEquals("/collections/events/points/scroll", request.path());
+    }
+
+    @Test
+    void sendsTheOrderOfAScroll() throws SQLException {
+        server.collection("events", plainCollection(), points(3));
+
+        gateway.scroll(new ScrollRequest("events", 2, null, true, false, null,
+            new Ordering("price", true)));
+        gateway.scroll(new ScrollRequest("events", 2, null, true, false, null,
+            new Ordering("price", false)));
+
+        List<JsonNode> requests = server.scrollRequests();
+        assertEquals(Json.object("limit", 2, "with_payload", true, "with_vector", false,
+            "order_by", Json.object("key", "price", "direction", "desc")), requests.get(0));
+        assertEquals(Json.object("limit", 2, "with_payload", true, "with_vector", false,
+            "order_by", Json.object("key", "price", "direction", "asc")), requests.get(1));
     }
 
     @Test

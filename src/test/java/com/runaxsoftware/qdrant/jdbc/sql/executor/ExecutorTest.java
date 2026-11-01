@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.Ordering;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.Point;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QueryRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScoredPoint;
@@ -338,6 +339,44 @@ class ExecutorTest {
         }
     }
 
+    // Ordered scroll plans
+
+    @Test
+    void asksForTheWholeOrderedReadInOnePage() throws SQLException {
+        var requests = new ArrayList<ScrollRequest>();
+        Executor executor = scrolling(requests);
+
+        // Ordered: Qdrant answers in one page, so the fetch size mustn't cut the rows down
+        executor.execute(ordered(2500L), statement(0, 10)).resultSet().close();
+        assertEquals(2500, requests.get(0).limit());
+        assertEquals(new Ordering("price", true), requests.get(0).ordering());
+
+        // Unordered: paged with the cursor, so the fetch size sets the page
+        requests.clear();
+        executor.execute(new ScrollPlan("docs", List.of(ID), false, false, 2500L),
+            statement(0, 10)).resultSet().close();
+        assertEquals(10, requests.get(0).limit());
+        assertEquals(null, requests.get(0).ordering());
+    }
+
+    @Test
+    void readsAnOrderedScrollUpToTheStatementsMaximumRows() throws SQLException {
+        var requests = new ArrayList<ScrollRequest>();
+
+        scrolling(requests).execute(ordered(null), statement(4, 0)).resultSet().close();
+
+        assertEquals(4, requests.get(0).limit());
+    }
+
+    @Test
+    void rejectsAnOrderedScrollThatSaysNoLimit() {
+        SQLException error = assertThrows(SQLException.class,
+            () -> scrolling(new ArrayList<>()).execute(ordered(null), STATEMENT));
+
+        assertEquals("42000", error.getSQLState());
+        assertTrue(error.getMessage().contains("ORDER BY needs a LIMIT"), error.getMessage());
+    }
+
     // Query plans
 
     @Test
@@ -653,6 +692,22 @@ class ExecutorTest {
             .resultSet()) {
             return longs(rows);
         }
+    }
+
+    /**
+     * An executor whose scrolls answer with no points, recording what they were asked for.
+     */
+    private static Executor scrolling(List<ScrollRequest> requests) {
+        return new Executor(request -> {
+            requests.add(request);
+
+            return new ScrollPage(List.of(), null);
+        }, query -> List.of(), collection -> 0, table -> List.of());
+    }
+
+    private static ScrollPlan ordered(Long limit) {
+        return new ScrollPlan("docs", List.of(ID), false, false, limit, null,
+            new Ordering("price", true));
     }
 
     private static QueryPlan plan(Long limit) {

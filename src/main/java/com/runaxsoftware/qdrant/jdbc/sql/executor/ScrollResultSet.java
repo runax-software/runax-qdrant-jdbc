@@ -91,9 +91,9 @@ final class ScrollResultSet extends AbstractResultSet {
                 ? pageSize
                 : (int) Math.min(pageSize, limit - returned);
 
-            ScrollPage page = scroller.scroll(new ScrollRequest(
-                plan.collection(), size, nextOffset, plan.withPayload(), plan.withVector(),
-                plan.filter()));
+            ScrollPage page = scroller.scroll(new ScrollRequest(plan.collection(), size,
+                nextOffset, plan.withPayload(), plan.withVector(), plan.filter(),
+                plan.ordering()));
 
             buffer.addAll(page.points());
             nextOffset = page.nextPageOffset();

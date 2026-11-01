@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static com.runaxsoftware.qdrant.jdbc.support.FakeQdrantServer.point;
 import static com.runaxsoftware.qdrant.jdbc.support.FakeQdrantServer.unnamedVector;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.runaxsoftware.qdrant.jdbc.QdrantDriver;
 import com.runaxsoftware.qdrant.jdbc.support.FakeQdrantServer;
 import com.runaxsoftware.qdrant.jdbc.support.Json;
@@ -70,6 +71,34 @@ class QdrantStatementTest {
             assertEquals(39.9, rows.getDouble("price"));
             assertFalse(rows.next());
         }
+    }
+
+    @Test
+    void readsTheRowsOfAnOrderedScrollInOnePage() throws SQLException {
+        server.collection("ordered", FakeQdrantServer.unnamedVector(2, "Cosine",
+                Map.of("price", "float")),
+            List.of(point(1, Json.object("price", 9.5)), point(2, Json.object("price", 1.5))));
+
+        try (ResultSet rows = statement.executeQuery(
+            "SELECT _id, price FROM ordered ORDER BY price DESC LIMIT 7")) {
+            assertTrue(rows.next());
+        }
+
+        JsonNode request = lastScroll();
+        assertEquals(7, request.path("limit").asInt(), "the whole read, since there's no cursor");
+        assertEquals(Json.object("key", "price", "direction", "desc"), request.get("order_by"));
+    }
+
+    @Test
+    void reportsAnOrderedReadThatCantRunBeforeRunning() throws SQLException {
+        // products has no range index, and the second says nothing about how many to read
+        for (String sql : List.of("SELECT _id FROM products ORDER BY name LIMIT 1",
+            "SELECT _id FROM products ORDER BY price DESC")) {
+            assertThrows(SQLException.class, () -> statement.executeQuery(sql), sql);
+        }
+
+        assertTrue(server.scrollRequests().stream().noneMatch(request -> request.has("order_by")),
+            server.scrollRequests().toString());
     }
 
     @Test
@@ -578,6 +607,16 @@ class QdrantStatementTest {
         assertFalse(statement.isWrapperFor(Connection.class));
         assertSame(statement, statement.unwrap(Statement.class));
         assertThrows(SQLException.class, () -> statement.unwrap(Connection.class));
+    }
+
+    /**
+     * The last scroll the server received: reading a collection's columns scrolls a sample of
+     * its points first, so a statement's own read is the one after that.
+     */
+    private JsonNode lastScroll() {
+        List<JsonNode> scrolls = server.scrollRequests();
+
+        return scrolls.get(scrolls.size() - 1);
     }
 
     // How many times the collection's configuration was read, once per schema read

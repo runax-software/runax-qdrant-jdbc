@@ -86,7 +86,14 @@ public final class Executor {
 
         if (plan instanceof ScrollPlan scroll) {
             Long limit = limit(scroll.limit(), maxRows);
-            int pageSize = fetchsize > 0 ? Math.min(fetchsize, MAX_PAGE_SIZE) : DEFAULT_PAGE_SIZE;
+            int pageSize;
+
+            if (scroll.ordering() == null) {
+                pageSize = fetchsize > 0 ? Math.min(fetchsize, MAX_PAGE_SIZE) : DEFAULT_PAGE_SIZE;
+            } else {
+                limit = orderedLimit(limit);
+                pageSize = onePage(limit);
+            }
 
             return ExecutionResult.rows(new ScrollResultSet(scroller, scroll, limit, pageSize, statement));
         }
@@ -116,6 +123,29 @@ public final class Executor {
 
         throw new SQLFeatureNotSupportedException(
             "Running a " + plan.getClass().getSimpleName() + " isn't supported yet");
+    }
+
+    /**
+     * How many points an ordered scroll reads. Qdrant answers one in a single page, with no
+     * next offset to read another, so one says how many: the statement's LIMIT, or its maximum
+     * rows. A read that gives neither is an error rather than the first page the driver
+     * happened to ask for.
+     */
+    private static long orderedLimit(Long limit) throws SQLException {
+        if (limit == null) {
+            throw new SQLSyntaxErrorException("ORDER BY needs a LIMIT: Qdrant answers an ordered "
+                + "read in one page, so a statement says how many points to read", "42000");
+        }
+
+        return limit;
+    }
+
+    /**
+     * One page holding every row an ordered read returns, since there's no second page to ask
+     * for. The fetch size doesn't cut it down: that would drop rows the statement asked for.
+     */
+    private static int onePage(long limit) {
+        return (int) Math.max(1, Math.min(limit, Integer.MAX_VALUE));
     }
 
     /**
