@@ -842,6 +842,11 @@ public final class FakeQdrantServer implements AutoCloseable {
             List.of()));
     }
 
+    /**
+     * A page of a collection's points. The {@code offset} is the point ID to start at, as
+     * Qdrant's is, not a row count, and asking for one together with an {@code order_by} fails
+     * the way Qdrant 1.20 fails it.
+     */
     private void scroll(HttpExchange exchange, String name, JsonNode request) throws IOException {
         if (find(name) == null) {
             notFound(exchange, name);
@@ -851,6 +856,13 @@ public final class FakeQdrantServer implements AutoCloseable {
         List<ObjectNode> all = points.get(resolve(name));
         JsonNode offset = request == null ? null : request.get("offset");
         int start = 0;
+
+        if (offset != null && !offset.isNull() && request.has("order_by")) {
+            badRequest(exchange, "Cannot use an `offset` when using `order_by`. The alternative "
+                + "for paging is to use `order_by.start_from` and a filter to exclude the IDs "
+                + "that you've already seen for the `order_by.start_from` value");
+            return;
+        }
 
         if (offset != null && !offset.isNull()) {
             while (start < all.size() && !sameId(all.get(start).get("id"), offset)) {
@@ -885,7 +897,10 @@ public final class FakeQdrantServer implements AutoCloseable {
     /**
      * Answers a search with the collection's points in the order they were stored, scored from
      * 1.0 down in steps of 0.1, so a test knows which rows to expect without this ranking
-     * anything itself. Qdrant's own ordering is its business, not the driver's.
+     * anything itself. Qdrant's own ordering is its business, not the driver's. The
+     * {@code offset} is a row count, as the Query API's is: it passes over that many of the
+     * best-ranked points, which keep the scores they would have had, and the limit still counts
+     * the points returned after it.
      */
     private void query(HttpExchange exchange, String name, JsonNode request) throws IOException {
         if (find(name) == null) {
@@ -895,13 +910,15 @@ public final class FakeQdrantServer implements AutoCloseable {
 
         List<ObjectNode> all = points.get(resolve(name));
         int limit = request == null ? 10 : request.path("limit").asInt(10);
+        int offset = request == null ? 0 : request.path("offset").asInt(0);
         boolean withPayload = request != null && request.path("with_payload").asBoolean(false);
         boolean withVector = request != null && request.path("with_vector").asBoolean(false);
         List<JsonNode> scored = new ArrayList<>();
+        int first = Math.min(all.size(), offset);
 
-        for (ObjectNode point : all.subList(0, Math.min(all.size(), limit))) {
+        for (ObjectNode point : all.subList(first, Math.min(all.size(), first + limit))) {
             ObjectNode returned = Json.object("id", point.get("id"), "version", 0,
-                "score", Math.round((1.0 - scored.size() * 0.1) * 100) / 100.0);
+                "score", Math.round((1.0 - (first + scored.size()) * 0.1) * 100) / 100.0);
 
             if (withPayload && point.has("payload")) {
                 returned.set("payload", point.get("payload"));
@@ -934,9 +951,10 @@ public final class FakeQdrantServer implements AutoCloseable {
      * Counts the values of a payload field the way Qdrant's facet API does: a point counts once
      * per value, so an array field counts under each of its elements, and the most common value
      * comes first, ties broken by the value itself. The request's limit cuts the list, as
-     * Qdrant's does. The filter is recorded but not applied — which points a filter matches is
-     * Qdrant's own business, so a test asserts the filter that was sent and leaves the matching
-     * to an integration test.
+     * Qdrant's does, and an {@code offset} is ignored, as Qdrant ignores a field its facet API
+     * has no place for — which is why the driver skips groups itself. The filter is recorded but
+     * not applied — which points a filter matches is Qdrant's own business, so a test asserts
+     * the filter that was sent and leaves the matching to an integration test.
      */
     private void facet(HttpExchange exchange, String name, JsonNode request) throws IOException {
         if (find(name) == null) {
@@ -990,6 +1008,15 @@ public final class FakeQdrantServer implements AutoCloseable {
         send(exchange, 404, "application/json", Json.object("status",
             Json.object("error", "Not found: Collection `" + name + "` doesn't exist!"),
             "time", 0.0).toString());
+    }
+
+    /**
+     * A request Qdrant won't run, answered the way it answers one: a 400 whose message says
+     * what's wrong, prefixed as Qdrant prefixes it.
+     */
+    private static void badRequest(HttpExchange exchange, String error) throws IOException {
+        send(exchange, 400, "application/json", Json.object("status",
+            Json.object("error", "Wrong input: " + error), "time", 0.0).toString());
     }
 
     private static void ok(HttpExchange exchange, JsonNode result) throws IOException {

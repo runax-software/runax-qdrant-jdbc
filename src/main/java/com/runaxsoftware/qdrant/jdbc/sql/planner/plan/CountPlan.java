@@ -15,6 +15,16 @@ import com.fasterxml.jackson.databind.JsonNode;
  *                   the whole collection
  * @param limit      the maximum number of rows, or {@code null} when the statement gave none.
  *                   A count is one row, so only a limit of none leaves it out
+ * @param offset     the rows an OFFSET passes over, or 0 for none. A count is one row, so any
+ *                   OFFSET at all skips past it and nothing is counted
  */
-public record CountPlan(String collection, String column, JsonNode filter, Long limit)
-    implements Plan {}
+public record CountPlan(String collection, String column, JsonNode filter, Long limit,
+                        long offset) implements Plan {
+
+    /**
+     * A count of the first row, which is every count without an OFFSET.
+     */
+    public CountPlan(String collection, String column, JsonNode filter, Long limit) {
+        this(collection, column, filter, limit, 0);
+    }
+}

@@ -253,6 +253,97 @@ class ExecutorTest {
             () -> failing.execute(scroll(null), STATEMENT)));
     }
 
+    // Scroll plans: skipping an OFFSET
+
+    /**
+     * Qdrant pages a scroll by point ID, so the rows an OFFSET skips are read and dropped. The
+     * requests ask for them on top of the rows the statement returns, and no second scroll
+     * starts over: the cursor carries on from where the skipping left off.
+     */
+    @Test
+    void skipsThePointsOfAnOffsetAsItPages() throws SQLException {
+        FakeCollection docs = new FakeCollection(10);
+
+        try (ResultSet rows = docs.run(scroll(3L, 4), statement(0, 2))) {
+            assertEquals(List.of(5L, 6L, 7L), longs(rows));
+        }
+
+        assertEquals(List.of(2, 2, 2, 1), docs.limits(), "four points skipped, then three rows");
+        assertEquals(Arrays.asList(null, "3", "5", "7"), docs.offsets());
+    }
+
+    @Test
+    void skipsThePointsOfAnOffsetWithoutALimit() throws SQLException {
+        FakeCollection docs = new FakeCollection(5);
+
+        try (ResultSet rows = docs.run(scroll(null, 3), statement(0, 2))) {
+            assertEquals(List.of(4L, 5L), longs(rows));
+        }
+    }
+
+    @Test
+    void returnsNoRowsWhenAnOffsetPassesTheLastPoint() throws SQLException {
+        FakeCollection docs = new FakeCollection(3);
+
+        try (ResultSet rows = docs.run(scroll(10L, 5), STATEMENT)) {
+            assertFalse(rows.next());
+        }
+        try (ResultSet rows = docs.run(scroll(null, 3), STATEMENT)) {
+            assertFalse(rows.next(), "an offset of the whole collection leaves nothing");
+        }
+    }
+
+    /**
+     * The maximum rows bound the rows the result set yields, as JDBC says, so they count after
+     * the skip rather than against it.
+     */
+    @Test
+    void countsTheMaximumRowsAfterTheSkipRatherThanAgainstIt() throws SQLException {
+        FakeCollection docs = new FakeCollection(10);
+
+        try (ResultSet rows = docs.run(scroll(null, 4), statement(2, 0))) {
+            assertEquals(List.of(5L, 6L), longs(rows));
+        }
+    }
+
+    @Test
+    void asksForTheSkippedPointsAndTheRowsTogetherInOnePage() throws SQLException {
+        var requests = new ArrayList<ScrollRequest>();
+
+        // Unordered, with a page big enough for both: one request covers the skip and the rows
+        scrolling(requests).execute(scroll(3L, 4), statement(0, 100)).resultSet().close();
+        assertEquals(7, requests.get(0).limit());
+
+        // Ordered: Qdrant answers in one page and rejects an offset, so that page holds both
+        requests.clear();
+        scrolling(requests).execute(ordered(5L, 3), statement(0, 10)).resultSet().close();
+        assertEquals(8, requests.get(0).limit());
+        assertEquals(new Ordering("price", true), requests.get(0).ordering());
+        assertEquals(null, requests.get(0).offset(), "an ordered scroll sends Qdrant no offset");
+    }
+
+    @Test
+    void skipsThePointsOfAnOrderedReadsOffsetFromItsOnePage() throws SQLException {
+        FakeCollection docs = new FakeCollection(10);
+
+        try (ResultSet rows = docs.run(ordered(3L, 4), statement(0, 2))) {
+            assertEquals(List.of(5L, 6L, 7L), longs(rows));
+        }
+
+        assertEquals(List.of(7), docs.limits(), "one page, holding the skip and the rows");
+    }
+
+    @Test
+    void asksForNothingWhenAnOffsetMeetsALimitOfNoRows() throws SQLException {
+        FakeCollection docs = new FakeCollection(5);
+
+        try (ResultSet rows = docs.run(scroll(0L, 3), STATEMENT)) {
+            assertFalse(rows.next());
+        }
+
+        assertEquals(List.of(), docs.limits(), "no rows to return means nothing to skip for");
+    }
+
     @Test
     void asksForPayloadsAndVectorsOnlyWhenThePlanNeedsThem() throws SQLException {
         List<ScrollRequest> requests = new ArrayList<>();
@@ -418,6 +509,43 @@ class ExecutorTest {
         assertTrue(error.getMessage().contains("GROUP BY needs a LIMIT"), error.getMessage());
     }
 
+    /**
+     * Qdrant's facet API has no offset, and ignores one rather than reporting it, so the driver
+     * counts the groups it returns and the ones it skips together and drops the first.
+     */
+    @Test
+    void countsTheSkippedGroupsAndTheReturnedOnesTogetherAndDropsTheFirst() throws SQLException {
+        var requests = new ArrayList<FacetRequest>();
+
+        try (ResultSet rows = faceting(requests).execute(facet(1L, 1), STATEMENT).resultSet()) {
+            assertTrue(rows.next());
+            assertEquals(1L, rows.getLong("count"), "the second group, 'de', counted once");
+            assertFalse(rows.next());
+        }
+
+        assertEquals(List.of(2L), requests.stream().map(FacetRequest::limit).toList());
+    }
+
+    @Test
+    void returnsNoGroupsWhenAnOffsetPassesTheLastOne() throws SQLException {
+        var requests = new ArrayList<FacetRequest>();
+
+        try (ResultSet rows = faceting(requests).execute(facet(5L, 9), STATEMENT).resultSet()) {
+            assertFalse(rows.next(), "the fake counts two groups, the offset passes both");
+        }
+
+        assertEquals(List.of(14L), requests.stream().map(FacetRequest::limit).toList());
+    }
+
+    @Test
+    void countsTheMaximumRowsOfAGroupedReadAfterTheSkip() throws SQLException {
+        var requests = new ArrayList<FacetRequest>();
+
+        faceting(requests).execute(facet(null, 3), statement(2, 0)).resultSet().close();
+
+        assertEquals(List.of(5L), requests.stream().map(FacetRequest::limit).toList());
+    }
+
     @Test
     void sendsTheFilterOfAGroupedStatement() throws SQLException {
         JsonNode filter = JSON.createObjectNode().put("key", "lang");
@@ -486,6 +614,35 @@ class ExecutorTest {
             "the maximum rows said how many");
     }
 
+    /**
+     * A limit bounds the rows a read returns, so an OFFSET skips ahead of them whichever of the
+     * three supplied it: the over-fetch is that limit plus the offset, and the default still
+     * bounds exactly as many rows as its warning claims.
+     */
+    @Test
+    void addsTheOffsetToTheConnectionsDefaultLimit() throws SQLException {
+        var scrolls = new ArrayList<ScrollRequest>();
+        var searches = new ArrayList<QueryRequest>();
+        var facets = new ArrayList<FacetRequest>();
+
+        ExecutionResult read = bounded(scrolls, searches, facets, 3).execute(ordered(null, 2),
+            STATEMENT);
+        bounded(scrolls, searches, facets, 3).execute(plan(null, 2), STATEMENT).resultSet().close();
+        bounded(scrolls, searches, facets, 3).execute(facet(null, 2), STATEMENT).resultSet()
+            .close();
+
+        assertEquals(5, scrolls.get(0).limit(), "the ordered read over-fetches 3 + 2");
+        assertEquals(5L, facets.get(0).limit(), "the groups over-fetch 3 + 2");
+
+        assertEquals(3L, searches.get(0).limit(), "Qdrant skips for a search, so the limit stays");
+        assertEquals(2L, searches.get(0).offset());
+
+        // The warning counts the rows the statement will see, not the ones fetched to skip
+        assertTrue(read.warning().contains("at most 3 rows"), read.warning());
+        assertFalse(read.warning().contains("5 rows"), read.warning());
+        read.resultSet().close();
+    }
+
     @Test
     void asksForTheLimitWhenTheConnectionHasNoDefault() {
         for (Plan plan : List.of(ordered(null), plan(null), facet(null))) {
@@ -494,6 +651,39 @@ class ExecutorTest {
 
             assertEquals("42000", error.getSQLState());
             assertTrue(error.getMessage().contains("needs a LIMIT"), error.getMessage());
+        }
+    }
+
+    /**
+     * An OFFSET doesn't stand in for the limit a one-call read needs: with no default to fall
+     * back on, the read still asks for a LIMIT, and for the same reason as without an offset.
+     */
+    @Test
+    void stillAsksForTheLimitWhenAnOffsetIsAllTheStatementGave() {
+        for (Plan plan : List.of(ordered(null, 2), plan(null, 2), facet(null, 2))) {
+            SQLException error = assertThrows(SQLException.class, () -> bounded(new ArrayList<>(),
+                new ArrayList<>(), new ArrayList<>(), 0).execute(plan, STATEMENT));
+
+            assertEquals("42000", error.getSQLState());
+            assertTrue(error.getMessage().contains("needs a LIMIT"), error.getMessage());
+        }
+    }
+
+    /**
+     * A plain read pages through the cursor, so it never needed a limit and the default never
+     * bounded it: an OFFSET alone is enough to page one, whatever the connection's default.
+     */
+    @Test
+    void pagesAPlainReadWithAnOffsetAndNoLimitWhateverTheDefault() throws SQLException {
+        for (int defaultLimit : List.of(0, 3)) {
+            FakeCollection docs = new FakeCollection(5);
+
+            try (ResultSet rows = new Executor(docs::scroll, query -> List.of(),
+                (collection, filter) -> 0, facet -> List.of(), table -> List.of(), null,
+                Embedders.none(), defaultLimit)
+                .execute(scroll(null, 3), STATEMENT).resultSet()) {
+                assertEquals(List.of(4L, 5L), longs(rows), "defaultLimit " + defaultLimit);
+            }
         }
     }
 
@@ -605,6 +795,34 @@ class ExecutorTest {
         assertEquals(List.of(), requests, "no call ranks no points");
     }
 
+    /**
+     * The Query API's offset is a row count, so it goes to Qdrant as it was written and the
+     * limit still counts the points returned after it: the driver discards nothing.
+     */
+    @Test
+    void passesASearchsOffsetToQdrant() throws SQLException {
+        var requests = new ArrayList<QueryRequest>();
+
+        search(requests).execute(plan(5L, 2), STATEMENT).resultSet().close();
+        search(requests).execute(plan(5L, 0), STATEMENT).resultSet().close();
+        search(requests).execute(plan(null, 3), statement(4, 0)).resultSet().close();
+
+        assertEquals(List.of(2L, 0L, 3L), requests.stream().map(QueryRequest::offset).toList());
+        assertEquals(List.of(5L, 5L, 4L), requests.stream().map(QueryRequest::limit).toList(),
+            "the maximum rows bound the rows returned, not the ones Qdrant passes over");
+    }
+
+    @Test
+    void searchesNothingWhenAnOffsetMeetsALimitOfNoRows() throws SQLException {
+        var requests = new ArrayList<QueryRequest>();
+
+        try (ResultSet rows = search(requests).execute(plan(0L, 5), STATEMENT).resultSet()) {
+            assertFalse(rows.next());
+        }
+
+        assertEquals(List.of(), requests, "no call ranks no points");
+    }
+
     @Test
     void rejectsASearchThatSaysNoLimit() {
         SQLException error = assertThrows(SQLException.class,
@@ -691,6 +909,26 @@ class ExecutorTest {
         assertEquals(List.of("docs", "docs", "docs"), counted, "one call each, and only one");
     }
 
+    /**
+     * A count is one row, so an offset of one is already past it: no row and nothing counted,
+     * the way a limit of no rows leaves it out.
+     */
+    @Test
+    void countsNothingWhenAnOffsetSkipsItsOneRow() throws SQLException {
+        var counted = new ArrayList<String>();
+
+        try (ResultSet rows = counting(counted, 42)
+            .execute(new CountPlan("docs", "count", null, null, 1), STATEMENT).resultSet()) {
+            assertEquals(1, rows.getMetaData().getColumnCount());
+            assertFalse(rows.next());
+        }
+
+        assertEquals(List.of(), counted, "no call counts a row nobody reads");
+
+        // And OFFSET 0 is no offset at all, so the row stays
+        assertEquals(List.of(42L), counts(counting(counted, 42), null, STATEMENT));
+    }
+
     @Test
     void reportsWhatCountingReported() {
         SQLException failure = new SQLException("Qdrant: Not found", "42S02");
@@ -775,6 +1013,26 @@ class ExecutorTest {
         assertEquals(1, systemRows(SystemTable.ALIASES, 1L, statement(5, 0)));
     }
 
+    /**
+     * The table's rows are in memory already, so an OFFSET just starts further along them, and
+     * the limit counts the rows returned after it.
+     */
+    @Test
+    void skipsTheFirstRowsOfASystemTable() throws SQLException {
+        SystemTable aliases = SystemTable.ALIASES;
+
+        try (ResultSet rows = SYSTEM.execute(
+            new SystemTablePlan(aliases, aliases.columns(), null, 1), STATEMENT).resultSet()) {
+            assertTrue(rows.next());
+            assertEquals("current", rows.getString("alias_name"), "the second row");
+            assertFalse(rows.next());
+        }
+
+        assertEquals(1, systemRows(aliases, 1L, 1, STATEMENT), "the limit counts after the skip");
+        assertEquals(0, systemRows(aliases, 5L, 2, STATEMENT), "an offset past the last row");
+        assertEquals(2, systemRows(aliases, null, 0, STATEMENT));
+    }
+
     @Test
     void reportsWhatReadingASystemTableReported() {
         SQLException failure = new SQLException("Qdrant: Service internal error", "HY000");
@@ -797,10 +1055,15 @@ class ExecutorTest {
 
     private static int systemRows(SystemTable table, Long limit, Statement statement)
         throws SQLException {
+        return systemRows(table, limit, 0, statement);
+    }
+
+    private static int systemRows(SystemTable table, Long limit, long offset, Statement statement)
+        throws SQLException {
         int count = 0;
 
         try (ResultSet rows = SYSTEM.execute(
-            new SystemTablePlan(table, table.columns(), limit), statement).resultSet()) {
+            new SystemTablePlan(table, table.columns(), limit, offset), statement).resultSet()) {
             while (rows.next()) count++;
         }
 
@@ -895,8 +1158,12 @@ class ExecutorTest {
     }
 
     private static FacetPlan facet(Long limit) {
+        return facet(limit, 0);
+    }
+
+    private static FacetPlan facet(Long limit, long offset) {
         return new FacetPlan("docs", "lang",
-            List.of(new FacetColumn("count", ColumnType.INTEGER, true)), null, limit);
+            List.of(new FacetColumn("count", ColumnType.INTEGER, true)), null, limit, offset);
     }
 
     // Embedding the text a search searches with
@@ -1010,13 +1277,21 @@ class ExecutorTest {
     }
 
     private static ScrollPlan ordered(Long limit) {
-        return new ScrollPlan("docs", List.of(ID), false, false, limit, null,
+        return ordered(limit, 0);
+    }
+
+    private static ScrollPlan ordered(Long limit, long offset) {
+        return new ScrollPlan("docs", List.of(ID), false, false, limit, offset, null,
             new Ordering("price", true));
     }
 
     private static QueryPlan plan(Long limit) {
+        return plan(limit, 0);
+    }
+
+    private static QueryPlan plan(Long limit, long offset) {
         return new QueryPlan("docs", List.of(ID, SCORE), "dense", List.of(0.1, 0.2), false, false,
-            limit);
+            limit, offset, null);
     }
 
     // A statement that answers maxRows and fetchSize and fails on anything else
@@ -1050,6 +1325,10 @@ class ExecutorTest {
 
     private static ScrollPlan scroll(Long limit) {
         return new ScrollPlan("docs", List.of(ID), false, false, limit);
+    }
+
+    private static ScrollPlan scroll(Long limit, long offset) {
+        return new ScrollPlan("docs", List.of(ID), false, false, limit, offset, null, null);
     }
 
     private static ColumnDefinition field(String path, ColumnType type) {

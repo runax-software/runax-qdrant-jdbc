@@ -200,10 +200,115 @@ class PlannerTest {
     @ParameterizedTest
     @ValueSource(strings = {
             "SELECT * FROM docs ORDER BY price",
-            "SELECT * FROM docs OFFSET 5",
             "SELECT 1 FROM docs"})
     void rejectsWhatASelectWithFromCantDoYet(String sql) {
         assertThrows(SQLFeatureNotSupportedException.class, () -> plan(sql, CATALOG));
+    }
+
+    // OFFSET
+
+    /**
+     * Qdrant's scroll {@code offset} is the point ID a page starts at, not a row count, so the
+     * plan carries the rows to skip and the driver discards them as it pages.
+     */
+    @Test
+    void plansAReadsOffsetAsRowsTheDriverSkips() throws SQLException {
+        ScrollPlan plan = scroll("SELECT _id FROM docs LIMIT 10 OFFSET 20");
+
+        assertEquals(10L, plan.limit());
+        assertEquals(20, plan.offset());
+    }
+
+    @Test
+    void plansAnOffsetWithoutALimit() throws SQLException {
+        // A plain read pages with the cursor, so it needs no limit to say where to stop
+        assertEquals(20, scroll("SELECT _id FROM docs OFFSET 20").offset());
+        assertEquals(null, scroll("SELECT _id FROM docs OFFSET 20").limit());
+    }
+
+    @Test
+    void plansNoOffsetAtAllForOffsetZeroAndForNone() throws SQLException {
+        assertEquals(0, scroll("SELECT _id FROM docs").offset());
+        assertEquals(0, scroll("SELECT _id FROM docs OFFSET 0").offset());
+    }
+
+    @Test
+    void plansAnOrderedReadsOffsetAsRowsTheDriverSkips() throws SQLException {
+        // Qdrant rejects an offset beside an order_by, so this one is the driver's to skip too
+        ScrollPlan plan = scroll("SELECT _id FROM indexed ORDER BY price LIMIT 5 OFFSET 3");
+
+        assertEquals(new Ordering("price", false), plan.ordering());
+        assertEquals(5L, plan.limit());
+        assertEquals(3, plan.offset());
+    }
+
+    @Test
+    void plansASearchsOffsetForQdrantToApply() throws SQLException {
+        // The Query API's offset is a row count, so it goes to Qdrant as it was written
+        QueryPlan plan = query("SELECT _id FROM docs "
+                + "ORDER BY similarity(_vector, [0.1, 0.2, 0.3, 0.4]) DESC LIMIT 5 OFFSET 2");
+
+        assertEquals(5L, plan.limit());
+        assertEquals(2, plan.offset());
+    }
+
+    @Test
+    void plansAGroupedReadsOffsetAsGroupsTheDriverSkips() throws SQLException {
+        FacetPlan plan = facet("SELECT name, COUNT(*) FROM indexed GROUP BY name LIMIT 5 OFFSET 2");
+
+        assertEquals(5L, plan.limit());
+        assertEquals(2, plan.offset());
+    }
+
+    @Test
+    void plansACountsOffsetAsSkippingItsOneRow() throws SQLException {
+        assertEquals(0, count("SELECT COUNT(*) FROM docs OFFSET 0", NO_LOOKUPS).offset());
+        assertEquals(1, count("SELECT COUNT(*) FROM docs OFFSET 1", NO_LOOKUPS).offset());
+    }
+
+    @Test
+    void plansASystemTablesOffsetAsRowsToSkipInMemory() throws SQLException {
+        assertEquals(5, system("SELECT * FROM system.collections OFFSET 5").offset());
+    }
+
+    /**
+     * A plain or ordered read and a GROUP BY pay for their own skip, so the planner caps it:
+     * past the cap the statement would read far more rows than it returns, which is the full
+     * scan this driver doesn't do quietly.
+     */
+    @Test
+    void rejectsAnOffsetDeeperThanTheDriverWillSkip() {
+        for (String sql : List.of(
+                "SELECT _id FROM docs OFFSET ",
+                "SELECT _id FROM indexed ORDER BY price LIMIT 5 OFFSET ",
+                "SELECT name, COUNT(*) FROM indexed GROUP BY name LIMIT 5 OFFSET ")) {
+            SQLException error = assertThrows(SQLFeatureNotSupportedException.class,
+                    () -> plan(sql + (Planner.MAX_OFFSET + 1), CATALOG), sql);
+
+            assertTrue(error.getMessage().contains("OFFSET up to " + Planner.MAX_OFFSET
+                    + " runs"), error.getMessage());
+        }
+    }
+
+    @Test
+    void skipsAsDeepAsTheCapAllows() throws SQLException {
+        assertEquals(Planner.MAX_OFFSET,
+                scroll("SELECT _id FROM docs OFFSET " + Planner.MAX_OFFSET).offset());
+    }
+
+    /**
+     * Qdrant does the skipping for a search, and a system table is read into memory whatever the
+     * statement asks for, so neither pays for a deep offset and neither is capped.
+     */
+    @Test
+    void leavesTheOffsetUncappedWhereTheDriverPaysNothingForIt() throws SQLException {
+        long deep = Planner.MAX_OFFSET * 100;
+
+        assertEquals(deep, query("SELECT _id FROM docs ORDER BY "
+                + "similarity(_vector, [0.1, 0.2, 0.3, 0.4]) DESC LIMIT 5 OFFSET " + deep)
+                .offset());
+        assertEquals(deep, system("SELECT * FROM system.collections OFFSET " + deep).offset());
+        assertEquals(deep, count("SELECT COUNT(*) FROM docs OFFSET " + deep, NO_LOOKUPS).offset());
     }
 
     // Grouping
@@ -307,8 +412,7 @@ class PlannerTest {
     @ValueSource(strings = {
             "SELECT COUNT(*) FROM indexed GROUP BY name, year LIMIT 5",
             "SELECT name, COUNT(*) FROM indexed GROUP BY name ORDER BY name LIMIT 5",
-            "SELECT * FROM indexed GROUP BY name LIMIT 5",
-            "SELECT name, COUNT(*) FROM indexed GROUP BY name LIMIT 5 OFFSET 2"})
+            "SELECT * FROM indexed GROUP BY name LIMIT 5"})
     void rejectsWhatAGroupedStatementCantDoYet(String sql) {
         assertThrows(SQLException.class, () -> plan(sql, CATALOG), sql);
     }
@@ -524,14 +628,6 @@ class PlannerTest {
                         + "ORDER BY similarity(name, [0.1]) DESC", NO_LOOKUPS));
     }
 
-    @Test
-    void rejectsWhatASearchStillCantDo() {
-        String search = " ORDER BY similarity(_vector, [0.1, 0.2, 0.3, 0.4]) DESC";
-
-        assertThrows(SQLFeatureNotSupportedException.class,
-                () -> plan("SELECT _id FROM docs" + search + " LIMIT 5 OFFSET 2", CATALOG));
-    }
-
     // Counting
 
     @Test
@@ -610,7 +706,6 @@ class PlannerTest {
 
     @ParameterizedTest
     @ValueSource(strings = {
-        "SELECT COUNT(*) FROM docs OFFSET 5",
         "SELECT COUNT(*) FROM docs ORDER BY price",
         "SELECT COUNT(*) FROM docs ORDER BY similarity(_vector, [0.1, 0.2, 0.3, 0.4]) DESC"})
     void rejectsWhatACountCantDoYet(String sql) {
@@ -810,7 +905,6 @@ class PlannerTest {
     @ValueSource(strings = {
             "SELECT * FROM system.collections WHERE status = 'green'",
             "SELECT * FROM system.collections ORDER BY name",
-            "SELECT * FROM system.collections OFFSET 5",
             "SELECT 1 FROM system.collections"})
     void rejectsWhatASystemTableSelectCantDoYet(String sql) {
         assertThrows(SQLFeatureNotSupportedException.class, () -> plan(sql, NO_LOOKUPS));

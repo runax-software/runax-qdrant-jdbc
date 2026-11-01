@@ -30,8 +30,8 @@ measured REST and SQL coverage is in [docs/coverage.md](docs/coverage.md).
   `Statement` methods DataGrip calls on every connection, and support for the SQL it
   generates when opening, filtering, and sorting a table. The defaults and the statement
   that opens a table (`SELECT t.* FROM collections.docs t`, through table aliases and
-  qualified names), filtering through `WHERE`, and sorting through `ORDER BY` are all done.
-  What a grid still can't do is page past the first screen (`OFFSET`), its own item below.
+  qualified names), filtering through `WHERE`, and sorting through `ORDER BY` are all done, and
+  so is paging past the first screen with `OFFSET`, its own item below.
 - [x] **Integration tests** against Qdrant in Docker, run by CI on every pull request.
 - [ ] **Packaging** — one self-contained jar, a DataGrip setup guide, and publishing to
   Maven Central as `com.runaxsoftware:qdrant-jdbc`. The jar (`./gradlew shadowJar`) and
@@ -56,6 +56,14 @@ measured REST and SQL coverage is in [docs/coverage.md](docs/coverage.md).
 - [x] **ORDER BY** on range-indexed payload fields, through the scroll's `order_by`, and
   `ORDER BY _id` as Qdrant's own order. An ordered read needs a limit, since Qdrant answers
   one in a single page; paging an ordered read by value (`order_by.start_from`) comes later.
+- [x] **OFFSET** on every kind of read, which is what lets a data grid page past its first
+  screen. Qdrant has no one way to do it: a search's `OFFSET` is the Query API's own `offset`, a
+  row count sent as written, while a scroll pages by point ID and the facet API has no `offset`
+  at all, so a plain read skips through the cursor, an ordered read and a `GROUP BY` over-fetch
+  `limit + offset`, and each discards the first rows. Because the driver pays for those skips
+  they're capped at 10,000 rows, past which the statement is an error rather than a quiet read of
+  a whole collection. `COUNT(*)` is one row, so any `OFFSET` skips it. Paging an ordered read by
+  value instead of by count (`order_by.start_from`, above) would lift its cap.
 - [x] **Prepared statements** with parameters: `?` for constants in `WHERE`, the select list,
   and a search's vector (`float[]` or `double[]`), batches of values for `DELETE`, and
   parameter metadata. `LIMIT ?` and `OFFSET ?` come later.
@@ -90,7 +98,7 @@ measured REST and SQL coverage is in [docs/coverage.md](docs/coverage.md).
   with the schema-qualified names (`system.collections`, `qdrant.system.collections`) that
   reach them, and so are `snapshots`, `shard_keys`, `shards`, `cluster`, `peers`,
   `telemetry`, `metrics`, and `issues`. Read-only lists then move from `CALL` procedures to
-  these tables. A system table takes `SELECT`, a column list, and `LIMIT`; `WHERE`,
+  these tables. A system table takes `SELECT`, a column list, `LIMIT`, and `OFFSET`; `WHERE`,
   `ORDER BY`, and `COUNT(*)` over one come with the items above. Only the telemetry Qdrant
   answers with by default is exposed, not its deeper `?details_level=` levels.
 - [ ] **Buffered writes (later, opt-in)** — not real transactions, since Qdrant has none.

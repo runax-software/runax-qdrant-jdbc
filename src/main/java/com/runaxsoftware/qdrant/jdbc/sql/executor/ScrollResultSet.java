@@ -13,6 +13,15 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
 
+/**
+ * A read of a collection's points, paged through Qdrant's scroll cursor.
+ *
+ * <p>An OFFSET is skipped here rather than by Qdrant. Its scroll {@code offset} is the point ID
+ * a page starts at — which is what {@link #nextOffset} below holds — and not a row count, so
+ * there's nothing to pass a row offset to: the points to skip are read and discarded, and the
+ * requests ask for them on top of the rows the statement returns. The planner caps how many a
+ * statement may skip, so the discarding stays bounded.
+ */
 final class ScrollResultSet extends AbstractResultSet {
     private final Scroller scroller;
     private final ScrollPlan plan;
@@ -21,6 +30,7 @@ final class ScrollResultSet extends AbstractResultSet {
     private JsonNode nextOffset;                               // where the next page starts
     private boolean exhausted;                                 // Qdrant has no more pages
     private long returned;                                     // rows returned, for LIMIT
+    private long discarded;                                    // points dropped, for OFFSET
     private final Long limit;      // null means no limit
     private final int pageSize;
 
@@ -87,18 +97,35 @@ final class ScrollResultSet extends AbstractResultSet {
 
     private void fill() throws SQLException {
         while (buffer.isEmpty() && !exhausted) {
-            int size = limit == null
-                ? pageSize
-                : (int) Math.min(pageSize, limit - returned);
+            int size = limit == null ? pageSize : (int) Math.min(pageSize, wanted());
 
             ScrollPage page = scroller.scroll(new ScrollRequest(plan.collection(), size,
                 nextOffset, plan.withPayload(), plan.withVector(), plan.filter(),
                 plan.ordering()));
 
-            buffer.addAll(page.points());
+            for (Point point : page.points()) {
+                if (discarded < plan.offset()) {
+                    discarded++;
+                    continue;
+                }
+
+                buffer.add(point);
+            }
+
             nextOffset = page.nextPageOffset();
             exhausted = nextOffset == null;
         }
+    }
+
+    /**
+     * How many more points Qdrant has to send: the rows still to return and the ones the OFFSET
+     * still skips before them. A limit of everything saturates rather than wrapping round, and
+     * only a number below the page size changes what's asked for anyway.
+     */
+    private long wanted() {
+        long skipping = plan.offset() - discarded;
+
+        return Math.min(limit - returned, Long.MAX_VALUE - skipping) + skipping;
     }
 
     private boolean limitReached() {

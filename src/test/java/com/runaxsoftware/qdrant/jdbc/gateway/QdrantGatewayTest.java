@@ -374,6 +374,29 @@ class QdrantGatewayTest {
         assertEquals("/collections/events/points/query", request.path());
     }
 
+    /**
+     * The Query API's {@code offset} is a row count, unlike a scroll's, so the gateway sends it
+     * as the statement wrote it and Qdrant answers with the points after it. A search that skips
+     * nothing sends no offset at all.
+     */
+    @Test
+    void sendsTheOffsetOfASearch() throws SQLException {
+        server.collection("events", plainCollection(), points(5));
+
+        List<ScoredPoint> found = gateway.query(
+            new QueryRequest("events", "", List.of(0.1), 2, 2, false, false, null));
+
+        assertEquals(Json.object("limit", 2, "with_payload", false, "with_vector", false,
+            "query", Json.object("nearest", Json.array(0.1)), "offset", 2),
+            server.queryRequests().get(0));
+        assertEquals(List.of(3L, 4L),
+            found.stream().map(point -> point.point().id().longValue()).toList());
+
+        gateway.query(new QueryRequest("events", "", List.of(0.1), 2, 0, false, false, null));
+        assertTrue(server.queryRequests().get(1).path("offset").isMissingNode(),
+            "a search that skips nothing starts at the closest point");
+    }
+
     @Test
     void readsTheScoredPointsOfASearch() throws SQLException {
         server.collection("events", plainCollection(), points(3));

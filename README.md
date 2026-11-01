@@ -11,7 +11,7 @@ first target; any JDBC client (DBeaver, BI tools) should work the same way.
 - **Collections as tables** — collections show up in the database explorer, and points
   as rows: every payload field is a column under its own name, next to the driver's own
   `_id` (the point ID), `_payload` (the whole payload as JSON), and the vectors.
-- **SQL over the Qdrant API** — `WHERE` becomes a Qdrant filter, plus `LIMIT`,
+- **SQL over the Qdrant API** — `WHERE` becomes a Qdrant filter, plus `LIMIT`, `OFFSET`,
   `COUNT(*)`, `GROUP BY` through facets, and `ORDER BY` on range-indexed fields.
 - **Similarity search** — rank points by similarity to a vector, with the score as a
   `_score` column, and `embed('text')` to search with text, embedded by Qdrant or by a
@@ -72,8 +72,13 @@ Regular SQL against a collection:
 SELECT _id, _payload
 FROM docs
 WHERE lang = 'en' AND year >= 2024
-LIMIT 50
+LIMIT 50 OFFSET 50
 ```
+
+`OFFSET` pages past the rows before it, on a plain read, an ordered one, a search, a `GROUP BY`,
+or a system table. Qdrant applies it itself only for a search; the other reads skip in the
+driver, so they're capped at 10,000 rows and a deeper offset says so instead of reading a whole
+collection to return one screen.
 
 Similarity search, which runs today with the vector written out:
 
@@ -151,7 +156,7 @@ RESET ALL;
 | --- | --- | --- |
 | `WHERE` on payload fields | Filter (`must` / `should` / `must_not`) | Fast with payload indexes |
 | `LIMIT` | `limit` | |
-| `OFFSET n` | Scroll | Qdrant pages with a cursor, so the driver skips `n` points |
+| `OFFSET n` | Query API `offset` for a search; skipped by the driver otherwise | A search's offset is Qdrant's own; a scroll pages by point ID and a facet has no offset, so those skip `n` rows in the driver, up to 10,000 |
 | `ORDER BY field` | Scroll `order_by` | Needs a range index on the field; bounded by `LIMIT`, maximum rows, or `defaultLimit` |
 | `COUNT(*)` | Count API | |
 | `GROUP BY field` + `COUNT(*)` | Facet API | Needs a keyword, integer, bool, or uuid index; bounded like an ordered read |

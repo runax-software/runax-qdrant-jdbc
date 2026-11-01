@@ -86,12 +86,41 @@ Objects and arrays use PostgreSQL's JSON operators and functions:
 | Vector column in the select list | `with_vectors` for that vector only; `*` returns no vectors |
 | `WHERE _id = 7`, `WHERE _id IN (7, '5c56…')` | Retrieve by ID |
 | `LIMIT n` | `limit` |
-| `OFFSET n` | Query API `offset` for searches; for plain reads, skip `n` points with the cursor |
+| `OFFSET n` | Query API `offset` for searches; for plain reads, skip `n` points with the cursor; for ordered reads and facets, over-fetch `limit + n` and drop the first `n` |
 | `ORDER BY _id` | Scroll order (the default) |
 | `ORDER BY price DESC` | `order_by` with direction; needs a range index on `price`, and a limit from the statement or `defaultLimit`, since Qdrant answers an ordered read in one page |
 | `ORDER BY RANDOM()` | Query `sample: random` |
 | `SELECT MIN(price)`, `MAX(price)` | `order_by` on `price` with `limit 1`; needs a range index |
 | `SELECT DISTINCT lang` | Facet on `lang` |
+
+### `OFFSET`
+
+`OFFSET n` runs on every kind of read, which is what lets a data grid page past its first
+screen. Qdrant offers no one way to do it, so each kind reaches it differently and only one of
+the four is the server's own work:
+
+| Read | How the offset is applied | What it costs |
+| --- | --- | --- |
+| Similarity search | Qdrant's Query API `offset`, which is a row count, sent as written | Nothing: the server skips |
+| Plain read | The driver pages with the scroll cursor and discards `n` points — Qdrant's scroll `offset` is the point ID to start at, not a row count | `n` points read and dropped |
+| Ordered read | The driver asks for `limit + n` in the single page Qdrant answers with and drops the first `n`; Qdrant rejects an `offset` beside an `order_by` outright | `n` extra points in one response |
+| `GROUP BY` | The driver facets `limit + n` values and drops the first `n`; the facet API has no `offset` field and *ignores* one rather than reporting it | `n` extra groups counted |
+| `COUNT(*)` | One row, so any `OFFSET` skips past it: no row, and nothing counted | Nothing: no call |
+| System table | The rows are already in memory, so the read starts further along them | Nothing |
+
+Where the driver does the skipping it pays for rows no statement returns, so an offset there is
+capped at **10,000**; past that the statement is an error naming the cap and suggesting a
+`WHERE`, rather than a read of a whole collection dressed up as a read of one screen. A search's
+offset and a system table's cost the driver nothing, so neither is capped.
+
+`OFFSET` with no `LIMIT` is fine for a plain read, which pages lazily, and for a system table.
+An ordered read, a search, and a `GROUP BY` are each bounded by a `LIMIT`, the statement's
+maximum rows, or the connection's `defaultLimit`, so `OFFSET` there always composes with a
+limit — and the over-fetch is that limit plus the offset, whichever of the three supplied it.
+Because a limit bounds the rows *returned*, a defaulted one still means what its warning says
+once an offset skips ahead of them. As JDBC specifies, `setMaxRows` bounds the rows the *result
+set* yields, so it counts the rows after the skip, never against it; `setFetchSize` still sets
+the page a plain read is skipped through.
 
 ## Filters (`WHERE`)
 
@@ -148,8 +177,10 @@ or the statement's maximum rows: Qdrant ranks the points nearest the vector rath
 reading the whole collection, so a search without either is an error rather than a number the
 driver picked. `ASC` is an error too, since Qdrant returns the closest points first. The
 query may also be `embed('text' [, 'provider:model'])`, described under
-[Embeddings](#embeddings). The rest of this section, `OFFSET` included, is still the target;
-a `WHERE` filters the points Qdrant ranks, as in a scroll.
+[Embeddings](#embeddings). `OFFSET n` runs too, as the Query API's own `offset`: it counts rows
+the way SQL does, so `LIMIT` still counts the points returned after it and the scores stay the
+scores of the points Qdrant ranked (see [`OFFSET`](#offset)). The rest of this section is still
+the target; a `WHERE` filters the points Qdrant ranks, as in a scroll.
 
 ```sql
 SELECT _id, _score, title
@@ -239,7 +270,8 @@ answering one `BIGINT` column called `count` or whatever the statement calls it.
 whole collection reads neither points nor columns, so a count of a collection that doesn't
 exist is Qdrant's answer to the count rather than a check before it; a count with a `WHERE`
 reads the columns the condition names. `LIMIT 0` returns no row and counts nothing, as it does
-for a `SELECT` without `FROM`; a count is one row, so no other limit changes it.
+for a `SELECT` without `FROM`; a count is one row, so no other limit changes it, and any
+`OFFSET` at all skips past that row and counts nothing.
 
 `SELECT lang, COUNT(*) FROM docs [WHERE …] GROUP BY lang LIMIT 20` also runs, as one facet
 call. The field needs an index Qdrant can count the values of — `keyword`, `integer`, `bool`,
@@ -250,7 +282,9 @@ wants. The groups come back most common first. A grouped statement selects the g
 and `COUNT(*)`, in either order and under any names, and one without the count reads the
 field's values themselves, which is what `SELECT DISTINCT` asks for. An array field counts once
 per element, so `GROUP BY tags` counts the points under each tag, and a group's type follows
-the index rather than the column, so the groups of a JSON column of keywords are text.
+the index rather than the column, so the groups of a JSON column of keywords are text. `OFFSET n`
+pages past the most common groups: Qdrant's facet API has no `offset` of its own, so the driver
+counts `limit + n` values and drops the first `n` (see [`OFFSET`](#offset)).
 
 `HAVING`, ordering the groups by anything but their count, grouping by more than one field, the
 `exact=false` hint, and the rest of this section are still the target.

@@ -174,7 +174,7 @@ public final class Executor {
 
             Bounded bounded = orderedLimit(limit);
             limit = bounded.limit();
-            pageSize = onePage(limit);
+            pageSize = onePage(limit, scroll.offset());
 
             return ExecutionResult.rows(
                 new ScrollResultSet(scroller, scroll, limit, pageSize, statement),
@@ -254,11 +254,15 @@ public final class Executor {
     }
 
     /**
-     * One page holding every row an ordered read returns, since there's no second page to ask
-     * for. The fetch size doesn't cut it down: that would drop rows the statement asked for.
+     * One page holding every row an ordered read returns, and the points an OFFSET skips before
+     * them, since there's no second page to ask for and Qdrant rejects an {@code offset} on an
+     * ordered scroll outright. The fetch size doesn't cut it down: that would drop rows the
+     * statement asked for.
+     *
+     * @param offset the points to skip, which the driver discards from this page
      */
-    private static int onePage(long limit) {
-        return (int) Math.max(1, Math.min(limit, Integer.MAX_VALUE));
+    private static int onePage(long limit, long offset) {
+        return (int) Math.max(1, Math.min(limit, Integer.MAX_VALUE - offset) + offset);
     }
 
     /**
@@ -415,7 +419,7 @@ public final class Executor {
             }
         }
 
-        return new QueryRequest(plan.collection(), plan.vector(), query, limit,
+        return new QueryRequest(plan.collection(), plan.vector(), query, limit, plan.offset(),
             plan.withPayload(), plan.withVector(), plan.filter(), document);
     }
 
@@ -495,10 +499,19 @@ public final class Executor {
     /**
      * The groups' rows, the most common value first, holding the value and the count in the
      * statement's order. One call answers the whole GROUP BY, so the rows are read at once.
+     *
+     * <p>An OFFSET is skipped here rather than by Qdrant: its facet API has no offset field, and
+     * ignores one instead of reporting it, so sending the statement's offset would quietly
+     * answer with the groups the statement asked to pass over. The call counts the groups the
+     * statement returns and the ones it skips together, and the first are dropped.
      */
     private List<Object[]> facetRows(FacetPlan plan, long limit) throws SQLException {
-        List<FacetHit> hits = faceter.facet(new FacetRequest(plan.collection(), plan.key(),
-            limit, plan.filter()));
+        long offset = plan.offset();
+        List<FacetHit> counted = faceter.facet(new FacetRequest(plan.collection(), plan.key(),
+            total(limit, offset), plan.filter()));
+        List<FacetHit> hits = offset >= counted.size()
+            ? List.of()
+            : counted.subList((int) offset, counted.size());
         List<FacetColumn> columns = plan.columns();
         var rows = new ArrayList<Object[]>(hits.size());
 
@@ -554,7 +567,9 @@ public final class Executor {
 
     /**
      * The search's rows, one per point Qdrant ranked, best first. One call answers the whole
-     * search, so the rows are read at once rather than paged.
+     * search, so the rows are read at once rather than paged. An OFFSET goes to Qdrant, whose
+     * Query API counts rows the way SQL does, so the limit stays the rows returned after it and
+     * the driver discards nothing.
      */
     private List<Object[]> searchRows(QueryPlan plan, long limit) throws SQLException {
         List<ScoredPoint> found = search(request(plan, limit));
@@ -617,11 +632,12 @@ public final class Executor {
 
     /**
      * The count's single row, or no row at all when the statement asks for none: a limit of no
-     * rows leaves it out, as it does the row of a SELECT without FROM, and then nothing is
-     * counted either.
+     * rows leaves it out, as it does the row of a SELECT without FROM, and so does any OFFSET,
+     * since a count is one row and an offset of one is already past it. Either way nothing is
+     * counted.
      */
     private List<Object[]> countRows(CountPlan plan, Long limit) throws SQLException {
-        if (limit != null && limit <= 0) {
+        if ((limit != null && limit <= 0) || plan.offset() > 0) {
             return List.of();
         }
 
@@ -631,7 +647,8 @@ public final class Executor {
     /**
      * The system table's rows, cut to the limit and holding only the columns the statement
      * asked for, in its order. A system table is small and its rows describe one moment, so
-     * they're read at once rather than paged.
+     * they're read at once rather than paged, which is also why an OFFSET costs nothing here:
+     * the rows it skips are already in memory.
      */
     private List<Object[]> systemRows(SystemTablePlan plan, Long limit) throws SQLException {
         if (limit != null && limit <= 0) {
@@ -640,8 +657,14 @@ public final class Executor {
 
         int[] sources = plan.columns().stream().mapToInt(plan.table()::indexOf).toArray();
         List<Object[]> rows = new ArrayList<>();
+        long skipped = 0;
 
         for (Object[] row : systemTables.read(plan.table())) {
+            if (skipped < plan.offset()) {
+                skipped++;
+                continue;
+            }
+
             if (limit != null && rows.size() >= limit) {
                 break;
             }
@@ -677,5 +700,14 @@ public final class Executor {
         return sqlLimit == null
             ? maxRows
             : Math.min(sqlLimit, maxRows);
+    }
+
+    /**
+     * How many rows to ask Qdrant for when the driver skips the offset itself: the rows the
+     * statement returns and the ones it passes over. A limit near {@code Long.MAX_VALUE} is a
+     * limit of everything, so the two saturate rather than wrapping round to a small number.
+     */
+    private static long total(long limit, long offset) {
+        return limit > Long.MAX_VALUE - offset ? Long.MAX_VALUE : limit + offset;
     }
 }

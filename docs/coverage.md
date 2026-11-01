@@ -6,7 +6,8 @@ the code or from a server that was asked. The point is to make the gaps legible,
 maintainer can tell a missing feature that blocks real use from one that nobody would notice.
 
 **Measured against** driver commit `9393e92` (with `SET`, `UPDATE` and `INSERT`, #27, #28 and
-#31) and Qdrant **1.20.0** (build
+#31), plus `OFFSET` (#30), whose rows below are updated rather than re-measured wholesale, and
+Qdrant **1.20.0** (build
 `222b2e44ab1c3f17e8246396ead6558e45041df7`), running locally over REST on port 6333, with the
 three collections `./gradlew seedQdrant` loads. Qdrant 1.20 does not serve `/openapi.json` —
 that path answers 404 — so the route list comes from the published spec at the matching tag,
@@ -209,7 +210,7 @@ is stored as a number, and text that can't be one is `22018`.
 | --- | --- | --- |
 | `WHERE` | partial | Column-against-constant conditions only; needs no index at all |
 | `LIMIT n` | works | A literal; `LIMIT ?` is rejected at parse time |
-| `OFFSET n` | missing | `OFFSET isn't supported yet`, except in a `SELECT` without `FROM` |
+| `OFFSET n` | partial | Every kind of read; Qdrant applies it only for a search, so the others skip in the driver, up to 10,000 rows |
 | `ORDER BY _id` | partial | Ascending only; `DESC` is an error, since Qdrant scrolls by ID upwards |
 | `ORDER BY <field>` | partial | Needs an `integer`, `float` or `datetime` payload index, and a bound |
 | `ORDER BY similarity(v, …) DESC` | works | Needs a bound; `ASC` is an error; dense vectors, or any vector via `embed()` |
@@ -376,30 +377,25 @@ message is good, the state is not set.
 
 ## Gaps that matter, ranked
 
-The two gaps that led this list when it was first measured, no `INSERT` and no `UPDATE`, are
-closed: the driver can create a collection, fill it, save a grid's edits, and delete from it.
-What remains, most important first:
+The gaps that led this list when it was first measured — no `INSERT`, no `UPDATE`, and no
+`OFFSET` — are closed: the driver can create a collection, fill it, save a grid's edits, page
+through it, and delete from it. What remains, most important first:
 
-1. **`OFFSET` is missing.** One clause, already supported by the route the driver calls —
-   `points/scroll` takes `offset`, and the Query API takes it for searches — and every grid
-   needs it to page past the first screen. The roadmap names this as the last piece of DataGrip
-   compatibility, which is right: the gap is not that someone cannot express a query, it is that
-   a tool's scrollbar does not work. It is in review as #30.
-2. **No index management, which strands the clauses that depend on it.** `CREATE INDEX` and
+1. **No index management, which strands the clauses that depend on it.** `CREATE INDEX` and
    `DROP INDEX` do not parse (`IndexParser` is an empty stub), and
    `DELETE /collections/{c}/index/{field_name}` is unused, while `PUT …/index` is only ever
    called from inside a `CREATE TABLE`. The consequence compounds: `ORDER BY` needs a range
    index and `GROUP BY` needs a countable one, so sorting by a keyword column — the most
    ordinary thing a person does to a grid — fails, and the fix cannot be said in SQL.
-3. **`LIKE` and text matching.** `title` in `sample_articles` carries a Qdrant `text` index and
+2. **`LIKE` and text matching.** `title` in `sample_articles` carries a Qdrant `text` index and
    nothing in SQL reaches it; `match: {text}` and `match: {prefix}` are fields of a filter the
    driver already builds, so this costs no new route. `WHERE name LIKE '%lamp%'` is what people
    type first, and today `LIKE` is not even a keyword, so it fails as a syntax error.
-4. **Vectors can be written once and never changed.** `INSERT` stores them, but `UPDATE … SET
+3. **Vectors can be written once and never changed.** `INSERT` stores them, but `UPDATE … SET
    dense = …` is an error, and `PUT …/points/vectors` and `…/vectors/delete` are unused. In a
    grid, editing a vector cell fails while every other cell saves; re-embedding a collection
    after changing models means deleting and re-inserting its points.
-5. **`INSERT` only inserts.** `INSERT … ON CONFLICT (_id) DO UPDATE`, Qdrant's own upsert, has
+4. **`INSERT` only inserts.** `INSERT … ON CONFLICT (_id) DO UPDATE`, Qdrant's own upsert, has
    no SQL yet, so loading a batch that may repeat IDs means splitting it into `INSERT`s and
    `UPDATE`s. Rows the driver embeds are also embedded one provider call at a time.
 

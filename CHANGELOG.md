@@ -32,6 +32,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the timeout, and searches the precision settings. `RESET qdrant.<option>` and `RESET ALL`
   put them back to Qdrant's defaults; `SHOW qdrant.<option>` and `SHOW ALL` list them. They
   belong to the connection, and a read-only connection may change them. ([#27])
+- `OFFSET n` on every kind of read, so a data grid can page past its first screen:
+  `SELECT * FROM docs LIMIT 50 OFFSET 50`. Qdrant offers no single way to do it, so each kind of
+  read reaches it differently. A similarity search sends the Query API's own `offset`, which is a
+  row count, so Qdrant does the skipping and `LIMIT` still counts the points returned after it,
+  with their own scores. A plain read pages to the row the offset names with the scroll cursor
+  and discards the points it read on the way, because Qdrant's scroll `offset` is the point ID to
+  start at and not a row count. An ordered read and a `GROUP BY` ask for `limit + offset` and
+  drop the first rows: Qdrant rejects an `offset` beside an `order_by` outright, and its facet
+  API has no `offset` field and ignores one rather than reporting it, so sending either would
+  answer with the wrong rows. Where the driver does the skipping it pays for rows no statement
+  returns, so an offset there is capped at 10,000 and a deeper one is an error naming the cap
+  rather than a read of a whole collection dressed up as a read of one screen; a search's offset
+  and a system table's are free, so neither is capped. `COUNT(*)` is one row, so any `OFFSET`
+  skips past it and counts nothing, as `LIMIT 0` already did. `OFFSET` needs no `LIMIT` on a
+  plain read or a system table; an ordered read, a search and a `GROUP BY` are bounded by a
+  `LIMIT`, the maximum rows, or `defaultLimit`, and the over-fetch is whichever of those applied
+  plus the offset. As JDBC specifies, `setMaxRows` bounds the rows the result set yields, so it
+  counts the rows after the skip and never against it, and `setFetchSize` still sets the page a
+  plain read is skipped through. ([#30])
 - `embed('text', 'provider:model')` in a search: `ORDER BY similarity(dense, embed('refund
   policy', 'openai:text-embedding-3-small')) DESC LIMIT 10`. A `qdrant:` model is run by Qdrant
   itself, on any kind of vector: every Qdrant runs `qdrant:qdrant/bm25` into sparse vectors,
@@ -213,4 +232,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#26]: https://github.com/runax-software/runax-qdrant-jdbc/pull/26
 [#27]: https://github.com/runax-software/runax-qdrant-jdbc/pull/27
 [#28]: https://github.com/runax-software/runax-qdrant-jdbc/pull/28
+[#30]: https://github.com/runax-software/runax-qdrant-jdbc/pull/30
 [#31]: https://github.com/runax-software/runax-qdrant-jdbc/pull/31

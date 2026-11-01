@@ -20,6 +20,9 @@ import java.util.List;
  * @param withVector  whether any column needs a vector
  * @param limit       the maximum number of rows, or {@code null} when the statement gave none
  *                    and the statement's maximum rows decide
+ * @param offset      how many of the best-ranked points to pass over, for an OFFSET, or 0 for
+ *                    none. The Query API's {@code offset} is a row count, unlike a scroll's, so
+ *                    this one goes to Qdrant and the driver discards nothing.
  * @param filter      the statement's WHERE as a Qdrant filter, or {@code null} when it has none
  * @param embed       text to embed and search with, or {@code null} when the query vector is
  *                    written out
@@ -32,13 +35,14 @@ public record QueryPlan(
     boolean withPayload,
     boolean withVector,
     Long limit,
+    long offset,
     JsonNode filter,
     EmbedText embed
 ) implements Plan {
 
     public QueryPlan(String collection, List<ColumnDefinition> columns, String vector,
                      List<Double> query, boolean withPayload, boolean withVector, Long limit,
-                     JsonNode filter, EmbedText embed) {
+                     long offset, JsonNode filter, EmbedText embed) {
         this.collection = collection;
         this.columns = List.copyOf(columns);
         this.vector = vector;
@@ -46,6 +50,7 @@ public record QueryPlan(
         this.withPayload = withPayload;
         this.withVector = withVector;
         this.limit = limit;
+        this.offset = offset;
         this.filter = filter;
         this.embed = embed;
     }
@@ -55,8 +60,27 @@ public record QueryPlan(
      */
     public QueryPlan(String collection, List<ColumnDefinition> columns, String vector,
                      List<Double> query, boolean withPayload, boolean withVector, Long limit,
+                     long offset, JsonNode filter) {
+        this(collection, columns, vector, query, withPayload, withVector, limit, offset, filter,
+            null);
+    }
+
+    /**
+     * A search that starts at the closest point, which is every search without an OFFSET.
+     */
+    public QueryPlan(String collection, List<ColumnDefinition> columns, String vector,
+                     List<Double> query, boolean withPayload, boolean withVector, Long limit,
+                     JsonNode filter, EmbedText embed) {
+        this(collection, columns, vector, query, withPayload, withVector, limit, 0, filter, embed);
+    }
+
+    /**
+     * A search with a vector written out, from the closest point on.
+     */
+    public QueryPlan(String collection, List<ColumnDefinition> columns, String vector,
+                     List<Double> query, boolean withPayload, boolean withVector, Long limit,
                      JsonNode filter) {
-        this(collection, columns, vector, query, withPayload, withVector, limit, filter, null);
+        this(collection, columns, vector, query, withPayload, withVector, limit, 0, filter, null);
     }
 
     /**
@@ -64,6 +88,6 @@ public record QueryPlan(
      */
     public QueryPlan(String collection, List<ColumnDefinition> columns, String vector,
                      List<Double> query, boolean withPayload, boolean withVector, Long limit) {
-        this(collection, columns, vector, query, withPayload, withVector, limit, null);
+        this(collection, columns, vector, query, withPayload, withVector, limit, 0, null, null);
     }
 }
