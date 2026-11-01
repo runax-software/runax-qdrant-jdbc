@@ -75,6 +75,13 @@ final class SelectPlanner {
     // The function that turns text into the vector a search searches with
     private static final String EMBED = "embed";
 
+    // Why a plain or ordered read has to skip in the driver, for the error past the cap
+    private static final String SCROLL_PAGES_BY_ID =
+        "Qdrant pages a scroll by point ID rather than by a row count";
+
+    // Why a GROUP BY has to skip in the driver, for the error past the cap
+    private static final String FACET_HAS_NO_OFFSET = "Qdrant's facet API takes no offset at all";
+
     /**
      * What a statement's ORDER BY asks Qdrant to rank by.
      *
@@ -88,10 +95,6 @@ final class SelectPlanner {
     public Plan plan(SelectStatement statement, Catalog catalog) throws SQLException {
         if (statement.table() == null) {
             return constants(statement);
-        }
-
-        if (statement.offset() != null) {
-            throw new SQLFeatureNotSupportedException("OFFSET isn't supported yet");
         }
 
         TableName table = statement.table();
@@ -137,15 +140,47 @@ final class SelectPlanner {
             column -> find(schema, column, statement.alias(), search != null));
 
         if (search != null) {
+            // Qdrant's Query API skips by row count itself, so this offset needs no cap
             return new QueryPlan(schema.name(), columns, search.vector(), search.query(),
-                withPayload, withVector, statement.limit(), filter, search.embed());
+                withPayload, withVector, statement.limit(), offset(statement), filter,
+                search.embed());
         }
 
         Ordering ordering = order == null
             ? null : ordering(order, schema, statement.alias());
 
         return new ScrollPlan(schema.name(), columns, withPayload, withVector, statement.limit(),
-            filter, ordering);
+            skip(statement, SCROLL_PAGES_BY_ID), filter, ordering);
+    }
+
+    /**
+     * The rows an OFFSET passes over, 0 when the statement gives none: {@code OFFSET 0} is no
+     * offset at all, as it is in SQL.
+     */
+    private static long offset(SelectStatement statement) {
+        return statement.offset() == null ? 0 : statement.offset();
+    }
+
+    /**
+     * The rows an OFFSET makes the driver read and throw away, checked against
+     * {@link Planner#MAX_OFFSET}. Qdrant can't skip by a row count here, so the driver reads
+     * those rows to discard them; past the cap the statement is an error that says so rather than
+     * a read of far more rows than it returns.
+     *
+     * @param reason what Qdrant can't do, for the error
+     */
+    private static long skip(SelectStatement statement, String reason) throws SQLException {
+        long offset = offset(statement);
+
+        if (offset > Planner.MAX_OFFSET) {
+            throw new SQLFeatureNotSupportedException("OFFSET " + offset + " isn't supported: "
+                + reason + ", so the driver reads the rows it skips and discards them, and "
+                + "skipping that many would read far more rows than the statement returns. "
+                + "OFFSET up to " + Planner.MAX_OFFSET + " runs; past that, narrow the read with "
+                + "a WHERE");
+        }
+
+        return offset;
     }
 
     /**
@@ -255,8 +290,9 @@ final class SelectPlanner {
                 column -> find(schema, column, statement.alias(), false));
         }
 
+        // A count is one row, so an OFFSET needs no cap: it either keeps that row or skips it
         return new CountPlan(table.name(), alias == null ? COUNT : alias, filter,
-            statement.limit());
+            statement.limit(), offset(statement));
     }
 
     /**
@@ -302,7 +338,8 @@ final class SelectPlanner {
         ColumnType type = ColumnType.forIndex(index);
 
         return new FacetPlan(schema.name(), column.source(),
-            facetColumns(statement, schema, column, type, counted), filter, statement.limit());
+            facetColumns(statement, schema, column, type, counted), filter, statement.limit(),
+            skip(statement, FACET_HAS_NO_OFFSET));
     }
 
     /**
@@ -535,7 +572,8 @@ final class SelectPlanner {
 
         List<SystemColumn> columns = resolve(statement.items(), table, statement.alias());
 
-        return new SystemTablePlan(table, columns, statement.limit());
+        // The table is read whole either way, so skipping its first rows needs no cap
+        return new SystemTablePlan(table, columns, statement.limit(), offset(statement));
     }
 
     // A collection is named on its own or in the schema the collections sit in

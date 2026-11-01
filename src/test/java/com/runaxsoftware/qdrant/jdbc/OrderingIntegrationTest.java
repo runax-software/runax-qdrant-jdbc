@@ -29,9 +29,9 @@ import java.util.UUID;
 /**
  * Reads the sample points in order through real Qdrant, so the order the driver asks for is one
  * Qdrant runs and the rows come back in it. Qdrant answers an ordered scroll in one page — it
- * returns no next offset for one, and rejects an {@code offset} — and orders only by a field
- * with a range index, both of which this checks against the server itself. Needs Qdrant:
- * {@code docker compose up -d}.
+ * returns no next offset for one, and rejects an {@code offset}, which is why an OFFSET here is
+ * over-fetched and skipped in the driver — and orders only by a field with a range index, all of
+ * which this checks against the server itself. Needs Qdrant: {@code docker compose up -d}.
  */
 @Tag("integration")
 class OrderingIntegrationTest {
@@ -196,10 +196,6 @@ class OrderingIntegrationTest {
             // Qdrant reads point IDs upwards only
             assertThrows(SQLException.class, () -> statement.executeQuery("SELECT _id FROM "
                 + products + " ORDER BY _id DESC LIMIT 2"));
-
-            // And Qdrant rejects an offset with an order, so the driver doesn't send one
-            assertThrows(SQLException.class, () -> statement.executeQuery("SELECT _id FROM "
-                + products + " ORDER BY price LIMIT 2 OFFSET 1"));
         }
     }
 

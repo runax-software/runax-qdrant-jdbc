@@ -136,6 +136,8 @@ public class QdrantGateway implements AutoCloseable {
     /**
      * The points nearest a vector, best first, through Qdrant's Query API. One call answers a
      * whole search: it returns the request's limit of points and no cursor, unlike a scroll.
+     * The Query API's {@code offset} is a row count, so a request that gives one is answered
+     * with the points after it and nothing has to be discarded here.
      */
     public List<ScoredPoint> query(QueryRequest query) throws SQLException {
         ObjectNode body = JSON.createObjectNode()
@@ -154,6 +156,7 @@ public class QdrantGateway implements AutoCloseable {
 
         // A collection's single unnamed vector is the one Qdrant searches when none is named
         if (!query.vector().isEmpty()) body.put("using", query.vector());
+        if (query.offset() > 0) body.put("offset", query.offset());
         if (query.filter() != null) body.set("filter", query.filter());
 
         ObjectNode params = searchParameters();

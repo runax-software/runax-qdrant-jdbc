@@ -21,6 +21,18 @@ import java.sql.SQLFeatureNotSupportedException;
  */
 public final class Planner {
 
+    /**
+     * The deepest OFFSET a read the driver skips itself will go. Qdrant has no row offset for a
+     * scroll or a facet, so the only way to page one by a row count is to read the first rows and
+     * throw them away: that work grows with the offset while the statement returns the same few
+     * rows, and past some point a statement that looks like it reads one screen reads a whole
+     * collection instead, which is the one thing this driver doesn't do quietly. A data grid's
+     * screen is a few hundred rows, so this is deep enough to page through one by hand and
+     * shallow enough to stay the "small, bounded work" the dialect spec allows. A search's offset
+     * goes to Qdrant and a system table is in memory already, so neither of those is capped.
+     */
+    public static final long MAX_OFFSET = 10_000;
+
     private final SelectPlanner selectPlanner = new SelectPlanner();
     private final WritePlanner writePlanner = new WritePlanner();
     private final OptionPlanner optionPlanner = new OptionPlanner();

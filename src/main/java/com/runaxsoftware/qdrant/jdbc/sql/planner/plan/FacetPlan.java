@@ -16,21 +16,35 @@ import java.util.List;
  *                   of them
  * @param limit      the maximum number of groups, or {@code null} when the statement gave none
  *                   and the statement's maximum rows decide
+ * @param offset     how many of the most common values to pass over, for an OFFSET, or 0 for
+ *                   none. Qdrant's facet API has no offset of its own, and ignores one rather
+ *                   than reporting it, so the driver counts the limit and the skip together and
+ *                   drops the first groups itself.
  */
 public record FacetPlan(
     String collection,
     String key,
     List<FacetColumn> columns,
     JsonNode filter,
-    Long limit
+    Long limit,
+    long offset
 ) implements Plan {
 
     public FacetPlan(String collection, String key, List<FacetColumn> columns, JsonNode filter,
-                     Long limit) {
+                     Long limit, long offset) {
         this.collection = collection;
         this.key = key;
         this.columns = List.copyOf(columns);
         this.filter = filter;
         this.limit = limit;
+        this.offset = offset;
+    }
+
+    /**
+     * A GROUP BY that starts at the most common value, which is every one without an OFFSET.
+     */
+    public FacetPlan(String collection, String key, List<FacetColumn> columns, JsonNode filter,
+                     Long limit) {
+        this(collection, key, columns, filter, limit, 0);
     }
 }

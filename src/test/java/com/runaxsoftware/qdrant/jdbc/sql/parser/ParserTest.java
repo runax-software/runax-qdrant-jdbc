@@ -400,6 +400,23 @@ class ParserTest {
     }
 
     @Test
+    void parsesAnOffsetWithoutALimit() throws SQLSyntaxErrorException {
+        SelectStatement select = select("SELECT * FROM docs OFFSET 20");
+
+        assertNull(select.limit());
+        assertEquals(20L, select.offset());
+        assertNull(select("SELECT * FROM docs LIMIT 10").offset());
+    }
+
+    @Test
+    void rejectsAnOffsetThatIsNotAWholeNumberOfRows() {
+        for (String offset : List.of("-1", "2.5", "'2'")) {
+            assertThrows(SQLSyntaxErrorException.class,
+                () -> Parser.parse("SELECT * FROM docs OFFSET " + offset), offset);
+        }
+    }
+
+    @Test
     void parsesEveryClauseTogether() throws SQLSyntaxErrorException {
         assertEquals(
                 new SelectStatement(List.of(column("name")), TableName.of("docs"), null,

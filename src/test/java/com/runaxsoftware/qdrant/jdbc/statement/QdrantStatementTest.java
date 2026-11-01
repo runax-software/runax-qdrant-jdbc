@@ -403,6 +403,74 @@ class QdrantStatementTest {
             .toList());
     }
 
+    /**
+     * Paging past the first screen, which is what a data grid asks for. Qdrant's scroll offset
+     * is a point ID, so the driver pages to the row the OFFSET names and discards what it read
+     * on the way; the rows that come back are the ones the unoffset read would have shown next.
+     */
+    @Test
+    void pagesPastTheFirstRowsWithAnOffset() throws SQLException {
+        fivePoints();
+        statement.setFetchSize(2);
+
+        assertEquals(List.of("a", "b", "c", "d", "e"), names("SELECT name FROM products"));
+        assertEquals(List.of("c", "d"), names("SELECT name FROM products LIMIT 2 OFFSET 2"));
+        assertEquals(List.of("d", "e"), names("SELECT name FROM products OFFSET 3"));
+        assertEquals(List.of(), names("SELECT name FROM products OFFSET 5"));
+        assertEquals(List.of(), names("SELECT name FROM products LIMIT 2 OFFSET 9"));
+    }
+
+    @Test
+    void countsTheMaximumRowsAfterAnOffsetAsJdbcDoes() throws SQLException {
+        fivePoints();
+        statement.setMaxRows(2);
+
+        assertEquals(List.of("c", "d"), names("SELECT name FROM products OFFSET 2"));
+    }
+
+    @Test
+    void pagesPastTheFirstRowsOfAnOrderedRead() throws SQLException {
+        server.collection("ordered", unnamedVector(2, "Cosine", Map.of("price", "float")),
+            List.of(point(1, Json.object("name", "a")), point(2, Json.object("name", "b")),
+                point(3, Json.object("name", "c"))));
+
+        assertEquals(List.of("b", "c"), names(
+            "SELECT name FROM ordered ORDER BY price LIMIT 2 OFFSET 1"));
+
+        // Qdrant rejects an offset beside an order_by, so the one page holds the skip too
+        JsonNode request = lastScroll();
+        assertEquals(3, request.path("limit").asInt());
+        assertTrue(request.path("offset").isMissingNode(), request.toString());
+    }
+
+    @Test
+    void pagesPastTheClosestPointsOfASearch() throws SQLException {
+        fivePoints();
+
+        assertEquals(List.of("c", "d"), names("SELECT name FROM products "
+            + "ORDER BY similarity(_vector, [0.1, 0.2, 0.3, 0.4]) DESC LIMIT 2 OFFSET 2"));
+
+        // The Query API counts rows, so the offset goes to Qdrant and the limit stays the rows
+        JsonNode request = server.queryRequests().get(0);
+        assertEquals(2, request.path("limit").asInt());
+        assertEquals(2, request.path("offset").asInt());
+    }
+
+    @Test
+    void reportsAnOffsetDeeperThanTheDriverWillSkipBeforeReadingAnything() throws SQLException {
+        fivePoints();
+        names("SELECT name FROM products LIMIT 1");   // so the columns are already known
+        int before = server.calls(FakeQdrantServer.Endpoint.SCROLL);
+
+        SQLException error = assertThrows(SQLFeatureNotSupportedException.class,
+            () -> statement.executeQuery("SELECT name FROM products OFFSET 1000000"));
+
+        assertTrue(error.getMessage().contains("OFFSET 1000000 isn't supported"),
+            error.getMessage());
+        assertEquals(before, server.calls(FakeQdrantServer.Endpoint.SCROLL),
+            "the statement fails before any points are read");
+    }
+
     @Test
     void reportsACollectionThatDoesNotExist() {
         SQLException error = assertThrows(SQLException.class,
@@ -720,6 +788,27 @@ class QdrantStatementTest {
         List<JsonNode> scrolls = server.scrollRequests();
 
         return scrolls.get(scrolls.size() - 1);
+    }
+
+    // Five products named a to e, by point ID, replacing the one the tests start with
+    private void fivePoints() {
+        server.collection("products", unnamedVector(4, "Cosine", Map.of()), List.of(
+            point(1, Json.object("name", "a")), point(2, Json.object("name", "b")),
+            point(3, Json.object("name", "c")), point(4, Json.object("name", "d")),
+            point(5, Json.object("name", "e"))));
+    }
+
+    // The single column a statement returns, row by row
+    private List<String> names(String sql) throws SQLException {
+        var names = new java.util.ArrayList<String>();
+
+        try (ResultSet rows = statement.executeQuery(sql)) {
+            while (rows.next()) {
+                names.add(rows.getString(1));
+            }
+        }
+
+        return names;
     }
 
     // How many times the collection's configuration was read, once per schema read
