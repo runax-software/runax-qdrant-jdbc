@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `OffsetDateTime`, or a vector as `float[]` or `double[]`). A `?` stands for a constant in
   `WHERE`, the select list, or a search's vector. Values replace placeholders in the parsed
   statement, never in the SQL text. Batches run a `DELETE` once per set of values, and
-  `getParameterMetaData()` reports how many placeholders there are. ([#PREP])
+  `getParameterMetaData()` reports how many placeholders there are. ([#23])
 - `GROUP BY` with `COUNT(*)`, through Qdrant's facet API: `SELECT lang, COUNT(*) FROM docs
   GROUP BY lang LIMIT 20` counts the points per value of one payload field, the most common
   first. The field needs an index Qdrant can count the values of (`keyword`, `integer`,
@@ -164,3 +164,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#20]: https://github.com/runax-software/runax-qdrant-jdbc/pull/20
 [#21]: https://github.com/runax-software/runax-qdrant-jdbc/pull/21
 [#22]: https://github.com/runax-software/runax-qdrant-jdbc/pull/22
+[#23]: https://github.com/runax-software/runax-qdrant-jdbc/pull/23
