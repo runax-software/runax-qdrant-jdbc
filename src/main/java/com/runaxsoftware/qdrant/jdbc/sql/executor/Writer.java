@@ -1,9 +1,12 @@
 package com.runaxsoftware.qdrant.jdbc.sql.executor;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadIndexType;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 
 import java.sql.SQLException;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Where write plans change what Qdrant holds: an interface rather than the gateway, so the
@@ -54,5 +57,25 @@ interface Writer {
     /**
      * Creates a payload index on the collection.
      */
-    void createIndex(String collection, String field, String type) throws SQLException;
+    void createIndex(String collection, String field, JsonNode schema) throws SQLException;
+
+    /**
+     * The collection's payload indexes, by field, as Qdrant has them now.
+     */
+    Map<String, PayloadIndexType> payloadIndexes(String collection) throws SQLException;
+
+    /**
+     * Deletes the payload index on a field.
+     */
+    void deleteIndex(String collection, String field) throws SQLException;
+
+    /**
+     * Every alias, as Qdrant has them now.
+     */
+    List<QdrantAlias> aliases() throws SQLException;
+
+    /**
+     * Applies alias actions together, atomically.
+     */
+    void changeAliases(List<JsonNode> actions) throws SQLException;
 }

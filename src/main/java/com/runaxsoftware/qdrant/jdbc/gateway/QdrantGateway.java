@@ -88,6 +88,29 @@ public class QdrantGateway implements AutoCloseable {
         return RestModels.aliases(request(HttpMethod.GET, "/aliases", null));
     }
 
+    /**
+     * The aliases that point at one collection.
+     */
+    public List<String> collectionAliases(String collection) throws SQLException {
+        return RestModels.aliases(request(HttpMethod.GET,
+            "/collections/" + segment(collection) + "/aliases", null))
+            .stream().map(QdrantAlias::name).toList();
+    }
+
+    /**
+     * Creates, deletes, and renames aliases, all the actions together as one atomic change, so
+     * an alias moved from one collection to another always points at one of them.
+     *
+     * @param actions the actions as Qdrant takes them, such as {@code {"create_alias": {...}}}
+     */
+    public void changeAliases(List<JsonNode> actions) throws SQLException {
+        ObjectNode body = JSON.createObjectNode();
+        ArrayNode list = body.putArray("actions");
+        actions.forEach(list::add);
+
+        request(HttpMethod.POST, "/collections/aliases", body);
+    }
+
     public QdrantCollection collection(String collection) throws SQLException {
         return RestModels.collection(collection, collectionInfo(collection));
     }
@@ -280,12 +303,23 @@ public class QdrantGateway implements AutoCloseable {
     /**
      * Creates a payload index, and waits until Qdrant has built it.
      *
-     * @param type Qdrant's name for the index type, such as {@code keyword}
+     * @param schema the index as Qdrant takes it: its type, such as {@code "keyword"}, or an
+     *               object of its type and options
      */
-    public void createIndex(String collection, String field, String type) throws SQLException {
-        ObjectNode body = JSON.createObjectNode().put("field_name", field).put("field_schema", type);
+    public void createIndex(String collection, String field, JsonNode schema) throws SQLException {
+        ObjectNode body = JSON.createObjectNode().put("field_name", field);
+        body.set("field_schema", schema);
 
         request(HttpMethod.PUT, "/collections/" + segment(collection) + "/index?wait=true", body);
+    }
+
+    /**
+     * Deletes the payload index on a field, and waits until Qdrant has dropped it. Qdrant
+     * answers a field without an index as a success too, so a caller checks first.
+     */
+    public void deleteIndex(String collection, String field) throws SQLException {
+        request(HttpMethod.DELETE, "/collections/" + segment(collection) + "/index/"
+            + segment(field) + "?wait=true", null);
     }
 
     /**

@@ -143,6 +143,14 @@ final class CreatePlanner {
             + "sparse vector '" + column.name() + "': Qdrant has IDF and NONE", "42000");
     }
 
+    /**
+     * Qdrant's name for an index type, given under its own name or an SQL type that means the
+     * same, or {@code null} when it's neither.
+     */
+    static String indexType(String type) {
+        return INDEXES.get(type);
+    }
+
     // A payload column, which only an index makes worth declaring
     private static PayloadIndex index(ColumnSpec column) throws SQLException {
         String type = INDEXES.get(column.type());

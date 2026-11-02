@@ -1,8 +1,13 @@
 package com.runaxsoftware.qdrant.jdbc.sql.planner;
 
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AlterViewStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateIndexStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateTableStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateViewStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DeleteStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropIndexStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropTableStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropViewStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.InsertStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.ResetStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
@@ -38,6 +43,8 @@ public final class Planner {
     private final OptionPlanner optionPlanner = new OptionPlanner();
     private final UpdatePlanner updatePlanner = new UpdatePlanner();
     private final InsertPlanner insertPlanner = new InsertPlanner();
+    private final IndexPlanner indexPlanner = new IndexPlanner();
+    private final ViewPlanner viewPlanner = new ViewPlanner();
 
     public Plan plan(Statement statement, Catalog catalog) throws SQLException {
         if (statement instanceof SelectStatement select) {
@@ -54,6 +61,21 @@ public final class Planner {
         }
         if (statement instanceof CreateTableStatement create) {
             return writePlanner.plan(create);
+        }
+        if (statement instanceof CreateIndexStatement create) {
+            return indexPlanner.plan(create, catalog);
+        }
+        if (statement instanceof DropIndexStatement drop) {
+            return indexPlanner.plan(drop, catalog);
+        }
+        if (statement instanceof CreateViewStatement create) {
+            return viewPlanner.plan(create, catalog);
+        }
+        if (statement instanceof AlterViewStatement alter) {
+            return viewPlanner.plan(alter);
+        }
+        if (statement instanceof DropViewStatement drop) {
+            return viewPlanner.plan(drop);
         }
         if (statement instanceof InsertStatement insert) {
             return insertPlanner.plan(insert, catalog);

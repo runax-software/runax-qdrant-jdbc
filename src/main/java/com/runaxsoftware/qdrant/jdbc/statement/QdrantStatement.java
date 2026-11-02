@@ -16,17 +16,26 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Statement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.UpdateStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.Planner;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateCollectionPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateIndexPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateViewPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropCollectionPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropIndexPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropViewPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.InsertPointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.RenameViewPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.SetOptionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ShowOptionsPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdatePointsPlan;
 import com.runaxsoftware.qdrant.jdbc.system.SystemTable;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Types;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * A statement. SQL is parsed and planned against the collections' columns, so syntax errors,
@@ -35,8 +44,9 @@ import java.util.List;
  * instead; a SELECT from one of the {@code system} schema's tables reads the server's own state
  * at once; a SELECT without FROM (such as a tool's {@code SELECT 'keep alive'}) returns its row.
  * The statement's maximum rows limit every result, and its fetch size sets how many points one
- * page reads. INSERT, UPDATE, DELETE, TRUNCATE, DROP TABLE and CREATE TABLE change what Qdrant
- * holds and return a count instead, unless the connection is read-only.
+ * page reads. INSERT, UPDATE, DELETE, TRUNCATE, and the statements about tables, indexes and
+ * views change what Qdrant holds and return a count instead, unless the connection is
+ * read-only.
  *
  * <p>The columns come from the connection's {@link SchemaReader}, which keeps them for a while,
  * so they can be older than the collection. When the SQL names a column the kept columns don't
@@ -171,6 +181,9 @@ public class QdrantStatement extends AbstractStatement {
                 + "holds: call setReadOnly(false), or turn off read-only in the tool", "25006");
         }
 
+        // Read before the plan runs: dropping a collection deletes the aliases that showed it
+        Set<String> stale = stale(plan);
+
         ExecutionResult result = plan instanceof SetOptionPlan set ? setOption(set)
             : plan instanceof ShowOptionsPlan show ? showOptions(show)
             : executor.execute(plan, this);
@@ -182,15 +195,59 @@ public class QdrantStatement extends AbstractStatement {
             warn(result.warning());
         }
 
-        // A dropped collection's columns are gone; a new one by that name has its own
-        if (plan instanceof DropCollectionPlan drop) {
-            schemaReader.forget(drop.collection()::equals);
+        if (!stale.isEmpty()) {
+            schemaReader.forget(stale::contains);
         }
-        if (plan instanceof CreateCollectionPlan create) {
-            schemaReader.forget(create.collection()::equals);
+        if (changesNames(plan)) {
+            schemaReader.forgetLists();
         }
 
         return result;
+    }
+
+    /**
+     * The names whose kept columns a plan makes wrong. A collection's columns are kept under its
+     * own name and under each alias's name that read it, so a change to the collection, such as
+     * an index that changes a column's type, forgets them under every one; Qdrant lists the
+     * aliases of one collection, so only those are forgotten. A write that may add a field
+     * forgets the collection's own name only: a read through an alias that names the new field
+     * reads its columns again by itself, and looking the aliases up would cost a call per write.
+     */
+    private Set<String> stale(Plan plan) {
+        if (plan instanceof CreateCollectionPlan create) return Set.of(create.collection());
+
+        // A write may add a field, which the kept columns don't have yet
+        if (plan instanceof InsertPointsPlan insert) return Set.of(insert.collection());
+        if (plan instanceof UpdatePointsPlan update) return Set.of(update.collection());
+        if (plan instanceof DropCollectionPlan drop) return withAliases(drop.collection());
+        if (plan instanceof CreateIndexPlan index) return withAliases(index.collection());
+        if (plan instanceof DropIndexPlan index) return withAliases(index.collection());
+        if (plan instanceof CreateViewPlan view) return Set.of(view.view());
+        if (plan instanceof RenameViewPlan view) return Set.of(view.view(), view.newName());
+        if (plan instanceof DropViewPlan view) return Set.of(view.view());
+
+        return Set.of();
+    }
+
+    // A collection and the aliases that show it; a collection Qdrant doesn't have has none
+    private Set<String> withAliases(String collection) {
+        var names = new HashSet<String>();
+        names.add(collection);
+
+        try {
+            names.addAll(connection.gateway().collectionAliases(collection));
+        } catch (SQLException e) {
+            // The statement reports a missing collection itself
+        }
+
+        return names;
+    }
+
+    // Whether the plan adds, removes, or renames a table or view, which the kept lists name
+    private static boolean changesNames(Plan plan) {
+        return plan instanceof CreateCollectionPlan || plan instanceof DropCollectionPlan
+            || plan instanceof CreateViewPlan || plan instanceof RenameViewPlan
+            || plan instanceof DropViewPlan;
     }
 
     /**

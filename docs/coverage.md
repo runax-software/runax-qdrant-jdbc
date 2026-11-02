@@ -5,9 +5,9 @@ and how much SQL it accepts. Both are measured, not estimated — every number b
 the code or from a server that was asked. The point is to make the gaps legible, so a
 maintainer can tell a missing feature that blocks real use from one that nobody would notice.
 
-**Measured against** driver commit `9393e92` (with `SET`, `UPDATE` and `INSERT`, #27, #28 and
-#31), plus `OFFSET` (#30), whose rows below are updated rather than re-measured wholesale, and
-Qdrant **1.20.0** (build
+**Measured against** driver commit `beb4203` (with `SET`, `UPDATE`, `INSERT` and `OFFSET`,
+#27, #28, #31 and #30) and this branch's index and view statements on top, and Qdrant
+**1.20.0** (build
 `222b2e44ab1c3f17e8246396ead6558e45041df7`), running locally over REST on port 6333, with the
 three collections `./gradlew seedQdrant` loads. Qdrant 1.20 does not serve `/openapi.json` —
 that path answers 404 — so the route list comes from the published spec at the matching tag,
@@ -38,7 +38,7 @@ one of them is indistinguishable from a bug.
 
 ## Qdrant REST coverage
 
-Qdrant 1.20 documents **69 routes**. The driver calls **24** of them, which is **35%**. The
+Qdrant 1.20 documents **69 routes**. The driver calls **27** of them, which is **39%**. The
 counts below are per area, using Qdrant's own OpenAPI tags, so they can be recomputed from the
 spec without judgement calls.
 
@@ -47,18 +47,20 @@ spec without judgement calls.
 | Collections | 5 | 9 | Listing and describing tables, `CREATE TABLE`, `DROP TABLE`, `IF NOT EXISTS` |
 | Points | 7 | 14 | `SELECT` (scroll), `COUNT(*)`, `GROUP BY` (facet), `DELETE`, `TRUNCATE`, `UPDATE` (batch), `INSERT` (upsert, and the ID check before it) |
 | Search | 1 | 5 | `ORDER BY similarity(...) DESC`, including `embed()` |
-| Aliases | 1 | 3 | Listing aliases as views, and `system.aliases` |
-| Indexes | 1 | 2 | The payload indexes `CREATE TABLE` declares |
+| Aliases | **3** | **3** | Views: listing, `system.aliases`, `CREATE [OR REPLACE] VIEW`, `ALTER VIEW`, `DROP VIEW`, and the aliases a dropped collection takes with it |
+| Indexes | **2** | **2** | `CREATE INDEX`, `DROP INDEX`, and the indexes `CREATE TABLE` declares |
 | Snapshots | 2 | 17 | `system.snapshots` only |
 | Distributed | 3 | 9 | `system.cluster`, `system.peers`, `system.shards`, `system.shard_keys` |
 | Service | 3 | 6 | Version on connect, `system.telemetry`, `system.metrics` |
 | Beta | 1 | 2 | `system.issues` |
 | Quotas | 0 | 2 | — |
-| **Total** | **24** | **69** | |
+| **Total** | **27** | **69** | |
+
+Two areas are covered whole: every alias route and every index route.
 
 ### The routes the driver calls
 
-Sixteen come from `QdrantGateway`, which is the only place that speaks HTTP, and eight more
+Nineteen come from `QdrantGateway`, which is the only place that speaks HTTP, and eight more
 from `QdrantSystemTables`, which reads endpoints the gateway has no model for because their
 shape depends on the Qdrant version.
 
@@ -70,7 +72,8 @@ shape depends on the Qdrant version.
 | `GET /collections/{c}/exists` | `collectionExists` | `CREATE TABLE IF NOT EXISTS` |
 | `PUT /collections/{c}` | `createCollection` | `CREATE TABLE` |
 | `DELETE /collections/{c}` | `deleteCollection` | `DROP TABLE`, and the rollback when an index fails |
-| `PUT /collections/{c}/index` | `createIndex` | The `… KEYWORD INDEX` columns of a `CREATE TABLE` |
+| `PUT /collections/{c}/index` | `createIndex` | `CREATE INDEX`, and the `… KEYWORD INDEX` columns of a `CREATE TABLE` |
+| `DELETE /collections/{c}/index/{field}` | `deleteIndex` | `DROP INDEX` |
 | `POST /collections/{c}/points/scroll` | `scroll` | `SELECT`, paged by cursor, and the sample that infers columns |
 | `POST /collections/{c}/points/query` | `query` | `ORDER BY similarity(...) DESC` |
 | `POST /collections/{c}/points/count` | `count` | `COUNT(*)`, and the row count a `DELETE` or `UPDATE` reports |
@@ -79,7 +82,9 @@ shape depends on the Qdrant version.
 | `POST /collections/{c}/points` | `existingIds` | `INSERT`: the IDs a statement gives, looked up so a taken one is an error |
 | `PUT /collections/{c}/points` | `insertPoints` | `INSERT`: one upsert in `insert_only` mode |
 | `POST /collections/{c}/facet` | `facet` | `GROUP BY … COUNT(*)` |
-| `GET /aliases` | `listAliases` | Aliases as views, and `system.aliases` |
+| `GET /aliases` | `listAliases` | Aliases as views, `system.aliases`, and the checks before each view statement |
+| `GET /collections/{c}/aliases` | `collectionAliases` | The alias names whose kept columns an index change or a `DROP TABLE` makes wrong |
+| `POST /collections/aliases` | `changeAliases` | `CREATE [OR REPLACE] VIEW`, `ALTER VIEW … RENAME TO`, `DROP VIEW`, each one atomic change |
 | `GET /snapshots` | `QdrantSystemTables` | `system.snapshots`, the whole-storage rows |
 | `GET /collections/{c}/snapshots` | `QdrantSystemTables` | `system.snapshots`, the per-collection rows |
 | `GET /collections/{c}/shards` | `QdrantSystemTables` | `system.shard_keys` |
@@ -92,9 +97,9 @@ shape depends on the Qdrant version.
 The driver also calls `POST /embeddings` on `api.openai.com` or `api.voyageai.com` for
 `embed('text', 'openai:…')`. That is not a Qdrant route and is not counted here.
 
-### Why 35% means less than it looks, in both directions
+### Why 39% means less than it looks, in both directions
 
-**The denominator is padded.** Of the 45 routes the driver does not call, 15 are snapshot
+**The denominator is padded.** Of the 42 routes the driver does not call, 15 are snapshot
 plumbing — creating, downloading, uploading and recovering snapshots of a collection or of one
 shard — and 6 more are cluster surgery: moving a shard, dropping a peer, recovering Raft. No
 SQL client would call those; they belong to an operator with a shell, and exposing them through
@@ -102,7 +107,7 @@ JDBC would mean inventing `CALL` syntax for operations that have nothing to do w
 dialect spec does plan exactly that (see its *Operations* section), but as procedures, and a
 procedure that wraps one route is not what "covering an API" usually means. Set aside the 15
 unused snapshot routes, the 6 unused cluster ones, the 3 health probes (`healthz`, `livez`,
-`readyz`) and the 2 quota routes, and 43 remain, of which the driver calls 24 — **56%**.
+`readyz`) and the 2 quota routes, and 43 remain, of which the driver calls 27 — **63%**.
 Neither number is wrong; they answer different questions.
 
 **The numerator hides how much each route carries.** One route is not one feature.
@@ -137,7 +142,7 @@ slightly wrong.
   `batch` and `groups`, `points/discover` and `discover/batch` — is in the 1.15 spec, gone from
   the 1.20 spec, and alive on a 1.20 server: each answers a JSON validation error rather than
   an empty 404. They were superseded by the Query API, not removed. Counting them puts the live
-  surface at 77 routes and the driver at 31%; this document uses the documented 69, because the
+  surface at 77 routes and the driver at 35%; this document uses the documented 69, because the
   spec is what a maintainer can check, and routes Qdrant has stopped documenting are not ones
   the driver should start calling.
 - **`/locks` is really gone.** `GET` and `POST /locks` are in the 1.15 spec and answer an empty
@@ -157,15 +162,15 @@ client.
 
 ## SQL coverage
 
-The ceiling is the lexer. `Lexer.java` recognises **30 keywords**, and a word outside that set
-becomes an identifier, so `HAVING`, `LIKE`, `BETWEEN`, `JOIN`, `UNION`, `VIEW`, `INDEX`,
-`ALTER` and `CALL` cannot be lexed as syntax at all. `Parser.java` wires **ten statement
-kinds**, and `Plan.java`'s sealed interface permits **thirteen plan kinds** — the best single
-index of what can run. One parser class is still an empty four-line stub with no body and no
-caller: `IndexParser`. Some words mean something in one statement only, and aren't keywords,
-so they stay usable as names: the type names a `CREATE TABLE` uses (`VECTOR`, `KEYWORD`,
-`DISTANCE`, `MODIFIER`), which `CreateParser` reads where they can appear, and `RESET`, `SHOW`,
-`ALL`, `TO` and `DEFAULT`, which `OptionParser` reads the same way.
+The ceiling is the lexer. `Lexer.java` recognises **31 keywords**, and a word outside that set
+becomes an identifier, so `HAVING`, `LIKE`, `BETWEEN`, `JOIN`, `UNION` and `CALL` cannot be
+lexed as syntax at all. `Parser.java` wires **fifteen statement kinds**, and `Plan.java`'s
+sealed interface permits **eighteen plan kinds** — the best single index of what can run. No
+parser class is a stub any more. Some words mean something in one statement only, and aren't
+keywords, so they stay usable as names: the type names a `CREATE TABLE` uses (`VECTOR`,
+`KEYWORD`, `DISTANCE`, `MODIFIER`); `INDEX`, `ON`, `USING` and `WITH` in the index statements;
+`VIEW`, `REPLACE`, `RENAME` and `TO` in the view statements; and `RESET`, `SHOW`, `ALL` and
+`DEFAULT` in the option statements. Each parser reads them where they can appear.
 
 ### Statements
 
@@ -183,9 +188,9 @@ so they stay usable as names: the type names a `CREATE TABLE` uses (`VECTOR`, `K
 | `UPDATE … SET … WHERE` | partial | Payload only, in one batch; `WHERE` is required; `SET` on a vector or `_id` is an error |
 | `SET qdrant.<option>`, `RESET`, `SHOW` | works | Seven request options, kept for the connection; other databases' settings are errors |
 | `INSERT … ON CONFLICT` | missing | `ON` isn't a keyword, so it fails at the end of `VALUES` |
-| `CREATE INDEX`, `DROP INDEX` | missing | `CREATE` parses, then `Expected TABLE, found 'INDEX'` |
-| `CREATE VIEW` / `ALTER VIEW` / `DROP VIEW` | missing | Aliases are listed as views but cannot be managed |
-| `ALTER TABLE` | missing | Not a keyword: `Expected SELECT, INSERT, UPDATE, …, found 'ALTER'` |
+| `CREATE INDEX`, `DROP INDEX` | works | One field; the type defaults to the column's; each type's `WITH` options checked; a second index is `42S11`, a missing one `42S12` |
+| `CREATE [OR REPLACE] VIEW` / `ALTER VIEW … RENAME TO` / `DROP VIEW` | works | A view is `SELECT *` of one collection; a taken name is `42S01`, a missing view `42S02`; `OR REPLACE` is one atomic switch |
+| `ALTER TABLE` | missing | `ALTER` parses, then `Expected VIEW: ALTER TABLE isn't supported yet` |
 | `CALL` | missing | Not a keyword; `getProcedures` returns no rows |
 | `JOIN`, `UNION`, subqueries | missing | Rejected on purpose — see below |
 | Trailing `;` | works | One semicolon ends a statement; two statements in one call is an error |
@@ -255,6 +260,10 @@ SELECT price, COUNT(*) FROM sample_products GROUP BY price LIMIT 5
   Grouping by 'price' of sample_products needs an index Qdrant can count values of: it counts
   a field indexed as keyword, integer, bool, or uuid, and this one is indexed as float
 ```
+
+Where the field is a number or a date stored without a range index, the fix is one statement
+now: `CREATE INDEX ON docs (year)`, and the next statement orders by it. Ordering by text stays
+out of reach, since Qdrant orders only by `integer`, `float` and `datetime` indexes.
 
 `WHERE`, by contrast, needs no index. Qdrant will filter an unindexed field, just slowly, so
 `WHERE in_stock = true` runs against `sample_products` even though `in_stock` was found by
@@ -377,31 +386,27 @@ message is good, the state is not set.
 
 ## Gaps that matter, ranked
 
-The gaps that led this list when it was first measured — no `INSERT`, no `UPDATE`, and no
-`OFFSET` — are closed: the driver can create a collection, fill it, save a grid's edits, page
-through it, and delete from it. What remains, most important first:
+The gaps that led this list when it was first measured — no `INSERT`, no `UPDATE`, no
+`OFFSET`, and no way to manage an index — are closed: the driver can create a collection, fill
+it, index it, save a grid's edits, page through it, switch an alias, and delete from it. What
+remains, most important first:
 
-1. **No index management, which strands the clauses that depend on it.** `CREATE INDEX` and
-   `DROP INDEX` do not parse (`IndexParser` is an empty stub), and
-   `DELETE /collections/{c}/index/{field_name}` is unused, while `PUT …/index` is only ever
-   called from inside a `CREATE TABLE`. The consequence compounds: `ORDER BY` needs a range
-   index and `GROUP BY` needs a countable one, so sorting by a keyword column — the most
-   ordinary thing a person does to a grid — fails, and the fix cannot be said in SQL.
-2. **`LIKE` and text matching.** `title` in `sample_articles` carries a Qdrant `text` index and
+1. **`LIKE` and text matching.** `title` in `sample_articles` carries a Qdrant `text` index and
    nothing in SQL reaches it; `match: {text}` and `match: {prefix}` are fields of a filter the
    driver already builds, so this costs no new route. `WHERE name LIKE '%lamp%'` is what people
    type first, and today `LIKE` is not even a keyword, so it fails as a syntax error.
-3. **Vectors can be written once and never changed.** `INSERT` stores them, but `UPDATE … SET
+2. **Vectors can be written once and never changed.** `INSERT` stores them, but `UPDATE … SET
    dense = …` is an error, and `PUT …/points/vectors` and `…/vectors/delete` are unused. In a
    grid, editing a vector cell fails while every other cell saves; re-embedding a collection
    after changing models means deleting and re-inserting its points.
-4. **`INSERT` only inserts.** `INSERT … ON CONFLICT (_id) DO UPDATE`, Qdrant's own upsert, has
+3. **`INSERT` only inserts.** `INSERT … ON CONFLICT (_id) DO UPDATE`, Qdrant's own upsert, has
    no SQL yet, so loading a batch that may repeat IDs means splitting it into `INSERT`s and
    `UPDATE`s. Rows the driver embeds are also embedded one provider call at a time.
 
 Below that line the remaining gaps are mostly ones a SQL user would not reach for first: hybrid
-search and fusion (one route, many body shapes), `CALL` procedures for snapshots and shard
-keys, `WHERE` and `ORDER BY` over the `system` tables, and the request options still to come
+search and fusion (one route, many body shapes), `ALTER TABLE` for a collection's settings
+and vectors, `CALL` procedures for snapshots and shard keys, `WHERE` and `ORDER BY` over the
+`system` tables, and the request options still to come
 (`shard_key`, quantization, a `/*+ … */` hint for one statement).
 
 ## Where the documents and the code disagree

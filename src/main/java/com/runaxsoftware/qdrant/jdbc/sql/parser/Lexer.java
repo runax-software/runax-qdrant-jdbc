@@ -11,7 +11,7 @@ final class Lexer {
         "SELECT", "FROM", "WHERE", "AND", "OR", "NOT", "IN", "IS", "NULL",
         "TRUE", "FALSE", "ORDER", "BY", "ASC", "DESC", "LIMIT", "OFFSET", "AS",
         "GROUP", "DISTINCT", "DELETE", "TRUNCATE", "DROP", "TABLE", "CREATE", "SET", "UPDATE",
-        "INSERT", "INTO", "VALUES");
+        "INSERT", "INTO", "VALUES", "ALTER");
 
     private static final List<String> TWO_CHAR_SYMBOLS = List.of(
         "<=", ">=", "<>", "!=");

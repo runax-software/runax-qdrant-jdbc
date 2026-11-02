@@ -167,6 +167,8 @@ RESET ALL;
 | `DELETE FROM docs WHERE …` | Delete points by filter | Returns the number deleted; needs a `WHERE` |
 | `TRUNCATE TABLE docs` | Delete every point | The collection and its indexes stay |
 | `DROP TABLE [IF EXISTS] docs` | Delete the collection | |
+| `CREATE INDEX ON docs (lang)`, `DROP INDEX lang_idx ON docs` | Create or delete a payload index | `USING text WITH (tokenizer = word, …)` for a type and its options |
+| `CREATE [OR REPLACE] VIEW current AS SELECT * FROM docs` | Create or switch an alias | Also `ALTER VIEW … RENAME TO`, `DROP VIEW` |
 | `CREATE TABLE docs (dense VECTOR(384) DISTANCE COSINE, lang KEYWORD INDEX)` | Create the collection, then its payload indexes | `_vector VECTOR(n)` makes the unnamed vector |
 | `JOIN`, `SUM`, `AVG`, subqueries | — | Rejected with an error |
 

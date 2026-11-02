@@ -368,7 +368,32 @@ becomes a payload index: `KEYWORD`, `INTEGER`, `FLOAT`, `BOOL`, `DATETIME`, `TEX
 without `INDEX` is an error, since the payload has no schema to declare it in. Qdrant creates
 the collection and each index in separate calls, so when an index fails the driver deletes the
 new collection again rather than leave half a table. `WITH (…)`, `ALTER TABLE`, and
-`CREATE INDEX` are still the target.
+`CREATE INDEX` on its own is described below.
+
+`CREATE INDEX [IF NOT EXISTS] [name] ON docs (field) [USING type] [WITH (option = value, …)]`
+creates a payload index on one field, and `DROP INDEX [IF EXISTS] name ON docs` or
+`DROP INDEX [IF EXISTS] ON docs (field)` deletes it; both run today. Qdrant names an index by
+its field, and `getIndexInfo` reports it as `<field>_idx`, so `lang_idx` and `lang` both name the
+index on `lang`, and a `CREATE INDEX` that names it otherwise is an error. The type defaults to
+the column's (`VARCHAR` to `keyword`, `BIGINT` to `integer`, `DOUBLE` to `float`, `BOOLEAN` to
+`bool`, `TIMESTAMP WITH TIME ZONE` to `datetime`); a JSON column, or a field the collection
+doesn't have yet, says `USING`. The `WITH` options are the ones Qdrant keeps for the type, and
+any other is an error, since Qdrant accepts an unknown one and drops it without a word:
+
+| Type | Options |
+| --- | --- |
+| `keyword`, `uuid` | `is_tenant`, `on_disk` |
+| `integer` | `lookup`, `range`, `is_principal`, `on_disk` |
+| `float`, `datetime` | `is_principal`, `on_disk` |
+| `bool`, `geo` | `on_disk` |
+| `text` | `tokenizer`, `min_token_len`, `max_token_len`, `lowercase`, `ascii_folding`, `phrase_matching`, `stopwords`, `stemmer` (a language, for Qdrant's Snowball stemmer), `on_disk` |
+
+Qdrant would replace an index already on the field, and answers a field without one as
+dropped, so the driver looks first: a second `CREATE INDEX` on a field is `42S11` (nothing to do
+with `IF NOT EXISTS`), and a `DROP INDEX` of a missing one is `42S12` (nothing with `IF
+EXISTS`). Changing an index's type is a `DROP INDEX` and a `CREATE INDEX`. The columns the
+driver keeps follow at once, under the collection's name and its aliases', so an `ORDER BY`
+that needed the index runs on the next statement.
 
 | SQL | Qdrant |
 | --- | --- |
@@ -393,6 +418,17 @@ new collection again rather than leave half a table. `WITH (…)`, `ALTER TABLE`
 | `DROP VIEW current_docs` | Delete alias |
 
 Aliases are listed as views in `DatabaseMetaData`, with the target collection's columns.
+
+**What runs today:** all four. A view is `SELECT *` (or `SELECT t.*`) from one collection and
+nothing else, since an alias is another name for a whole collection; a view of a view is an
+error naming the collection to use instead. Qdrant would move an alias that already exists on a
+plain create, and answers a missing one as deleted, so the driver looks first: `CREATE VIEW` of
+a name that's taken is `42S01` unless it says `OR REPLACE`, which deletes and creates the alias
+in one atomic change, so a reader always sees one collection or the other; renaming to a name
+that's taken is `42S01`; and `DROP VIEW` of a missing view is `42S02` unless it says
+`IF EXISTS`. Dropping a collection drops its aliases too, as Qdrant does; the driver forgets the
+columns it kept under their names, so they read as missing rather than as the collection that's
+gone.
 
 ## Embeddings
 

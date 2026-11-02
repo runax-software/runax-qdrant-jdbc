@@ -86,6 +86,13 @@ final class Snapshot<T> {
         return await(created);
     }
 
+    /**
+     * Drops the kept answer, so the next {@link #get} reads it again.
+     */
+    void clear() {
+        kept.set(null);
+    }
+
     private Entry<T> entry(long now) {
         return new Entry<>(new FutureTask<>(loader::load), now);
     }

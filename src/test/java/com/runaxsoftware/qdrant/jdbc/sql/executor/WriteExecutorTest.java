@@ -5,9 +5,16 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadIndexType;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateCollectionPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateIndexPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateViewPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DeletePointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropCollectionPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropIndexPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropViewPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.RenameViewPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.InsertPointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.NewPoint;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdatePointsPlan;
@@ -32,6 +39,8 @@ class WriteExecutorTest {
     private boolean exists;
     private final List<JsonNode> taken = new ArrayList<>();
     private String failingIndex;
+    private Map<String, PayloadIndexType> indexes = Map.of();
+    private List<QdrantAlias> aliases = List.of();
 
     private final Executor executor = new Executor(
         request -> {
@@ -95,10 +104,33 @@ class WriteExecutorTest {
             }
 
             @Override
-            public void createIndex(String collection, String field, String type)
+            public void createIndex(String collection, String field, JsonNode schema)
                 throws SQLException {
-                calls.add("index " + collection + " " + field + " " + type);
+                calls.add("index " + collection + " " + field + " "
+                    + (schema.isTextual() ? schema.asText() : schema.toString()));
                 if (field.equals(failingIndex)) throw new SQLException("Qdrant: bad index", "42000");
+            }
+
+            @Override
+            public Map<String, PayloadIndexType> payloadIndexes(String collection) {
+                calls.add("indexes " + collection);
+                return indexes;
+            }
+
+            @Override
+            public void deleteIndex(String collection, String field) {
+                calls.add("unindex " + collection + " " + field);
+            }
+
+            @Override
+            public List<QdrantAlias> aliases() {
+                calls.add("aliases");
+                return aliases;
+            }
+
+            @Override
+            public void changeAliases(List<JsonNode> actions) {
+                calls.add("change " + actions);
             }
         });
 
@@ -244,6 +276,112 @@ class WriteExecutorTest {
             () -> executor.execute(create(false), statement())).getSQLState());
         assertEquals(List.of("create docs " + CONFIG, "index docs lang keyword",
             "index docs year integer", "drop docs"), calls);
+    }
+
+    // Indexes
+
+    @Test
+    void createsAnIndexOnAFieldWithoutOne() throws SQLException {
+        executor.execute(new CreateIndexPlan("docs", "lang", Json.node("keyword"), false), statement());
+
+        assertEquals(List.of("indexes docs", "index docs lang keyword"), calls);
+    }
+
+    @Test
+    void refusesToReplaceAnIndexUnlessIfNotExists() throws SQLException {
+        indexes = Map.of("lang", PayloadIndexType.TEXT);
+
+        SQLException error = assertThrows(SQLException.class, () -> executor.execute(
+            new CreateIndexPlan("docs", "lang", Json.node("keyword"), false), statement()));
+        assertEquals("42S11", error.getSQLState());
+        assertEquals("'lang' of docs already has an index, lang_idx, of type text: drop it first "
+            + "to change it", error.getMessage());
+
+        executor.execute(new CreateIndexPlan("docs", "lang", Json.node("keyword"), true), statement());
+        assertEquals(List.of("indexes docs", "indexes docs"), calls, "nothing replaced");
+    }
+
+    @Test
+    void dropsTheIndexTheNameMeans() throws SQLException {
+        indexes = Map.of("lang", PayloadIndexType.KEYWORD);
+
+        executor.execute(new DropIndexPlan("docs", List.of("lang", "lang_idx"), "lang_idx", false),
+            statement());
+
+        assertEquals(List.of("indexes docs", "unindex docs lang"), calls);
+    }
+
+    @Test
+    void reportsAMissingIndexUnlessIfExists() throws SQLException {
+        indexes = Map.of("year", PayloadIndexType.INTEGER);
+
+        SQLException error = assertThrows(SQLException.class, () -> executor.execute(
+            new DropIndexPlan("docs", List.of("lang"), "lang", false), statement()));
+        assertEquals("42S12", error.getSQLState());
+        assertEquals("No index 'lang' on docs: its indexes are year_idx", error.getMessage());
+
+        executor.execute(new DropIndexPlan("docs", List.of("lang"), "lang", true), statement());
+        assertFalse(calls.stream().anyMatch(x -> x.startsWith("unindex")));
+    }
+
+    // Views
+
+    @Test
+    void createsAView() throws SQLException {
+        executor.execute(new CreateViewPlan("current", "docs_v1", false), statement());
+
+        assertEquals(List.of("aliases", "change [{\"create_alias\":{\"collection_name\":"
+            + "\"docs_v1\",\"alias_name\":\"current\"}}]"), calls);
+    }
+
+    @Test
+    void movesAViewOnlyWithOrReplace() throws SQLException {
+        aliases = List.of(new QdrantAlias("current", "docs_v1"));
+
+        SQLException error = assertThrows(SQLException.class,
+            () -> executor.execute(new CreateViewPlan("current", "docs_v2", false), statement()));
+        assertEquals("42S01", error.getSQLState());
+
+        executor.execute(new CreateViewPlan("current", "docs_v2", true), statement());
+        assertEquals("change [{\"delete_alias\":{\"alias_name\":\"current\"}}, "
+            + "{\"create_alias\":{\"collection_name\":\"docs_v2\",\"alias_name\":\"current\"}}]",
+            calls.get(calls.size() - 1), "both actions in one atomic change");
+    }
+
+    @Test
+    void refusesAViewOfAView() {
+        aliases = List.of(new QdrantAlias("current", "docs_v1"));
+
+        assertEquals("'current' is a view of docs_v1: a view shows a collection, so name docs_v1",
+            assertThrows(SQLException.class, () -> executor.execute(
+                new CreateViewPlan("other", "current", false), statement())).getMessage());
+    }
+
+    @Test
+    void renamesAViewToAFreeName() throws SQLException {
+        aliases = List.of(new QdrantAlias("current", "docs"), new QdrantAlias("taken", "docs"));
+
+        assertEquals("42S02", assertThrows(SQLException.class, () -> executor.execute(
+            new RenameViewPlan("missing", "live"), statement())).getSQLState());
+        assertEquals("42S01", assertThrows(SQLException.class, () -> executor.execute(
+            new RenameViewPlan("current", "taken"), statement())).getSQLState());
+
+        executor.execute(new RenameViewPlan("current", "live"), statement());
+        assertEquals("change [{\"rename_alias\":{\"old_alias_name\":\"current\","
+            + "\"new_alias_name\":\"live\"}}]", calls.get(calls.size() - 1));
+    }
+
+    @Test
+    void dropsAViewThatExists() throws SQLException {
+        aliases = List.of(new QdrantAlias("current", "docs"));
+
+        assertEquals("42S02", assertThrows(SQLException.class, () -> executor.execute(
+            new DropViewPlan("missing", false), statement())).getSQLState());
+        executor.execute(new DropViewPlan("missing", true), statement());
+        executor.execute(new DropViewPlan("current", false), statement());
+
+        assertEquals(List.of("aliases", "aliases", "aliases",
+            "change [{\"delete_alias\":{\"alias_name\":\"current\"}}]"), calls);
     }
 
     private static Statement statement() {
