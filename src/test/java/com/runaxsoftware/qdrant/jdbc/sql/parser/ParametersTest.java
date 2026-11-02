@@ -2,8 +2,12 @@ package com.runaxsoftware.qdrant.jdbc.sql.parser;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Column;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Comparison;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Literal;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.VectorLiteral;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.InsertStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.OnConflict;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Statement;
 
 import org.junit.jupiter.api.Test;
@@ -14,6 +18,24 @@ import java.sql.SQLSyntaxErrorException;
 import java.util.List;
 
 class ParametersTest {
+
+    /**
+     * Binding rebuilds the statement, so anything it forgets to copy is silently lost. The ON
+     * CONFLICT clause is easy to drop that way, and dropping it turns an upsert back into an
+     * insert that fails on a taken ID.
+     */
+    @Test
+    void keepsTheOnConflictClauseWhenItBindsValues() throws SQLSyntaxErrorException {
+        Statement parsed = Parser.parse("INSERT INTO docs (_id, lang) VALUES (?, ?) "
+                + "ON CONFLICT (_id) DO UPDATE WHERE year < ?");
+        InsertStatement bound = (InsertStatement) Parameters.bind(parsed,
+                index -> new Literal((long) index));
+
+        assertEquals(OnConflict.Action.UPDATE, bound.onConflict().action());
+        assertEquals(new Comparison(Column.of("year"), "<", new Literal(3L)),
+                bound.onConflict().where(), "the clause's own values are bound too");
+        assertEquals(3, Parameters.count(parsed), "and they're counted");
+    }
 
     @ParameterizedTest
     @CsvSource(delimiter = '|', value = {

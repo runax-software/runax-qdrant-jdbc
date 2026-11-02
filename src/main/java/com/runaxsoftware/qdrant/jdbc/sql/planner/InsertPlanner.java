@@ -11,6 +11,8 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Expression;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Literal;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Parameter;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.InsertStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.OnConflict;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConflictAction;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.EmbedText;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.InsertPointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.NewPoint;
@@ -34,6 +36,10 @@ import java.util.UUID;
  * added; {@code _payload} gives the whole payload, and fields named beside it go into it. A
  * vector is written out ({@code [0.1, 0.2]}), given as JSON text as a tool sends a cell, or
  * embedded from text with {@code embed('text')}, by Qdrant or by the driver.
+ *
+ * <p>An {@code ON CONFLICT} clause decides what happens to a row whose ID is taken: without one
+ * the statement fails, {@code DO NOTHING} leaves the point alone, and {@code DO UPDATE} replaces
+ * it — with a {@code WHERE} that says which of the points already there may be replaced.
  */
 final class InsertPlanner {
 
@@ -75,7 +81,37 @@ final class InsertPlanner {
             points.add(point);
         }
 
-        return new InsertPointsPlan(schema.name(), points);
+        return new InsertPointsPlan(schema.name(), points, action(statement.onConflict()),
+            updateFilter(statement, schema));
+    }
+
+    private static ConflictAction action(OnConflict onConflict) {
+        return switch (onConflict.action()) {
+            case FAIL -> ConflictAction.FAIL;
+            case NOTHING -> ConflictAction.NOTHING;
+            case UPDATE -> ConflictAction.UPDATE;
+        };
+    }
+
+    /**
+     * The filter that says which points already there may be replaced, from a
+     * {@code DO UPDATE ... WHERE}. It reads the same conditions a SELECT's WHERE does, over the
+     * stored point rather than the row being inserted: Qdrant applies it to the points it finds
+     * and inserts new ones whatever it says.
+     */
+    private static JsonNode updateFilter(InsertStatement statement, TableSchema schema)
+        throws SQLException {
+        OnConflict onConflict = statement.onConflict();
+
+        if (onConflict.where() == null) {
+            return null;
+        }
+        if (onConflict.action() != OnConflict.Action.UPDATE) {
+            throw new SQLSyntaxErrorException("Only DO UPDATE takes a WHERE", "42000");
+        }
+
+        return FilterPlanner.plan(onConflict.where(), schema,
+            column -> SelectPlanner.find(schema, column, null, false));
     }
 
     private static List<Target> targets(List<Column> columns, TableSchema schema)

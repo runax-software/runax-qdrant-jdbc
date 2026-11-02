@@ -30,9 +30,11 @@ interface Writer {
     List<JsonNode> existingIds(String collection, List<JsonNode> ids) throws SQLException;
 
     /**
-     * Adds points, leaving any point already there as it is.
+     * Adds points, replacing any point already there when {@code replaceExisting}, and only
+     * those the filter matches when it's given.
      */
-    void insertPoints(String collection, List<JsonNode> points) throws SQLException;
+    void insertPoints(String collection, List<JsonNode> points, boolean replaceExisting,
+                      JsonNode updateFilter) throws SQLException;
 
     /**
      * Applies payload and vector changes, in order, in one batch.

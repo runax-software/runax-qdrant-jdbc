@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `INSERT … ON CONFLICT`, so a batch that may repeat point IDs is one statement instead of a
+  split into `INSERT`s and `UPDATE`s. `ON CONFLICT [(_id)] DO NOTHING` leaves a point that's
+  already there as it is, and `DO UPDATE` replaces it; without the clause a taken ID is still
+  `23505`, and that error now names both options. The two map straight onto Qdrant's upsert
+  modes: `DO NOTHING` is `insert_only`, which skips an existing point and reports nothing, so
+  the statement also drops the ID lookup a plain `INSERT` makes — one call instead of two —
+  while `DO UPDATE` is `upsert`.
+
+  `DO UPDATE … WHERE price < 100` sends the condition as Qdrant's `update_filter`, which it
+  applies only to the points already there: those that match are replaced, those that don't keep
+  their state, and a row whose ID is new is inserted whatever the condition says. That is
+  PostgreSQL's meaning for the clause as well, and it makes a conditional refresh one statement.
+  `DO UPDATE` takes no `SET` list, because Qdrant replaces a whole point rather than merging
+  into it — a column the statement doesn't name is gone, and the error says so. The conflict
+  target is optional and may only be `_id`, since a Qdrant point has one key. None of `ON`,
+  `CONFLICT`, `DO` and `NOTHING` is a keyword, so all four stay usable as column names. ([#36])
 - `LIKE` and full-text matching, so the text a collection holds is reachable from SQL.
   `name LIKE 'Desk%'` is Qdrant's `prefix` match and `name LIKE '%desk%'` its `substring`
   match, both case-sensitive, as Qdrant's exact match is; a pattern with no wildcard matches
@@ -296,3 +312,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#33]: https://github.com/runax-software/runax-qdrant-jdbc/pull/33
 [#34]: https://github.com/runax-software/runax-qdrant-jdbc/pull/34
 [#35]: https://github.com/runax-software/runax-qdrant-jdbc/pull/35
+[#36]: https://github.com/runax-software/runax-qdrant-jdbc/pull/36

@@ -15,6 +15,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.SelectItem;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Assignment;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DeleteStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.InsertStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.OnConflict;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Statement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.UpdateStatement;
@@ -73,7 +74,11 @@ public final class Parameters {
             var rows = new ArrayList<List<Expression>>();
             for (List<Expression> row : insert.rows()) rows.add(bind(row, values));
 
-            return new InsertStatement(insert.table(), insert.columns(), rows);
+            // The ON CONFLICT clause travels with the statement, and its WHERE holds values too
+            OnConflict onConflict = insert.onConflict();
+
+            return new InsertStatement(insert.table(), insert.columns(), rows,
+                new OnConflict(onConflict.action(), bind(onConflict.where(), values)));
         }
         if (statement instanceof UpdateStatement update) {
             var assignments = new ArrayList<Assignment>();

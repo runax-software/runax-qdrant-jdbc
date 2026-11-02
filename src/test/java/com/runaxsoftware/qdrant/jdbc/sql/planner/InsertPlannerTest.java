@@ -2,6 +2,7 @@ package com.runaxsoftware.qdrant.jdbc.sql.planner;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -15,6 +16,7 @@ import com.runaxsoftware.qdrant.jdbc.schema.ColumnType;
 import com.runaxsoftware.qdrant.jdbc.schema.TableSchema;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.Parser;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.EmbedText;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConflictAction;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.InsertPointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.NewPoint;
 
@@ -149,6 +151,64 @@ class InsertPlannerTest {
         assertEquals("42000", assertThrows(SQLException.class,
                 () -> insert(DOCS, "INSERT INTO docs (_rank) VALUES (1)")).getSQLState());
         assertThrows(SQLException.class, () -> insert(DOCS, "INSERT INTO docs (lang) VALUES (year)"));
+    }
+
+    // ON CONFLICT
+
+    @Test
+    void failsOnATakenIdWhenTheStatementSaysNothing() throws SQLException {
+        InsertPointsPlan plan = insert(DOCS, "INSERT INTO docs (_id, lang) VALUES (1, 'en')");
+
+        assertEquals(ConflictAction.FAIL, plan.onConflict());
+        assertNull(plan.updateFilter());
+        assertTrue(plan.onConflict().checksIds(), "the IDs are looked up first");
+        assertFalse(plan.onConflict().replaces());
+    }
+
+    /**
+     * DO NOTHING is what Qdrant's insert_only mode already does to a point that's there, so the
+     * only difference from a plain INSERT is that the IDs need no looking up.
+     */
+    @Test
+    void skipsAPointThatIsThereWithoutLookingTheIdsUp() throws SQLException {
+        InsertPointsPlan plan = insert(DOCS,
+                "INSERT INTO docs (_id, lang) VALUES (1, 'en') ON CONFLICT (_id) DO NOTHING");
+
+        assertEquals(ConflictAction.NOTHING, plan.onConflict());
+        assertFalse(plan.onConflict().checksIds());
+        assertFalse(plan.onConflict().replaces(), "insert_only, as a plain INSERT");
+        assertNull(plan.updateFilter());
+    }
+
+    @Test
+    void replacesAPointThatIsThereOnDoUpdate() throws SQLException {
+        InsertPointsPlan plan = insert(DOCS,
+                "INSERT INTO docs (_id, lang) VALUES (1, 'en') ON CONFLICT (_id) DO UPDATE");
+
+        assertEquals(ConflictAction.UPDATE, plan.onConflict());
+        assertFalse(plan.onConflict().checksIds());
+        assertTrue(plan.onConflict().replaces(), "Qdrant's upsert mode");
+        assertNull(plan.updateFilter());
+    }
+
+    /**
+     * The WHERE of a DO UPDATE reads the stored point, as a SELECT's does, and becomes Qdrant's
+     * update_filter.
+     */
+    @Test
+    void plansTheConditionThatGuardsADoUpdateAsAFilter() throws SQLException {
+        InsertPointsPlan plan = insert(DOCS, "INSERT INTO docs (_id, lang) VALUES (1, 'en') "
+                + "ON CONFLICT (_id) DO UPDATE WHERE year < 3");
+
+        assertEquals(ConflictAction.UPDATE, plan.onConflict());
+        assertEquals("{\"must\":[{\"key\":\"year\",\"range\":{\"lt\":3}}]}",
+                plan.updateFilter().toString());
+    }
+
+    @Test
+    void reportsAConditionTheFilterCantExpress() {
+        assertThrows(SQLException.class, () -> insert(DOCS,
+                "INSERT INTO docs (_id) VALUES (1) ON CONFLICT (_id) DO UPDATE WHERE missing = 1"));
     }
 
     private InsertPointsPlan insert(TableSchema schema, String sql) throws SQLException {
