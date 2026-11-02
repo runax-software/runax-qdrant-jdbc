@@ -35,9 +35,15 @@ interface Writer {
     void insertPoints(String collection, List<JsonNode> points) throws SQLException;
 
     /**
-     * Applies payload changes, in order, in one batch.
+     * Applies payload and vector changes, in order, in one batch.
      */
     void updatePoints(String collection, List<JsonNode> operations) throws SQLException;
+
+    /**
+     * The IDs of the points a filter matches, at most {@code limit + 1} of them, so the caller
+     * can tell a capped read from a complete one.
+     */
+    List<JsonNode> matchingIds(String collection, JsonNode filter, int limit) throws SQLException;
 
     /**
      * Deletes the collection; fails with SQL state {@code 42S02} when there's none.

@@ -154,7 +154,7 @@ array functions, and `EXISTS` are still the target.
 | `jsonb_array_length(tags) >= 2` | `values_count` |
 | `field IS NULL` / `IS NOT NULL` | `is_empty`: missing, `null`, or `[]` |
 | `is_json_null(field)` | `is_null`: present and `null` |
-| `dense IS NOT NULL` (vector column) | `has_vector` |
+| `dense IS NOT NULL`, `_vector IS NULL` (vector columns) | `has_vector` |
 | `_id IN (…)`, `_id NOT IN (…)` | `has_id` |
 | `meta->>'author' = 'Ann'` | `match` on the path `meta.author` |
 | `EXISTS (SELECT 1 FROM jsonb_array_elements(variants) AS v WHERE v->>'sku' = 'A1' AND (v->>'stock')::int > 0)` | `nested`: every condition on the same array element |
@@ -325,8 +325,23 @@ payload before the other fields are set. A field the collection doesn't have yet
 value is read as its column's type, so a cell's text works as a tool sends it: `'49.5'` into
 a `DOUBLE`, `'false'` into a `BOOLEAN`, `'["a"]'` into a `JSON` column. The update count is
 the matching points, counted first, as for `DELETE`. An `UPDATE` without `WHERE` is an error,
-as are changing `_id` and changing vectors, which is still the target. A point ID compared
-with text that holds a whole number (`_id = '7'`, as DataGrip sends it) matches that number.
+and so is changing `_id`. A point ID compared with text that holds a whole number
+(`_id = '7'`, as DataGrip sends it) matches that number.
+
+`UPDATE` changes vectors too, in the same batch call as any payload change beside them:
+`SET dense = '[0.1, 0.2]'` writes one and `SET dense = NULL` deletes it. A vector is written
+out, given as JSON text as a tool sends a cell, or made with `embed('text')`, exactly as an
+`INSERT` takes it, and its dimensions and shape are checked against the collection first. The
+two halves reach Qdrant differently because Qdrant differs: `delete_vectors` takes the filter as
+it is, while `update_vectors` takes a list of point IDs and rejects a filter alone. So a write
+scrolls the IDs the `WHERE` matches first, sends that filter along as the operation's
+`update_filter` — a point that stops matching between the read and the write is left alone
+rather than written to on the strength of a stale ID — and is capped at **10,000** points, the
+same cap a driver-side `OFFSET` has and for the same reason: it's a read the statement pays for
+and doesn't return. Past it the statement is an error suggesting a narrower `WHERE`. Deleting a
+vector leaves a point that has none and can't be found by a search, which Qdrant allows even for
+a collection's only vector; that is why `_vector IS NULL` is a question worth asking (see
+[Filters](#filters-where)).
 
 | SQL | Qdrant |
 | --- | --- |
@@ -340,8 +355,9 @@ with text that holds a whole number (`_id = '7'`, as DataGrip sends it) matches 
 | `UPDATE … SET _payload = '{…}'` | `overwrite_payload` |
 | `UPDATE … SET _payload = _payload \|\| '{"lang": "de"}'` | `set_payload`: merge the given fields |
 | `UPDATE … SET lang = NULL`, `SET _payload = _payload - 'lang'` | `delete_payload` for `lang` |
-| `UPDATE … SET dense = '[…]'` | `update_vectors` |
-| `UPDATE … SET dense = NULL` | `delete_vectors` |
+| `UPDATE … SET dense = '[…]'` | `update_vectors`, for the matching IDs, read first (runs) |
+| `UPDATE … SET dense = embed('text')` | `update_vectors` with the vector the driver or Qdrant made (runs) |
+| `UPDATE … SET dense = NULL` | `delete_vectors`, by filter (runs) |
 | `DELETE FROM docs WHERE …` | Delete points by filter (or by ID) |
 | `TRUNCATE TABLE docs` | Delete all points; the collection and its indexes stay |
 | JDBC batches (`addBatch` / `executeBatch`) | One batch update call |

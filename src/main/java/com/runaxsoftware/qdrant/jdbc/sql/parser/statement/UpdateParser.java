@@ -13,8 +13,9 @@ import java.util.ArrayList;
 
 /**
  * Reads {@code UPDATE docs [AS t] SET column = value [, ...] [WHERE ...]}, as DataGrip's data
- * editor writes it when a cell is saved. Whether an UPDATE without WHERE may run is the
- * planner's to say.
+ * editor writes it when a cell is saved. A value may be a constant, {@code NULL}, a
+ * placeholder, a vector written out, or a call such as {@code embed('text')}. Whether an UPDATE
+ * without WHERE may run, and which columns take which values, are the planner's to say.
  */
 public final class UpdateParser {
 
@@ -38,7 +39,9 @@ public final class UpdateParser {
         do {
             var column = this.expressionParser.parseColumn();
             this.tokenStream.expectSymbol("=");
-            assignments.add(new Assignment(column, this.expressionParser.parseValue()));
+
+            // A call, so a vector can be set to embed('text'); the planner says where one may go
+            assignments.add(new Assignment(column, this.expressionParser.parseValueOrCall()));
         } while (this.tokenStream.matchSymbol(","));
 
         Expression where = this.tokenStream.matchKeyword("WHERE")

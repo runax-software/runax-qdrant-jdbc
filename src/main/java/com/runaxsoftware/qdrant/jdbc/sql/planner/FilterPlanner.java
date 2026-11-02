@@ -180,12 +180,9 @@ final class FilterPlanner {
     private ObjectNode isNull(IsNull isNull, boolean wantsNull) throws SQLException {
         ColumnDefinition column = column(isNull.column());
 
+        // An unnamed vector is asked about by its Qdrant name, which is "". A point normally has
+        // it, but UPDATE ... SET _vector = NULL can take it away, so the question is a fair one
         if (column.kind() == ColumnKind.VECTOR) {
-            if (column.source().isEmpty()) {
-                throw new SQLFeatureNotSupportedException("Every point of " + table + " has "
-                    + "its unnamed vector, so '" + column.name() + "' is never null");
-            }
-
             ObjectNode hasVector = JSON.objectNode().put("has_vector", column.source());
 
             return wantsNull ? clause(MUST_NOT, List.of(hasVector)) : hasVector;

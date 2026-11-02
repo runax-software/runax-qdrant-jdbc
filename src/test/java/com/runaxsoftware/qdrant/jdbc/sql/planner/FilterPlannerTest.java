@@ -184,10 +184,20 @@ class FilterPlannerTest {
         assertFilter("{\"must_not\":[{\"has_vector\":\"dense\"}]}", "dense IS NULL");
     }
 
+    /**
+     * An unnamed vector is asked about by Qdrant's name for it, the empty one. A point normally
+     * has it, but {@code SET _vector = NULL} can take it away, so the question is a fair one.
+     */
+    @Test
+    void testsAnUnnamedVectorForNullWithHasVector() throws SQLException {
+        assertEquals("{\"must\":[{\"has_vector\":\"\"}]}",
+                scroll("SELECT * FROM unnamed WHERE _vector IS NOT NULL").filter().toString());
+        assertEquals("{\"must_not\":[{\"has_vector\":\"\"}]}",
+                scroll("SELECT * FROM unnamed WHERE _vector IS NULL").filter().toString());
+    }
+
     @Test
     void rejectsNullTestsThatAreNeverTrue() {
-        assertThrows(SQLFeatureNotSupportedException.class,
-                () -> scroll("SELECT * FROM unnamed WHERE _vector IS NULL"));
         assertThrows(SQLFeatureNotSupportedException.class,
                 () -> scroll("SELECT * FROM docs WHERE _id IS NULL"));
     }
