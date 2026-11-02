@@ -49,7 +49,7 @@ final class UpdatePlanner {
                 + "point of " + schema.name() + ": add a WHERE, such as WHERE _id = 7");
         }
 
-        JsonNode filter = FilterPlanner.plan(statement.where(), schema.name(),
+        JsonNode filter = FilterPlanner.plan(statement.where(), schema,
             column -> SelectPlanner.find(schema, column, statement.alias(), false));
 
         JsonNode replaced = null;

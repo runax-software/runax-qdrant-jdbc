@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `LIKE` and full-text matching, so the text a collection holds is reachable from SQL.
+  `name LIKE 'Desk%'` is Qdrant's `prefix` match and `name LIKE '%desk%'` its `substring`
+  match, both case-sensitive, as Qdrant's exact match is; a pattern with no wildcard matches
+  the value exactly, as `=` does, and `NOT LIKE` carries `is_empty` so a point without the
+  field matches neither, as SQL says. `text_match(title, 'refund policy')` matches every word
+  through a text index, `text_any(title, 'refund shipping')` any of them, and
+  `phrase_match(title, 'refund policy')` the words in order. All of them reach each element of
+  an array field, and all run on a field with no index at all, as the rest of `WHERE` does —
+  Qdrant reads the payload instead, just more slowly. A pattern Qdrant can't match is an error
+  naming what to write instead rather than a search the driver would trim itself: `'%lamp'` has
+  no suffix match and points at `'%lamp%'`, a `%` in the middle of a pattern has none, `_`
+  isn't a single-character wildcard, `ILIKE` has no case-insensitive match, and `LIKE` on a
+  number or a boolean compares rather than matches. A phrase needs a text index built with
+  `phrase_matching`, which the driver checks first, because Qdrant answers a phrase match
+  against an index without it with no points rather than an error — a correct statement would
+  otherwise read as a phrase nothing holds; the error names
+  `CREATE INDEX … USING text WITH (phrase_matching = true)`, which the driver writes too.
+  `LIKE` is read as an operator only after a column, so a payload field may still be called
+  `like`. ([#34])
 - Changing vectors with `UPDATE`, so a vector is no longer write-once:
   `UPDATE docs SET dense = '[0.1, 0.2]' WHERE _id = 7` writes one and
   `SET dense = NULL` deletes it, in the same batch call as any payload change set beside them.
@@ -275,4 +294,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#30]: https://github.com/runax-software/runax-qdrant-jdbc/pull/30
 [#31]: https://github.com/runax-software/runax-qdrant-jdbc/pull/31
 [#33]: https://github.com/runax-software/runax-qdrant-jdbc/pull/33
+[#34]: https://github.com/runax-software/runax-qdrant-jdbc/pull/34
 [#35]: https://github.com/runax-software/runax-qdrant-jdbc/pull/35

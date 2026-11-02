@@ -64,6 +64,20 @@ public final class TokenStream {
     }
 
     /**
+     * Reads the next token when it's this word, whatever its case, as {@link #matchKeyword}
+     * reads a keyword.
+     */
+    public boolean matchWord(String word) {
+        if (peekWord(word)) {
+            advance();
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * Whether the token after the next one is this word, whatever its case.
      */
     public boolean peekWordAfterNext(String word) {

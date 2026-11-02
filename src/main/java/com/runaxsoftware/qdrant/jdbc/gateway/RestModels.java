@@ -24,9 +24,17 @@ final class RestModels {
         }
 
         Map<String, PayloadIndexType> indexes = new LinkedHashMap<>();
+        Set<String> phraseFields = new LinkedHashSet<>();
+
         for (Map.Entry<String, JsonNode> index : info.path("payload_schema").properties()) {
             indexes.put(index.getKey(), PayloadIndexType.fromQdrant(index.getValue().path("data_type")
                 .asText("")));
+
+            // A text index matches phrases only when it was built to, and Qdrant reports that
+            // with the index rather than failing a phrase match that asks for it
+            if (index.getValue().path("params").path("phrase_matching").asBoolean(false)) {
+                phraseFields.add(index.getKey());
+            }
         }
 
         // Metadata holds any JSON; the driver keeps the text entries, which is what it writes
@@ -37,7 +45,7 @@ final class RestModels {
 
         return new QdrantCollection(name, info.path("points_count").asLong(0),
             List.copyOf(vectors), Collections.unmodifiableMap(indexes),
-            Collections.unmodifiableMap(metadata));
+            Collections.unmodifiableMap(metadata), Set.copyOf(phraseFields));
     }
 
     static List<QdrantAlias> aliases(JsonNode result) {

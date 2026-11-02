@@ -16,8 +16,16 @@ measured REST and SQL coverage is in [docs/coverage.md](docs/coverage.md).
 - [x] **SELECT** — `WHERE` mapped to Qdrant filters, `LIMIT`, and result sets that page
   through Qdrant's scroll cursor instead of loading everything. Vectors are fetched only
   when a query names their column. `WHERE` takes comparisons, `IN`, `IS NULL`, `AND`, `OR`
-  and `NOT`; `LIKE`, `BETWEEN`, and the filter functions in the dialect spec (full text,
-  geo, nested arrays) come later.
+  and `NOT`; `BETWEEN` and the geo and nested-array functions in the dialect spec come later.
+- [x] **`LIKE` and full-text matching** — `name LIKE 'Desk%'` as Qdrant's `prefix` match and
+  `name LIKE '%desk%'` as its `substring` match, both case-sensitive, with `NOT LIKE`
+  following SQL's rule that a missing field matches neither; and
+  `text_match(title, 'refund policy')`, `text_any(…)` and `phrase_match(…)` as `text`,
+  `text_any` and `phrase`, which reach a text index and run without one too. A pattern Qdrant
+  can't match — a suffix, a `%` in the middle, `_`, `ILIKE` — is an error naming what to write
+  instead. A phrase needs an index built with `phrase_matching`, which the driver checks first
+  because Qdrant answers one without it with no points rather than an error. `at_least`, the
+  geo functions, and the array functions come later.
 - [x] **COUNT(\*)** through the count API — `SELECT COUNT(*) FROM docs` is one exact count call
   and one `BIGINT` row, without reading a single point or column. Still to come: counting the
   points a `WHERE` matches, by sending the filter above to the count, and a count per group
