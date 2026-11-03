@@ -342,7 +342,20 @@ leaves a field or a vector out. A vector is written out (`[0.1, 0.2]`), given as
 tool sends a cell (`'[[0.1, 0.2]]'` for a multivector, `'{"indices": […], "values": […]}'`
 for a sparse vector), or made with `embed('text' [, 'provider:model'])`: Qdrant embeds a
 `qdrant:` model as it stores the point, and the driver embeds any other before it sends the
-point. `ON CONFLICT` and generating IDs other than UUIDs are still the target.
+point.
+
+`ON CONFLICT [(_id)] DO NOTHING` and `ON CONFLICT [(_id)] DO UPDATE [WHERE …]` say what to do
+with a row whose ID the collection already has, and map onto Qdrant's upsert modes. Without the
+clause a taken ID is `23505`, found by the ID lookup above. `DO NOTHING` is the `insert_only`
+mode on its own: Qdrant skips a point that's there and reports nothing, so no lookup is made and
+no error raised. `DO UPDATE` is the `upsert` mode, which replaces the point with the row — the
+whole point, so a column the statement doesn't name is gone rather than kept, and so `DO UPDATE`
+takes no `SET` list; the error says as much. A `WHERE` after `DO UPDATE` becomes Qdrant's
+`update_filter`, which it applies only to the points already there: those that match are
+replaced, those that don't keep their state, and a row whose ID is new is inserted whatever the
+condition says. That is what the clause means in PostgreSQL too, and it makes a conditional
+refresh one statement. The conflict target is optional and may only be `_id`, since a Qdrant
+point has one key. Generating IDs other than UUIDs is still the target.
 
 `UPDATE docs SET … WHERE …` runs too, as one call to the batch update API: fields are set
 together, a field inside an object (`"specs.color"`, or `specs.color` without quotes) is set
@@ -372,8 +385,9 @@ a collection's only vector; that is why `_vector IS NULL` is a question worth as
 | SQL | Qdrant |
 | --- | --- |
 | `INSERT INTO docs (_id, dense, lang) VALUES (…)` | Upsert in `insert_only` mode |
-| `INSERT … ON CONFLICT (_id) DO UPDATE …` | Upsert (`upsert` mode) |
-| `… ON CONFLICT (_id) DO UPDATE … WHERE version < 3` | Upsert with `update_filter`: conditional update |
+| `INSERT … ON CONFLICT (_id) DO NOTHING` | Upsert (`insert_only` mode), with no ID lookup (runs) |
+| `INSERT … ON CONFLICT (_id) DO UPDATE` | Upsert (`upsert` mode) (runs) |
+| `… ON CONFLICT (_id) DO UPDATE WHERE version < 3` | Upsert with `update_filter`: conditional update (runs) |
 | `INSERT` without `_id` | The driver generates a UUID, returned by `getGeneratedKeys` |
 | `INSERT … VALUES (…, embed('text'), …)` | Vectors embedded by the driver or by Qdrant |
 | `UPDATE docs SET lang = 'de' WHERE …` | `set_payload` by filter |

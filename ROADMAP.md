@@ -100,7 +100,14 @@ measured REST and SQL coverage is in [docs/coverage.md](docs/coverage.md).
 - [x] **INSERT** — `INSERT INTO docs (_id, lang, dense) VALUES (…), (…)` as one upsert that
   skips points already there: an ID that's taken is an error, as a primary key's is, and a row
   without one gets a UUID, which `getGeneratedKeys` returns. Vectors are written out, given as
-  JSON text, or embedded with `embed()`. `INSERT … ON CONFLICT` comes later.
+  JSON text, or embedded with `embed()`.
+- [x] **`INSERT … ON CONFLICT`** — what to do with a row whose ID is taken, as Qdrant's upsert
+  modes: `ON CONFLICT [(_id)] DO NOTHING` is `insert_only`, which skips a point that's there and
+  needs no ID lookup, and `DO UPDATE` is `upsert`, which replaces it. `DO UPDATE … WHERE
+  price < 100` sends the condition as Qdrant's `update_filter`, so only the points already there
+  that match are replaced while new ones are inserted regardless — PostgreSQL's own meaning for
+  that clause. `DO UPDATE` takes no `SET` list, since Qdrant replaces a whole point. Batching the
+  provider calls a driver-side `embed()` makes comes later.
 - [x] **DELETE** mapped to deleting points: `DELETE FROM docs WHERE …` through the same
   filters as `SELECT`, `TRUNCATE TABLE docs` for every point, and `DROP TABLE [IF EXISTS] docs`
   for the collection itself. A `DELETE` without `WHERE` is an error that points to `TRUNCATE`.

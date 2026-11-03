@@ -3,6 +3,7 @@ package com.runaxsoftware.qdrant.jdbc.sql.parser;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.And;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Column;
@@ -32,6 +33,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropIndexStatement
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropTableStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropViewStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.InsertStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.OnConflict;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.TruncateStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.UpdateStatement;
@@ -588,6 +590,91 @@ class ParserTest {
     }
 
     @Test
+    void readsAnInsertWithNoOnConflictAsOneThatFailsOnATakenId() throws SQLSyntaxErrorException {
+        assertEquals(OnConflict.FAIL, insert("INSERT INTO docs (lang) VALUES ('en')").onConflict());
+    }
+
+    @Test
+    void parsesOnConflictDoNothingAndDoUpdate() throws SQLSyntaxErrorException {
+        assertEquals(new OnConflict(OnConflict.Action.NOTHING, null),
+                insert("INSERT INTO docs (lang) VALUES ('en') ON CONFLICT (_id) DO NOTHING")
+                        .onConflict());
+        assertEquals(new OnConflict(OnConflict.Action.UPDATE, null),
+                insert("INSERT INTO docs (lang) VALUES ('en') ON CONFLICT (_id) DO UPDATE")
+                        .onConflict());
+    }
+
+    /**
+     * The conflict target is optional, since a Qdrant point has only one key to collide on.
+     */
+    @Test
+    void parsesOnConflictWithoutATarget() throws SQLSyntaxErrorException {
+        assertEquals(new OnConflict(OnConflict.Action.NOTHING, null),
+                insert("INSERT INTO docs (lang) VALUES ('en') ON CONFLICT DO NOTHING").onConflict());
+    }
+
+    @Test
+    void parsesTheConditionThatGuardsADoUpdate() throws SQLSyntaxErrorException {
+        assertEquals(new OnConflict(OnConflict.Action.UPDATE,
+                        new Comparison(Column.of("year"), "<", new Literal(3L))),
+                insert("INSERT INTO docs (lang) VALUES ('en') "
+                        + "ON CONFLICT (_id) DO UPDATE WHERE year < 3").onConflict());
+    }
+
+    @Test
+    void readsOnConflictInAnyCase() throws SQLSyntaxErrorException {
+        assertEquals(new OnConflict(OnConflict.Action.NOTHING, null),
+                insert("insert into docs (lang) values ('en') on conflict (_id) do nothing")
+                        .onConflict());
+    }
+
+    /**
+     * None of ON, CONFLICT, DO and NOTHING is a keyword, so each stays usable as a column name.
+     */
+    @Test
+    void keepsTheWordsOfOnConflictUsableAsNames() throws SQLSyntaxErrorException {
+        assertEquals(List.of(Column.of("on"), Column.of("conflict"), Column.of("do"),
+                        Column.of("nothing")),
+                insert("INSERT INTO docs (on, conflict, do, nothing) VALUES (1, 2, 3, 4)")
+                        .columns());
+    }
+
+    @Test
+    void rejectsOnConflictItDoesntRead() {
+        assertError("Expected CONFLICT after ON, as ON CONFLICT (_id) DO NOTHING, found 'DO' "
+                        + "at line 1, column 42",
+                "INSERT INTO docs (lang) VALUES ('en') ON DO NOTHING");
+        assertError("Expected DO after ON CONFLICT, as ON CONFLICT (_id) DO NOTHING, found the "
+                        + "end of the statement at line 1, column 56",
+                "INSERT INTO docs (lang) VALUES ('en') ON CONFLICT (_id)");
+        assertError("Expected NOTHING or UPDATE after DO, found 'SET' at line 1, column 60",
+                "INSERT INTO docs (lang) VALUES ('en') ON CONFLICT (_id) DO SET lang = 'de'");
+    }
+
+    /**
+     * Qdrant replaces a whole point, so there's no column list a DO UPDATE could set.
+     */
+    @Test
+    void rejectsDoUpdateWithASetList() {
+        SQLSyntaxErrorException error = assertThrows(SQLSyntaxErrorException.class,
+                () -> Parser.parse("INSERT INTO docs (lang) VALUES ('en') "
+                        + "ON CONFLICT (_id) DO UPDATE SET lang = 'de'"));
+
+        assertEquals("0A000", error.getSQLState());
+        assertTrue(error.getMessage().contains("replaces the whole point"), error.getMessage());
+    }
+
+    @Test
+    void rejectsAConflictTargetOtherThanTheId() {
+        SQLSyntaxErrorException error = assertThrows(SQLSyntaxErrorException.class,
+                () -> Parser.parse("INSERT INTO docs (lang) VALUES ('en') "
+                        + "ON CONFLICT (lang) DO NOTHING"));
+
+        assertEquals("42000", error.getSQLState());
+        assertTrue(error.getMessage().contains("one key"), error.getMessage());
+    }
+
+    @Test
     void rejectsAnInsertWithoutItsColumns() {
         assertError("Expected the columns in brackets, as INSERT INTO docs (_id, lang) VALUES (...), "
             + "found 'VALUES' at line 1, column 18", "INSERT INTO docs VALUES (1)");
@@ -743,6 +830,10 @@ class ParserTest {
 
     private static SelectStatement select(String sql) throws SQLSyntaxErrorException {
         return (SelectStatement) Parser.parse(sql);
+    }
+
+    private static InsertStatement insert(String sql) throws SQLSyntaxErrorException {
+        return (InsertStatement) Parser.parse(sql);
     }
 
     private static Expression where(String condition) throws SQLSyntaxErrorException {

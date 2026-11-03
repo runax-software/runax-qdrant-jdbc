@@ -5,9 +5,9 @@ and how much SQL it accepts. Both are measured, not estimated — every number b
 the code or from a server that was asked. The point is to make the gaps legible, so a
 maintainer can tell a missing feature that blocks real use from one that nobody would notice.
 
-**Measured against** driver commit `a2d5716` (with `SET`, `UPDATE`, `INSERT`, `OFFSET`, the
-index and view statements and the vector changes, #27, #28, #31, #30, #33 and #35) and this
-branch's `LIKE` and full-text conditions on top, and Qdrant
+**Measured against** driver commit `844d89d` (with `SET`, `UPDATE`, `INSERT`, `OFFSET`, the
+index and view statements, the vector changes and the text conditions, #27, #28, #30, #31, #33,
+#34 and #35) and this branch's `ON CONFLICT` on top, and Qdrant
 **1.20.0** (build
 `222b2e44ab1c3f17e8246396ead6558e45041df7`), running locally over REST on port 6333, with the
 three collections `./gradlew seedQdrant` loads. Qdrant 1.20 does not serve `/openapi.json` —
@@ -80,8 +80,8 @@ shape depends on the Qdrant version.
 | `POST /collections/{c}/points/count` | `count` | `COUNT(*)`, and the row count a `DELETE` or `UPDATE` reports |
 | `POST /collections/{c}/points/delete` | `deletePoints` | `DELETE … WHERE`, `TRUNCATE TABLE` |
 | `POST /collections/{c}/points/batch` | `updatePoints` | `UPDATE`: set, delete, overwrite and clear payload, and write and delete vectors, in one call |
-| `POST /collections/{c}/points` | `existingIds` | `INSERT`: the IDs a statement gives, looked up so a taken one is an error |
-| `PUT /collections/{c}/points` | `insertPoints` | `INSERT`: one upsert in `insert_only` mode |
+| `POST /collections/{c}/points` | `existingIds` | `INSERT`: the IDs a statement gives, looked up so a taken one is an error — not called when `ON CONFLICT` says what to do instead |
+| `PUT /collections/{c}/points` | `insertPoints` | `INSERT`: one upsert, in `insert_only` mode or, for `ON CONFLICT … DO UPDATE`, in `upsert` mode with an `update_filter` |
 | `POST /collections/{c}/facet` | `facet` | `GROUP BY … COUNT(*)` |
 | `GET /aliases` | `listAliases` | Aliases as views, `system.aliases`, and the checks before each view statement |
 | `GET /collections/{c}/aliases` | `collectionAliases` | The alias names whose kept columns an index change or a `DROP TABLE` makes wrong |
@@ -175,11 +175,12 @@ A word that means something in one place only need not be a keyword, though: rea
 appear, an identifier does the job and stays usable as a name. Many are: the type names a
 `CREATE TABLE` uses (`VECTOR`, `KEYWORD`, `DISTANCE`, `MODIFIER`); `INDEX`, `ON`, `USING` and
 `WITH` in the index statements; `VIEW`, `REPLACE`, `RENAME` and `TO` in the view statements;
-`RESET`, `SHOW`, `ALL` and `DEFAULT` in the option statements; and `LIKE`, read as an operator
-after a column, which is the one place it can go. So `LIKE` runs without the lexer growing a
-keyword, and a payload field may still be called `like`. The full-text conditions need even
-less — they're function names. This is why the keyword count above has stopped predicting how
-much SQL runs.
+`RESET`, `SHOW`, `ALL` and `DEFAULT` in the option statements; `ON`, `CONFLICT`, `DO` and
+`NOTHING` in an `INSERT`'s conflict clause; and `LIKE`, read as an operator after a column,
+which is the one place it can go. So `LIKE` runs without the lexer growing a keyword, a payload
+field may still be called `like`, and `ON CONFLICT … DO NOTHING` cost the lexer nothing either.
+The full-text conditions need even less — they're function names. This is why the keyword count
+above has stopped predicting how much SQL runs.
 
 ### Statements
 
@@ -193,10 +194,11 @@ much SQL runs.
 | `TRUNCATE TABLE` | works | Deletes every point; the collection and its indexes stay |
 | `DROP TABLE [IF EXISTS]` | works | |
 | `CREATE TABLE [IF NOT EXISTS]` | partial | Vector and indexed payload columns; no `WITH (…)` |
-| `INSERT INTO … (columns) VALUES …` | works | One `insert_only` upsert; the column list is required; a taken ID is `23505`; a row without `_id` gets a UUID, from `getGeneratedKeys` |
+| `INSERT INTO … (columns) VALUES …` | works | One upsert; the column list is required; a taken ID is `23505`; a row without `_id` gets a UUID, from `getGeneratedKeys` |
+| `INSERT … ON CONFLICT (_id) DO NOTHING` | works | `insert_only`, and no ID lookup: Qdrant skips a point that's there |
+| `INSERT … ON CONFLICT (_id) DO UPDATE [WHERE …]` | works | `upsert` mode, the `WHERE` as `update_filter`; replaces the whole point, so it takes no `SET` list |
 | `UPDATE … SET … WHERE` | partial | Payload and vectors, in one batch; `WHERE` is required; `SET _id` is an error. Writing a vector reads the matching IDs first, so it's capped at 10,000 points |
 | `SET qdrant.<option>`, `RESET`, `SHOW` | works | Seven request options, kept for the connection; other databases' settings are errors |
-| `INSERT … ON CONFLICT` | missing | `ON` isn't a keyword, so it fails at the end of `VALUES` |
 | `CREATE INDEX`, `DROP INDEX` | works | One field; the type defaults to the column's; each type's `WITH` options checked; a second index is `42S11`, a missing one `42S12` |
 | `CREATE [OR REPLACE] VIEW` / `ALTER VIEW … RENAME TO` / `DROP VIEW` | works | A view is `SELECT *` of one collection; a taken name is `42S01`, a missing view `42S02`; `OR REPLACE` is one atomic switch |
 | `ALTER TABLE` | missing | `ALTER` parses, then `Expected VIEW: ALTER TABLE isn't supported yet` |
@@ -350,7 +352,16 @@ UPDATE sample_products SET name = 'x'
   WHERE _id = 7
 
 INSERT INTO sample_products (_id, name) VALUES (1, 'dup')
-  Point 1 is already in sample_products: INSERT adds new points, and UPDATE changes one
+  Point 1 is already in sample_products: INSERT adds new points, and UPDATE changes one. Add
+  ON CONFLICT (_id) DO NOTHING to skip the points that are there, or DO UPDATE to replace them
+
+INSERT INTO sample_products (_id, name) VALUES (1, 'x') ON CONFLICT (name) DO NOTHING
+  ON CONFLICT takes _id, and 'name' isn't it: a Qdrant point has one key, its ID, so that's
+  the only column two points can collide on
+
+INSERT INTO sample_products (_id, name) VALUES (1, 'x') ON CONFLICT (_id) DO UPDATE SET name = 'x'
+  DO UPDATE takes no SET: Qdrant replaces the whole point with the row the statement gives, so
+  write ON CONFLICT (_id) DO UPDATE and give every column the point should have
 
 SET search_path = public
   'search_path' isn't an option this driver has: it has qdrant.consistency, qdrant.ordering,
@@ -406,14 +417,17 @@ message is good, the state is not set.
 ## Gaps that matter, ranked
 
 The gaps that led this list when it was first measured — no `INSERT`, no `UPDATE`, no
-`OFFSET`, no way to manage an index, vectors that could be written once and never changed, and
-no way to match text — are closed: the driver can create a collection, fill it, index it, save a
-grid's edits, page through it, switch an alias, re-embed it, match a pattern or a phrase in it,
-and delete from it. What remains, most important first:
+`OFFSET`, no way to manage an index, vectors that could be written once and never changed, no
+way to match text, and an `INSERT` that could only insert — are closed: the driver can create a
+collection, fill it, index it, save a grid's edits, page through it, switch an alias, re-embed
+it, match a pattern or a phrase in it, upsert into it, and delete from it. What remains, most
+important first:
 
-1. **`INSERT` only inserts.** `INSERT … ON CONFLICT (_id) DO UPDATE`, Qdrant's own upsert, has
-   no SQL yet, so loading a batch that may repeat IDs means splitting it into `INSERT`s and
-   `UPDATE`s. Rows the driver embeds are also embedded one provider call at a time.
+1. **A row the driver embeds costs a provider call of its own.** `INSERT` with `embed('text')`
+   calls the provider once per row, so loading a thousand rows is a thousand round trips. The
+   providers take a batch of texts in one request and the embedder interface doesn't, which is
+   the change that would fix it. Qdrant-side `embed()` is already one call, since the text
+   travels with the point.
 2. **Writing a vector costs a read.** Qdrant's `update_vectors` takes point IDs and rejects a
    filter alone, so `UPDATE … SET dense = …` scrolls the matching IDs first and is capped at
    10,000 points. Re-embedding a collection larger than that still means splitting the statement

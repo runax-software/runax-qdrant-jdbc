@@ -293,14 +293,24 @@ public class QdrantGateway implements AutoCloseable {
     }
 
     /**
-     * Adds points, in one upsert that leaves any point already there as it is.
+     * Adds points, in one upsert.
      *
-     * @param points the points as Qdrant takes them: id, payload, and vector
+     * @param points           the points as Qdrant takes them: id, payload, and vector
+     * @param replaceExisting  whether a point already there is replaced, which is Qdrant's
+     *                         {@code upsert} mode; otherwise {@code insert_only} leaves it as
+     *                         it is
+     * @param updateFilter     which of the points already there may be replaced, or
+     *                         {@code null} for all of them. Qdrant applies it only to those:
+     *                         a point the collection hasn't got is inserted whatever it says
      */
-    public void insertPoints(String collection, List<JsonNode> points) throws SQLException {
-        ObjectNode body = JSON.createObjectNode().put("update_mode", "insert_only");
+    public void insertPoints(String collection, List<JsonNode> points, boolean replaceExisting,
+                             JsonNode updateFilter) throws SQLException {
+        ObjectNode body = JSON.createObjectNode()
+            .put("update_mode", replaceExisting ? "upsert" : "insert_only");
         ArrayNode list = body.putArray("points");
         points.forEach(list::add);
+
+        if (updateFilter != null) body.set("update_filter", updateFilter);
 
         request(HttpMethod.PUT,
             "/collections/" + segment(collection) + "/points" + writeParameters(), body);

@@ -314,30 +314,41 @@ public final class Executor {
     }
 
     /**
-     * Adds the plan's points and returns their IDs. A point ID an INSERT gives mustn't be taken,
-     * as a primary key mustn't: Qdrant's upsert would replace that point, so the IDs are looked
-     * up first, and the upsert skips any point that arrives in between.
+     * Adds the plan's points and returns their IDs.
+     *
+     * <p>Without an ON CONFLICT clause a point ID the statement gives mustn't be taken, as a
+     * primary key mustn't: Qdrant's upsert would replace that point, so the IDs are looked up
+     * first and the {@code insert_only} mode skips any point that arrives between the lookup and
+     * the write. With one, no lookup is needed — {@code DO NOTHING} is what {@code insert_only}
+     * already does to a point that's there, and {@code DO UPDATE} is Qdrant's {@code upsert}.
+     *
+     * <p>The IDs returned are the ones the statement gave or the driver made, whether or not
+     * Qdrant went on to write each point: a {@code DO NOTHING} that skipped one doesn't say so.
      */
     private List<String> insert(InsertPointsPlan plan) throws SQLException {
-        List<JsonNode> given = plan.points().stream()
-            .filter(NewPoint::idGiven)
-            .map(NewPoint::id)
-            .toList();
+        if (plan.onConflict().checksIds()) {
+            List<JsonNode> given = plan.points().stream()
+                .filter(NewPoint::idGiven)
+                .map(NewPoint::id)
+                .toList();
 
-        if (!given.isEmpty()) {
-            List<JsonNode> taken = writer.existingIds(plan.collection(), given);
+            if (!given.isEmpty()) {
+                List<JsonNode> taken = writer.existingIds(plan.collection(), given);
 
-            if (!taken.isEmpty()) {
-                throw new SQLException("Point " + taken.get(0) + " is already in "
-                    + plan.collection() + ": INSERT adds new points, and UPDATE changes one",
-                    "23505");
+                if (!taken.isEmpty()) {
+                    throw new SQLException("Point " + taken.get(0) + " is already in "
+                        + plan.collection() + ": INSERT adds new points, and UPDATE changes one. "
+                        + "Add ON CONFLICT (_id) DO NOTHING to skip the points that are there, "
+                        + "or DO UPDATE to replace them", "23505");
+                }
             }
         }
 
         var points = new ArrayList<JsonNode>(plan.points().size());
         for (NewPoint point : plan.points()) points.add(point(point, plan.collection()));
 
-        writer.insertPoints(plan.collection(), points);
+        writer.insertPoints(plan.collection(), points, plan.onConflict().replaces(),
+            plan.updateFilter());
 
         return plan.points().stream().map(x -> x.id().asText()).toList();
     }
@@ -694,9 +705,10 @@ public final class Executor {
             }
 
             @Override
-            public void insertPoints(String collection, List<JsonNode> points)
+            public void insertPoints(String collection, List<JsonNode> points,
+                                     boolean replaceExisting, JsonNode updateFilter)
                 throws SQLException {
-                gateway.insertPoints(collection, points);
+                gateway.insertPoints(collection, points, replaceExisting, updateFilter);
             }
 
             @Override

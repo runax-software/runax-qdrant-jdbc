@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadIndexType;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConflictAction;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateIndexPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateViewPlan;
@@ -80,8 +81,11 @@ class WriteExecutorTest {
             }
 
             @Override
-            public void insertPoints(String collection, List<JsonNode> points) {
-                calls.add("insert " + collection + " " + points);
+            public void insertPoints(String collection, List<JsonNode> points,
+                                     boolean replaceExisting, JsonNode updateFilter) {
+                calls.add("insert " + collection + " " + points
+                    + (replaceExisting ? " replacing" : " skipping")
+                    + (updateFilter == null ? "" : " where " + updateFilter));
             }
 
             @Override
@@ -309,8 +313,43 @@ class WriteExecutorTest {
         assertEquals(List.of("existing docs [7]",
             "insert docs [{\"id\":7,\"payload\":{\"lang\":\"en\"},\"vector\":{\"dense\":[0.1,0.2]}}, "
                 + "{\"id\":\"5c56c793-69f3-4fbf-87e6-c4bf54c28c26\",\"payload\":{\"lang\":\"en\"},"
-                + "\"vector\":{\"dense\":[0.1,0.2]}}]"), calls,
+                + "\"vector\":{\"dense\":[0.1,0.2]}}] skipping"), calls,
             "only the IDs the statement gave are looked up");
+    }
+
+    /**
+     * DO NOTHING is what Qdrant's insert_only mode already does to a point that's there, so the
+     * IDs need no looking up: one call instead of two, and no 23505.
+     */
+    @Test
+    void skipsTheIdLookupOnDoNothingEvenWhenAnIdIsTaken() throws SQLException {
+        taken.add(Json.node(7));
+
+        ExecutionResult result = executor.execute(new InsertPointsPlan("docs",
+            List.of(point(Json.node(7), true)), ConflictAction.NOTHING, null), statement());
+
+        assertEquals(List.of("7"), result.keys());
+        assertEquals(1, calls.size(), "no lookup: " + calls);
+        assertTrue(calls.get(0).endsWith(" skipping"), calls.get(0));
+    }
+
+    @Test
+    void replacesAPointThatIsThereOnDoUpdate() throws SQLException {
+        taken.add(Json.node(7));
+
+        executor.execute(new InsertPointsPlan("docs", List.of(point(Json.node(7), true)),
+            ConflictAction.UPDATE, null), statement());
+
+        assertEquals(1, calls.size(), "no lookup: " + calls);
+        assertTrue(calls.get(0).endsWith(" replacing"), calls.get(0));
+    }
+
+    @Test
+    void sendsTheFilterThatGuardsADoUpdate() throws SQLException {
+        executor.execute(new InsertPointsPlan("docs", List.of(point(Json.node(7), true)),
+            ConflictAction.UPDATE, FILTER), statement());
+
+        assertTrue(calls.get(0).endsWith(" replacing where " + FILTER), calls.get(0));
     }
 
     @Test
@@ -321,7 +360,9 @@ class WriteExecutorTest {
             new InsertPointsPlan("docs", List.of(point(Json.node(7), true))), statement()));
 
         assertEquals("23505", error.getSQLState());
-        assertEquals("Point 7 is already in docs: INSERT adds new points, and UPDATE changes one",
+        assertEquals("Point 7 is already in docs: INSERT adds new points, and UPDATE changes one. "
+                + "Add ON CONFLICT (_id) DO NOTHING to skip the points that are there, or DO "
+                + "UPDATE to replace them",
             error.getMessage());
         assertEquals(List.of("existing docs [7]"), calls);
     }
@@ -331,7 +372,7 @@ class WriteExecutorTest {
         executor.execute(new InsertPointsPlan("docs", List.of(new NewPoint(Json.node(1), false,
             Json.object(), Map.of("", Json.array(1, 0)), Map.of()))), statement());
 
-        assertEquals(List.of("insert docs [{\"id\":1,\"payload\":{},\"vector\":[1,0]}]"), calls);
+        assertEquals(List.of("insert docs [{\"id\":1,\"payload\":{},\"vector\":[1,0]}] skipping"), calls);
     }
 
     // CREATE TABLE
