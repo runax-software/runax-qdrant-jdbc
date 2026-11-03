@@ -17,6 +17,7 @@ import com.runaxsoftware.qdrant.jdbc.resultset.ListResultSet;
 import com.runaxsoftware.qdrant.jdbc.resultset.ResultColumn;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnType;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.Planner;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConstantPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CountPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateCollectionPlan;
@@ -385,11 +386,109 @@ public final class Executor {
     private long update(UpdatePointsPlan plan) throws SQLException {
         long count = writer.count(plan.collection(), plan.filter());
 
-        if (count > 0) {
-            writer.updatePoints(plan.collection(), plan.operations());
+        if (count == 0) {
+            return 0;
         }
 
+        var operations = new ArrayList<>(plan.operations());
+
+        if (plan.writesVectors()) {
+            operations.add(vectorWrite(plan));
+        }
+        if (!plan.cleared().isEmpty()) {
+            operations.add(vectorDelete(plan));
+        }
+
+        writer.updatePoints(plan.collection(), operations);
+
         return count;
+    }
+
+    /**
+     * Writing a vector, as Qdrant's {@code update_vectors}. That operation takes point IDs and
+     * rejects a filter alone, so the matching IDs are read first — the one write the driver
+     * pays a read for, which is why it's capped like a deep OFFSET. The filter goes along as
+     * the operation's {@code update_filter}, so a point that stops matching between the read
+     * and the write is left alone rather than written to on the strength of a stale ID.
+     */
+    private JsonNode vectorWrite(UpdatePointsPlan plan) throws SQLException {
+        List<JsonNode> ids = writer.matchingIds(plan.collection(), plan.filter(),
+            (int) Planner.MAX_OFFSET);
+
+        if (ids.size() > Planner.MAX_OFFSET) {
+            throw new SQLFeatureNotSupportedException("Writing a vector to more than "
+                + Planner.MAX_OFFSET + " points of " + plan.collection() + " isn't supported: "
+                + "Qdrant writes vectors to the points an UPDATE names, so the driver reads the "
+                + "matching IDs first and that read is capped. Narrow the WHERE, or re-insert "
+                + "the points instead");
+        }
+
+        Map<String, JsonNode> vectors = embedded(plan, plan.collection());
+        ArrayNode points = JSON.arrayNode();
+
+        for (JsonNode id : ids) {
+            ObjectNode point = JSON.objectNode();
+            point.set("id", id);
+
+            // Named vectors go under their names; the unnamed one is the vector itself
+            if (vectors.containsKey("")) {
+                point.set("vector", vectors.get(""));
+            } else {
+                ObjectNode named = point.putObject("vector");
+                vectors.forEach(named::set);
+            }
+
+            points.add(point);
+        }
+
+        ObjectNode change = JSON.objectNode();
+        change.set("points", points);
+        change.set("update_filter", plan.filter());
+
+        return JSON.objectNode().set("update_vectors", change);
+    }
+
+    /**
+     * Deleting a vector, as Qdrant's {@code delete_vectors}, which takes the filter as it is:
+     * no IDs to read, so no cap.
+     */
+    private static JsonNode vectorDelete(UpdatePointsPlan plan) {
+        ArrayNode names = JSON.arrayNode();
+        plan.cleared().forEach(names::add);
+
+        ObjectNode change = JSON.objectNode();
+        change.set("filter", plan.filter());
+        change.set("vector", names);
+
+        return JSON.objectNode().set("delete_vectors", change);
+    }
+
+    /**
+     * The vectors to write, with the ones the driver embeds made now. The text goes to the
+     * provider once for the whole statement, not once per point: an UPDATE writes the same
+     * vector to every point its WHERE matches.
+     */
+    private Map<String, JsonNode> embedded(UpdatePointsPlan plan, String collection)
+        throws SQLException {
+        Map<String, JsonNode> vectors = new LinkedHashMap<>(plan.vectors());
+
+        for (Map.Entry<String, EmbedText> embed : plan.embeds().entrySet()) {
+            EmbedText text = embed.getValue();
+            List<Double> vector = embedders.embedder(text.model().provider())
+                .embed(text.model().name(), text.text());
+
+            if (vector.size() != text.dimensions()) {
+                throw new SQLException(text.model() + " made a vector of " + vector.size()
+                    + " dimensions, and '" + embed.getKey() + "' of " + collection + " has "
+                    + text.dimensions(), "42000");
+            }
+
+            ArrayNode values = JSON.arrayNode();
+            vector.forEach(values::add);
+            vectors.put(embed.getKey(), values);
+        }
+
+        return vectors;
     }
 
     private void drop(DropCollectionPlan plan) throws SQLException {
@@ -604,6 +703,12 @@ public final class Executor {
             public void updatePoints(String collection, List<JsonNode> operations)
                 throws SQLException {
                 gateway.updatePoints(collection, operations);
+            }
+
+            @Override
+            public List<JsonNode> matchingIds(String collection, JsonNode filter, int limit)
+                throws SQLException {
+                return gateway.matchingIds(collection, filter, limit);
             }
 
             @Override

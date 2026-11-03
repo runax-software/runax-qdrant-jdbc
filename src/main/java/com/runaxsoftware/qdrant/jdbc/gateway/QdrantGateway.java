@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetHit;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetRequest;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.Point;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantCollection;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QueryRequest;
@@ -38,6 +39,12 @@ public class QdrantGateway implements AutoCloseable {
     public static final int DEFAULT_PORT = 6333;
 
     private static final int MAX_ERROR_LENGTH = 500;
+
+    /**
+     * Points per request when reading the IDs a filter matches. They carry no payload and no
+     * vectors, so a page of them is small whatever the collection holds.
+     */
+    private static final int SCROLL_PAGE = 1000;
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private final HttpClient http;
@@ -154,6 +161,33 @@ public class QdrantGateway implements AutoCloseable {
         return RestModels.scrollPage(
             request(HttpMethod.POST, "/collections/" + segment(scroll.collection()) + "/points/scroll"
                 + readParameters(), body));
+    }
+
+    /**
+     * The IDs of the points a filter matches, read with the scroll cursor and nothing else:
+     * no payload and no vectors. Qdrant's {@code update_vectors} takes point IDs and rejects a
+     * filter alone, so an {@code UPDATE} that writes a vector reads the IDs it's going to write
+     * to first.
+     *
+     * @param limit the most IDs to read; reading stops once more than this many exist, so the
+     *              caller can tell a capped read from a complete one by the size it gets back
+     * @return the matching IDs, in Qdrant's own order, at most {@code limit + 1} of them
+     */
+    public List<JsonNode> matchingIds(String collection, JsonNode filter, int limit)
+        throws SQLException {
+        var ids = new ArrayList<JsonNode>();
+        JsonNode offset = null;
+
+        do {
+            int page = Math.min(SCROLL_PAGE, limit + 1 - ids.size());
+            ScrollPage answered = scroll(
+                new ScrollRequest(collection, page, offset, false, false, filter));
+
+            for (Point point : answered.points()) ids.add(point.id());
+            offset = answered.nextPageOffset();
+        } while (offset != null && ids.size() <= limit);
+
+        return ids;
     }
 
     /**

@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Changing vectors with `UPDATE`, so a vector is no longer write-once:
+  `UPDATE docs SET dense = '[0.1, 0.2]' WHERE _id = 7` writes one and
+  `SET dense = NULL` deletes it, in the same batch call as any payload change set beside them.
+  The value is a vector written out, JSON text as a tool sends a cell (`'[[…], […]]'` for a
+  multivector, `'{"indices": […], "values": […]}'` for a sparse one), or `embed('text')`, with
+  the dimensions and shape checked against the collection before anything is sent. Editing a
+  vector cell in a grid now saves like every other cell, and re-embedding a collection after a
+  model change is one statement instead of deleting and re-inserting its points.
+
+  The two halves reach Qdrant differently because Qdrant does. `delete_vectors` takes the filter
+  as it is. `update_vectors` takes a list of point IDs and rejects a filter alone, so a write
+  scrolls the IDs the `WHERE` matches first and sends that filter along as the operation's
+  `update_filter`, which leaves alone any point that stopped matching in between rather than
+  writing to it on the strength of a stale ID. Because that read is one the statement pays for
+  and doesn't return, it's capped at 10,000 points — the same cap a driver-side `OFFSET` has —
+  and past it the statement is an error suggesting a narrower `WHERE`. Neither of Qdrant's two
+  standalone vector routes is called: `points/batch` does both jobs in one request, as it
+  already does for the four payload routes. ([#35])
+- `_vector IS NULL` and `IS NOT NULL` on a collection's unnamed vector, which used to be an
+  error on the grounds that every point has one. Deleting a vector makes that false — Qdrant
+  allows a point to lose even its only vector, keeping its payload — so the question is now
+  answered with `has_vector` the way it already was for named vectors. ([#35])
+- `embed('text')` as an `UPDATE` value, for the vector columns. The text goes to the provider
+  once for the whole statement rather than once per point, since an `UPDATE` writes the same
+  vector to every point its `WHERE` matches. ([#35])
 - Payload indexes from SQL: `CREATE INDEX [IF NOT EXISTS] ON docs (lang) [USING type]
   [WITH (option = value, …)]` and `DROP INDEX [IF EXISTS] lang_idx ON docs`, or `ON docs
   (lang)`. The type defaults to the column's; each type's options are checked, since Qdrant
@@ -250,3 +275,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#30]: https://github.com/runax-software/runax-qdrant-jdbc/pull/30
 [#31]: https://github.com/runax-software/runax-qdrant-jdbc/pull/31
 [#33]: https://github.com/runax-software/runax-qdrant-jdbc/pull/33
+[#35]: https://github.com/runax-software/runax-qdrant-jdbc/pull/35

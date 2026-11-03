@@ -3,6 +3,7 @@ package com.runaxsoftware.qdrant.jdbc.sql.executor;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadIndexType;
@@ -24,6 +25,7 @@ import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Proxy;
 import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
@@ -41,6 +43,7 @@ class WriteExecutorTest {
     private String failingIndex;
     private Map<String, PayloadIndexType> indexes = Map.of();
     private List<QdrantAlias> aliases = List.of();
+    private List<JsonNode> matchingIds = List.of();
 
     private final Executor executor = new Executor(
         request -> {
@@ -84,6 +87,12 @@ class WriteExecutorTest {
             @Override
             public void updatePoints(String collection, List<JsonNode> operations) {
                 calls.add("update " + collection + " " + operations);
+            }
+
+            @Override
+            public List<JsonNode> matchingIds(String collection, JsonNode filter, int limit) {
+                calls.add("ids " + collection + " " + filter + " up to " + limit);
+                return matchingIds;
             }
 
             @Override
@@ -197,6 +206,89 @@ class WriteExecutorTest {
         assertEquals(0, executor.execute(new UpdatePointsPlan("docs", FILTER, List.of()), statement())
             .updateCount());
         assertEquals(List.of("count docs " + FILTER), calls);
+    }
+
+    /**
+     * Qdrant's {@code update_vectors} takes point IDs and rejects a filter alone, so the IDs are
+     * read first and the filter goes along as {@code update_filter}: a point that stops matching
+     * in between is left alone rather than written to on the strength of a stale ID.
+     */
+    @Test
+    void readsTheMatchingIdsBeforeItWritesAVector() throws SQLException {
+        matchingIds = List.of(Json.node(1), Json.node(2));
+
+        ExecutionResult result = executor.execute(new UpdatePointsPlan("docs", FILTER, List.of(),
+            Map.of("dense", Json.array(0.1, 0.2)), Map.of(), List.of()), statement());
+
+        assertEquals(3, result.updateCount());
+        assertEquals(List.of(
+            "count docs " + FILTER,
+            "ids docs " + FILTER + " up to 10000",
+            "update docs [{\"update_vectors\":{\"points\":["
+                + "{\"id\":1,\"vector\":{\"dense\":[0.1,0.2]}},"
+                + "{\"id\":2,\"vector\":{\"dense\":[0.1,0.2]}}],"
+                + "\"update_filter\":" + FILTER + "}}]"), calls);
+    }
+
+    /**
+     * The unnamed vector is the point's vector itself, not an entry under a name.
+     */
+    @Test
+    void writesAnUnnamedVectorAsTheVectorItself() throws SQLException {
+        matchingIds = List.of(Json.node(1));
+
+        executor.execute(new UpdatePointsPlan("docs", FILTER, List.of(),
+            Map.of("", Json.array(0.1, 0.2)), Map.of(), List.of()), statement());
+
+        assertEquals("update docs [{\"update_vectors\":{\"points\":["
+            + "{\"id\":1,\"vector\":[0.1,0.2]}],"
+            + "\"update_filter\":" + FILTER + "}}]", calls.get(2));
+    }
+
+    /**
+     * Clearing a vector needs no IDs: {@code delete_vectors} takes the filter as it is.
+     */
+    @Test
+    void clearsAVectorByFilterWithoutReadingAnyIds() throws SQLException {
+        executor.execute(new UpdatePointsPlan("docs", FILTER, List.of(), Map.of(), Map.of(),
+            List.of("dense")), statement());
+
+        assertEquals(List.of(
+            "count docs " + FILTER,
+            "update docs [{\"delete_vectors\":{\"filter\":" + FILTER
+                + ",\"vector\":[\"dense\"]}}]"), calls);
+    }
+
+    @Test
+    void sendsPayloadAndVectorChangesInOneBatch() throws SQLException {
+        matchingIds = List.of(Json.node(1));
+        List<JsonNode> operations = List.of(Json.object("set_payload",
+            Json.object("payload", Json.object("lang", "de"), "filter", FILTER)));
+
+        executor.execute(new UpdatePointsPlan("docs", FILTER, operations,
+            Map.of("dense", Json.array(0.1, 0.2)), Map.of(), List.of("sparse")), statement());
+
+        String batch = calls.get(calls.size() - 1);
+        assertTrue(batch.contains("set_payload"), batch);
+        assertTrue(batch.contains("update_vectors"), batch);
+        assertTrue(batch.contains("delete_vectors"), batch);
+    }
+
+    /**
+     * The one write the driver pays a read for, so it's capped like a deep OFFSET. The fake
+     * answers one ID more than the cap, which is how a capped read is told from a complete one.
+     */
+    @Test
+    void refusesToWriteAVectorToMorePointsThanItWillReadIdsFor() {
+        matchingIds = new ArrayList<>();
+        for (int i = 0; i <= 10_000; i++) matchingIds.add(Json.node(i));
+
+        SQLException error = assertThrows(SQLFeatureNotSupportedException.class,
+            () -> executor.execute(new UpdatePointsPlan("docs", FILTER, List.of(),
+                Map.of("dense", Json.array(0.1, 0.2)), Map.of(), List.of()), statement()));
+
+        assertTrue(error.getMessage().contains("10000"), error.getMessage());
+        assertEquals(List.of("count docs " + FILTER, "ids docs " + FILTER + " up to 10000"), calls);
     }
 
     // INSERT

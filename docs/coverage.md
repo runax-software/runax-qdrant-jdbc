@@ -5,8 +5,9 @@ and how much SQL it accepts. Both are measured, not estimated — every number b
 the code or from a server that was asked. The point is to make the gaps legible, so a
 maintainer can tell a missing feature that blocks real use from one that nobody would notice.
 
-**Measured against** driver commit `beb4203` (with `SET`, `UPDATE`, `INSERT` and `OFFSET`,
-#27, #28, #31 and #30) and this branch's index and view statements on top, and Qdrant
+**Measured against** driver commit `75b32c3` (with `SET`, `UPDATE`, `INSERT`, `OFFSET` and the
+index and view statements, #27, #28, #31, #30 and #33) and this branch's vector changes on top,
+and Qdrant
 **1.20.0** (build
 `222b2e44ab1c3f17e8246396ead6558e45041df7`), running locally over REST on port 6333, with the
 three collections `./gradlew seedQdrant` loads. Qdrant 1.20 does not serve `/openapi.json` —
@@ -74,11 +75,11 @@ shape depends on the Qdrant version.
 | `DELETE /collections/{c}` | `deleteCollection` | `DROP TABLE`, and the rollback when an index fails |
 | `PUT /collections/{c}/index` | `createIndex` | `CREATE INDEX`, and the `… KEYWORD INDEX` columns of a `CREATE TABLE` |
 | `DELETE /collections/{c}/index/{field}` | `deleteIndex` | `DROP INDEX` |
-| `POST /collections/{c}/points/scroll` | `scroll` | `SELECT`, paged by cursor, and the sample that infers columns |
+| `POST /collections/{c}/points/scroll` | `scroll`, `matchingIds` | `SELECT`, paged by cursor, the sample that infers columns, and the IDs an `UPDATE` of a vector writes to |
 | `POST /collections/{c}/points/query` | `query` | `ORDER BY similarity(...) DESC` |
 | `POST /collections/{c}/points/count` | `count` | `COUNT(*)`, and the row count a `DELETE` or `UPDATE` reports |
 | `POST /collections/{c}/points/delete` | `deletePoints` | `DELETE … WHERE`, `TRUNCATE TABLE` |
-| `POST /collections/{c}/points/batch` | `updatePoints` | `UPDATE`: set, delete, overwrite and clear payload in one call |
+| `POST /collections/{c}/points/batch` | `updatePoints` | `UPDATE`: set, delete, overwrite and clear payload, and write and delete vectors, in one call |
 | `POST /collections/{c}/points` | `existingIds` | `INSERT`: the IDs a statement gives, looked up so a taken one is an error |
 | `PUT /collections/{c}/points` | `insertPoints` | `INSERT`: one upsert in `insert_only` mode |
 | `POST /collections/{c}/facet` | `facet` | `GROUP BY … COUNT(*)` |
@@ -127,9 +128,11 @@ was one row in the unused list next to `cluster/recover`: the difference between
 can put data into Qdrant and one that cannot. It is used now, by `INSERT`. The converse also
 happens. The four single-purpose payload routes (`points/payload` in both methods,
 `payload/clear`, `payload/delete`) count as uncovered, although `UPDATE` does all four of
-their jobs through `points/batch`, in one call; nothing is missing there. Changing a vector is
-different: `PUT …/points/vectors` and `…/vectors/delete` are unused, and no statement reaches
-them either.
+their jobs through `points/batch`, in one call; nothing is missing there. The two vector routes,
+`PUT …/points/vectors` and `…/vectors/delete`, are the same case as of this branch: both still
+count as uncovered, and `UPDATE … SET dense = …` and `SET dense = NULL` do their work through
+`points/batch` too. Four of Qdrant's fourteen point routes are therefore uncovered only in the
+sense that the driver reaches the same behaviour through one route instead of four.
 
 ### Spec and server disagree, so both were checked
 
@@ -185,7 +188,7 @@ keywords, so they stay usable as names: the type names a `CREATE TABLE` uses (`V
 | `DROP TABLE [IF EXISTS]` | works | |
 | `CREATE TABLE [IF NOT EXISTS]` | partial | Vector and indexed payload columns; no `WITH (…)` |
 | `INSERT INTO … (columns) VALUES …` | works | One `insert_only` upsert; the column list is required; a taken ID is `23505`; a row without `_id` gets a UUID, from `getGeneratedKeys` |
-| `UPDATE … SET … WHERE` | partial | Payload only, in one batch; `WHERE` is required; `SET` on a vector or `_id` is an error |
+| `UPDATE … SET … WHERE` | partial | Payload and vectors, in one batch; `WHERE` is required; `SET _id` is an error. Writing a vector reads the matching IDs first, so it's capped at 10,000 points |
 | `SET qdrant.<option>`, `RESET`, `SHOW` | works | Seven request options, kept for the connection; other databases' settings are errors |
 | `INSERT … ON CONFLICT` | missing | `ON` isn't a keyword, so it fails at the end of `VALUES` |
 | `CREATE INDEX`, `DROP INDEX` | works | One field; the type defaults to the column's; each type's `WITH` options checked; a second index is `42S11`, a missing one `42S12` |
@@ -286,7 +289,7 @@ can express. The mapping below is what `FilterPlanner` emits.
 | `NOT IN`, `<>`, `!=`, `NOT (…)` | `must_not` of the condition **and** `is_empty`, so a missing field does not match |
 | `field IS NULL` | `is_empty`: missing, `null`, or `[]` |
 | `field IS NOT NULL` | `must_not` of `is_empty` |
-| `vector IS NULL` / `IS NOT NULL` | `has_vector`, negated or not; an unnamed vector is an error, as every point has one |
+| `vector IS NULL` / `IS NOT NULL` | `has_vector`, negated or not, on named vectors and on the unnamed one, which `SET _vector = NULL` can take away |
 | `_id = 7`, `_id IN (7, '5c56…')`, `_id = '7'` | `has_id`; a value must be a non-negative whole number or a UUID, and text that holds a whole number is that number, as DataGrip sends it |
 | `_id NOT IN (…)` | `must_not` of `has_id` |
 
@@ -387,21 +390,22 @@ message is good, the state is not set.
 ## Gaps that matter, ranked
 
 The gaps that led this list when it was first measured — no `INSERT`, no `UPDATE`, no
-`OFFSET`, and no way to manage an index — are closed: the driver can create a collection, fill
-it, index it, save a grid's edits, page through it, switch an alias, and delete from it. What
-remains, most important first:
+`OFFSET`, no way to manage an index, and vectors that could be written once and never changed —
+are closed: the driver can create a collection, fill it, index it, save a grid's edits, page
+through it, switch an alias, re-embed it, and delete from it. What remains, most important
+first:
 
 1. **`LIKE` and text matching.** `title` in `sample_articles` carries a Qdrant `text` index and
    nothing in SQL reaches it; `match: {text}` and `match: {prefix}` are fields of a filter the
    driver already builds, so this costs no new route. `WHERE name LIKE '%lamp%'` is what people
    type first, and today `LIKE` is not even a keyword, so it fails as a syntax error.
-2. **Vectors can be written once and never changed.** `INSERT` stores them, but `UPDATE … SET
-   dense = …` is an error, and `PUT …/points/vectors` and `…/vectors/delete` are unused. In a
-   grid, editing a vector cell fails while every other cell saves; re-embedding a collection
-   after changing models means deleting and re-inserting its points.
-3. **`INSERT` only inserts.** `INSERT … ON CONFLICT (_id) DO UPDATE`, Qdrant's own upsert, has
+2. **`INSERT` only inserts.** `INSERT … ON CONFLICT (_id) DO UPDATE`, Qdrant's own upsert, has
    no SQL yet, so loading a batch that may repeat IDs means splitting it into `INSERT`s and
    `UPDATE`s. Rows the driver embeds are also embedded one provider call at a time.
+3. **Writing a vector costs a read.** Qdrant's `update_vectors` takes point IDs and rejects a
+   filter alone, so `UPDATE … SET dense = …` scrolls the matching IDs first and is capped at
+   10,000 points. Re-embedding a collection larger than that still means splitting the statement
+   up. Only Qdrant growing a filter form for that operation would lift the cap.
 
 Below that line the remaining gaps are mostly ones a SQL user would not reach for first: hybrid
 search and fusion (one route, many body shapes), `ALTER TABLE` for a collection's settings

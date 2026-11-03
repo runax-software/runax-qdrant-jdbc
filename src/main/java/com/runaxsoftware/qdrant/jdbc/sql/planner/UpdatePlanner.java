@@ -10,6 +10,7 @@ import com.runaxsoftware.qdrant.jdbc.schema.TableSchema;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Column;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Assignment;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.UpdateStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.EmbedText;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdatePointsPlan;
 
@@ -24,10 +25,16 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Plans an UPDATE as Qdrant payload changes, sent in one batch: {@code SET lang = 'de'} sets a
- * field, {@code SET "specs.color" = 'red'} sets one inside an object, {@code SET lang = NULL}
- * deletes it, and {@code SET _payload = '{...}'} replaces the whole payload. A field the
- * collection doesn't have yet is added, since a payload has no schema to change first.
+ * Plans an UPDATE as Qdrant payload and vector changes, sent in one batch:
+ * {@code SET lang = 'de'} sets a field, {@code SET "specs.color" = 'red'} sets one inside an
+ * object, {@code SET lang = NULL} deletes it, and {@code SET _payload = '{...}'} replaces the
+ * whole payload. A field the collection doesn't have yet is added, since a payload has no
+ * schema to change first.
+ *
+ * <p>{@code SET dense = '[0.1, 0.2]'} writes a vector, and {@code SET dense = NULL} deletes it.
+ * The two reach Qdrant differently: a write goes through {@code update_vectors}, which takes
+ * point IDs, so the executor reads the matching IDs first; a delete goes through
+ * {@code delete_vectors}, which takes the filter as it is.
  */
 final class UpdatePlanner {
 
@@ -51,6 +58,9 @@ final class UpdatePlanner {
         Map<String, ObjectNode> nested = new LinkedHashMap<>();
         List<String> deleted = new ArrayList<>();
         Set<String> seen = new HashSet<>();
+        Map<String, JsonNode> vectors = new LinkedHashMap<>();
+        Map<String, EmbedText> embeds = new LinkedHashMap<>();
+        List<String> clearedVectors = new ArrayList<>();
 
         for (Assignment assignment : statement.assignments()) {
             ColumnDefinition column = column(schema, assignment.column(), statement.alias());
@@ -60,6 +70,14 @@ final class UpdatePlanner {
 
             if (!seen.add(name)) {
                 throw new SQLSyntaxErrorException("Column '" + name + "' is set twice", "42000");
+            }
+
+            if (column != null && column.kind() == ColumnKind.VECTOR) {
+                // A vector set to NULL is deleted; Qdrant takes the two as separate operations
+                if (VectorValues.of(assignment.value(), column, schema, vectors, embeds)) {
+                    clearedVectors.add(column.source());
+                }
+                continue;
             }
 
             if (column != null && column.kind() == ColumnKind.PAYLOAD) {
@@ -107,13 +125,13 @@ final class UpdatePlanner {
             operations.add(operation("delete_payload", JSON.objectNode().set("keys", keys), filter));
         }
 
-        return new UpdatePointsPlan(schema.name(), filter, operations);
+        return new UpdatePointsPlan(schema.name(), filter, operations, vectors, embeds,
+            clearedVectors);
     }
 
     /**
      * The column an assignment names, or {@code null} when it names a payload field the
-     * collection doesn't have yet. The driver's own columns and the vectors aren't payload, so
-     * they're errors.
+     * collection doesn't have yet. The driver's own columns aren't payload and can't be set.
      */
     private static ColumnDefinition column(TableSchema schema, Column column, String alias)
         throws SQLException {
@@ -128,9 +146,8 @@ final class UpdatePlanner {
 
         String reason = switch (definition.kind()) {
             case ID -> "a point's ID can't change";
-            case VECTOR -> "changing a vector isn't supported yet";
             case SCORE -> "a search's score isn't stored";
-            case PAYLOAD, PAYLOAD_FIELD -> null;
+            case VECTOR, PAYLOAD, PAYLOAD_FIELD -> null;
         };
 
         if (reason != null) {

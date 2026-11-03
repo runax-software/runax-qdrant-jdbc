@@ -73,7 +73,16 @@ measured REST and SQL coverage is in [docs/coverage.md](docs/coverage.md).
   quantization options, and the `/*+ … */` hint for one statement come later.
 - [x] **Grid edits** — `UPDATE ... WHERE _id = ?` from DataGrip's data editor, mapped to
   Qdrant's set-payload call: fields, fields inside objects, `NULL` to delete one, a new field,
-  or `_payload` for the whole payload, in one batch call. Changing vectors comes later.
+  or `_payload` for the whole payload, in one batch call.
+- [x] **Changing vectors** — `UPDATE docs SET dense = '[0.1, ...]' WHERE ...` through Qdrant's
+  `update_vectors`, and `SET dense = NULL` through `delete_vectors`, both in the same batch call
+  as any payload change beside them. A vector is written out, given as JSON text as a tool sends
+  a cell, or made with `embed('text')`, as an `INSERT` takes it. The two halves differ because
+  Qdrant does: a delete takes the filter, while a write takes point IDs and rejects a filter
+  alone, so the driver reads the matching IDs first, sends the filter along as `update_filter`
+  so a point that stops matching in between is left alone, and caps the read at 10,000 points.
+  Deleting a vector means a point can have none, so `IS NULL` now answers for the unnamed vector
+  too.
 - [x] **Indexes** — `CREATE INDEX [IF NOT EXISTS] ON docs (lang) [USING text] [WITH (…)]`
   and `DROP INDEX lang_idx ON docs`, with each type's options, the type defaulting to the
   column's, and the columns the driver keeps following at once.
