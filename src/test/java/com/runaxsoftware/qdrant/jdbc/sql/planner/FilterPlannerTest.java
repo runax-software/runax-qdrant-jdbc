@@ -3,7 +3,9 @@ package com.runaxsoftware.qdrant.jdbc.sql.planner;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadIndexType;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantCollection;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.VectorField;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.VectorKind;
@@ -25,12 +27,17 @@ import java.sql.SQLFeatureNotSupportedException;
 import java.sql.SQLSyntaxErrorException;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 class FilterPlannerTest {
 
     private static final TableSchema DOCS = new TableSchema(
             new QdrantCollection("docs", 3, List.of(
-                    new VectorField("dense", VectorKind.DENSE, 2, "Cosine")), Map.of()),
+                    new VectorField("dense", VectorKind.DENSE, 2, "Cosine")),
+                    // 'title' takes a plain text index and 'phrased' one built to match phrases
+                    Map.of("title", PayloadIndexType.TEXT, "phrased", PayloadIndexType.TEXT,
+                            "lang", PayloadIndexType.KEYWORD),
+                    Map.of(), Set.of("phrased")),
             List.of(
                     new ColumnDefinition("_id", ColumnKind.ID, ColumnType.TEXT, 0, null, ""),
                     new ColumnDefinition("_payload", ColumnKind.PAYLOAD, ColumnType.JSON, 0, null, ""),
@@ -40,6 +47,11 @@ class FilterPlannerTest {
                     new ColumnDefinition("active", ColumnKind.PAYLOAD_FIELD, ColumnType.BOOLEAN, 0, "active", ""),
                     new ColumnDefinition("created", ColumnKind.PAYLOAD_FIELD, ColumnType.DATETIME, 0, "created", ""),
                     new ColumnDefinition("specs.color", ColumnKind.PAYLOAD_FIELD, ColumnType.TEXT, 0, "specs.color", ""),
+                    new ColumnDefinition("title", ColumnKind.PAYLOAD_FIELD, ColumnType.TEXT, 0, "title", ""),
+                    new ColumnDefinition("phrased", ColumnKind.PAYLOAD_FIELD, ColumnType.TEXT, 0, "phrased", ""),
+                    new ColumnDefinition("tags", ColumnKind.PAYLOAD_FIELD, ColumnType.JSON, 0, "tags", ""),
+                    // A field named like the operator, which stays a usable name
+                    new ColumnDefinition("like", ColumnKind.PAYLOAD_FIELD, ColumnType.INTEGER, 0, "like", ""),
                     new ColumnDefinition("dense", ColumnKind.VECTOR, ColumnType.VECTOR, 2, "dense", "")));
 
     private static final TableSchema UNNAMED = new TableSchema(
@@ -256,6 +268,174 @@ class FilterPlannerTest {
 
         assertEquals("{\"must\":[{\"key\":\"lang\",\"match\":{\"value\":\"en\"}}]}",
                 plan.filter().toString());
+    }
+
+    // LIKE
+
+    @Test
+    void matchesTheStartOfAValue() throws SQLException {
+        assertFilter("{\"must\":[{\"key\":\"title\",\"match\":{\"prefix\":\"Desk\"}}]}",
+                "title LIKE 'Desk%'");
+    }
+
+    @Test
+    void matchesASubstringOfAValue() throws SQLException {
+        assertFilter("{\"must\":[{\"key\":\"title\",\"match\":{\"substring\":\"desk\"}}]}",
+                "title LIKE '%desk%'");
+    }
+
+    @Test
+    void matchesAPatternWithNoWildcardAsEqualityDoes() throws SQLException {
+        assertFilter("{\"must\":[{\"key\":\"lang\",\"match\":{\"value\":\"en\"}}]}",
+                "lang LIKE 'en'");
+    }
+
+    @Test
+    void matchesAPatternOnAnArrayFieldWhichQdrantAppliesToEachElement() throws SQLException {
+        assertFilter("{\"must\":[{\"key\":\"tags\",\"match\":{\"prefix\":\"off\"}}]}",
+                "tags LIKE 'off%'");
+    }
+
+    /**
+     * SQL says a pattern is false for a point with no such field, and so is its negation, as it
+     * does for every other comparison.
+     */
+    @Test
+    void negatesAPatternOnlyForPointsThatHaveTheField() throws SQLException {
+        String filter = "{\"must_not\":[{\"key\":\"title\",\"match\":{\"prefix\":\"Desk\"}},"
+                + "{\"is_empty\":{\"key\":\"title\"}}]}";
+
+        assertFilter(filter, "title NOT LIKE 'Desk%'");
+        assertFilter(filter, "NOT title LIKE 'Desk%'");
+    }
+
+    @Test
+    void matchesAPatternOnTheTextOfADateTimeAsQdrantStoresIt() throws SQLException {
+        assertFilter("{\"must\":[{\"key\":\"created\",\"match\":{\"prefix\":\"2024-03\"}}]}",
+                "created LIKE '2024-03%'");
+    }
+
+    /**
+     * Qdrant answers each of these with no points rather than an error, so the driver fails
+     * instead of returning an empty result the statement would read as "nothing matched".
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "title LIKE '%lamp'",      // no suffix match
+            "title LIKE 'a%b%'",       // a % in the middle
+            "title LIKE '%a%b%'",
+            "title LIKE 'Desk_'",      // no single-character wildcard
+            "title LIKE '%'",          // every value
+            "title LIKE '%%'",
+            "price LIKE '39%'",        // a number is compared, not matched
+            "year LIKE '20%'",
+            "active LIKE 'tr%'",
+            "_payload LIKE '%a%'",
+            "_id LIKE '5c%'",
+            "dense LIKE '%a%'"})
+    void rejectsPatternsQdrantCantMatch(String condition) {
+        assertThrows(SQLFeatureNotSupportedException.class,
+                () -> scroll("SELECT * FROM docs WHERE " + condition));
+    }
+
+    @Test
+    void namesTheMatchToWriteInsteadOfASuffixPattern() {
+        SQLException error = assertThrows(SQLFeatureNotSupportedException.class,
+                () -> scroll("SELECT * FROM docs WHERE title LIKE '%lamp'"));
+
+        assertTrue(error.getMessage().contains("'%lamp%'"), error.getMessage());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "title ILIKE 'desk%'",
+            "title LIKE 'a\\%' ESCAPE '\\'",
+            "title LIKE 5",
+            "title NOT 'x'"})
+    void rejectsPatternSyntaxTheDriverDoesntRead(String condition) {
+        assertThrows(SQLSyntaxErrorException.class,
+                () -> scroll("SELECT * FROM docs WHERE " + condition));
+    }
+
+    /**
+     * LIKE reads as an operator only after a column, so a payload field may still be called
+     * {@code like}: a collection's fields are its own, and the driver takes no name for itself.
+     */
+    @Test
+    void keepsLikeUsableAsAFieldName() throws SQLException {
+        assertFilter("{\"must\":[{\"key\":\"like\",\"match\":{\"value\":1}}]}", "like = 1");
+    }
+
+    // Full-text matching
+
+    @Test
+    void matchesEveryWordThroughATextIndex() throws SQLException {
+        assertFilter("{\"must\":[{\"key\":\"title\",\"match\":{\"text\":\"refund policy\"}}]}",
+                "text_match(title, 'refund policy')");
+    }
+
+    @Test
+    void matchesAnyWordThroughATextIndex() throws SQLException {
+        assertFilter("{\"must\":[{\"key\":\"title\",\"match\":{\"text_any\":\"refund shipping\"}}]}",
+                "text_any(title, 'refund shipping')");
+    }
+
+    @Test
+    void matchesAPhraseWhenTheIndexWasBuiltToMatchOne() throws SQLException {
+        assertFilter("{\"must\":[{\"key\":\"phrased\",\"match\":{\"phrase\":\"refund policy\"}}]}",
+                "phrase_match(phrased, 'refund policy')");
+    }
+
+    @Test
+    void matchesTextOnAFieldWithNoIndexAtAll() throws SQLException {
+        assertFilter("{\"must\":[{\"key\":\"specs.color\",\"match\":{\"text\":\"black\"}}]}",
+                "text_match(\"specs.color\", 'black')");
+    }
+
+    @Test
+    void combinesTextMatchingWithTheOtherConditions() throws SQLException {
+        assertFilter("{\"must\":[{\"key\":\"title\",\"match\":{\"text\":\"refund\"}},"
+                        + "{\"key\":\"year\",\"match\":{\"value\":2024}}]}",
+                "text_match(title, 'refund') AND year = 2024");
+    }
+
+    @Test
+    void negatesTextMatchingOnlyForPointsThatHaveTheField() throws SQLException {
+        assertFilter("{\"must_not\":[{\"key\":\"title\",\"match\":{\"text\":\"refund\"}},"
+                        + "{\"is_empty\":{\"key\":\"title\"}}]}",
+                "NOT text_match(title, 'refund')");
+    }
+
+    /**
+     * A phrase match against an index that wasn't built for one is the case worth failing: Qdrant
+     * answers it with no points, which reads exactly like a phrase nothing holds.
+     */
+    @Test
+    void refusesAPhraseMatchWithoutAnIndexThatCanMatchOne() {
+        SQLException error = assertThrows(SQLFeatureNotSupportedException.class,
+                () -> scroll("SELECT * FROM docs WHERE phrase_match(title, 'refund policy')"));
+
+        assertTrue(error.getMessage().contains("phrase_matching"), error.getMessage());
+        assertTrue(error.getMessage().contains("text_match"), error.getMessage());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "text_match(title)",
+            "text_match(title, 'a', 'b')",
+            "text_match(title, 5)",
+            "text_match(title, '  ')",
+            "text_match(_payload, 'a')"})
+    void rejectsTextMatchingItCantRun(String condition) {
+        assertThrows(SQLException.class, () -> scroll("SELECT * FROM docs WHERE " + condition));
+    }
+
+    @Test
+    void namesTheTextConditionsWhenACallIsntOneOfThem() {
+        SQLException error = assertThrows(SQLFeatureNotSupportedException.class,
+                () -> scroll("SELECT * FROM docs WHERE matches(title, 'refund')"));
+
+        assertTrue(error.getMessage().contains("text_match"), error.getMessage());
     }
 
     // What Qdrant's filters can't do

@@ -6,6 +6,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Expression;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.FunctionCall;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.InList;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.IsNull;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Like;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Not;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Or;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.OrderItem;
@@ -113,6 +114,10 @@ public final class Parameters {
         }
         if (expression instanceof IsNull isNull) {
             return new IsNull(bind(isNull.column(), values), isNull.negated());
+        }
+        if (expression instanceof Like like) {
+            return new Like(bind(like.column(), values), bind(like.pattern(), values),
+                like.negated());
         }
         if (expression instanceof FunctionCall call) {
             return new FunctionCall(call.name(), bind(call.arguments(), values));

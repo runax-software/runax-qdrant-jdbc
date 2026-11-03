@@ -134,8 +134,33 @@ are matched exactly; a decimal number, a number in a `DOUBLE` field, and a date-
 range from the value to itself, which is how Qdrant compares those. A comparison is never true
 for a point whose field is missing or null, and neither is its negation, as in SQL:
 `lang <> 'en'` and `NOT (price > 5)` match only points that have the field, so the driver
-adds `is_empty` to each negated condition. `LIKE`, `BETWEEN`, `at_least`, the text, geo, and
-array functions, and `EXISTS` are still the target.
+adds `is_empty` to each negated condition.
+
+`LIKE` and `NOT LIKE` run too, as do the three full-text conditions. `'Desk%'` is a `prefix`
+match and `'%desk%'` a `substring` match, both case-sensitive byte-wise, as Qdrant's exact
+keyword match is, so `'%desk%'` and `'%Desk%'` find different points; a pattern with no
+wildcard is the exact match `=` sends. `text_match(title, 'words')` matches every word,
+`text_any` any one of them, and `phrase_match` the words in order. Each of them reaches every
+element of an array field, matching the point when one element does, and each runs on a field
+with no payload index — Qdrant reads the payload instead, as it does for any other unindexed
+condition. A pattern applies to the text Qdrant stores, so a `TIMESTAMP WITH TIME ZONE` column
+takes one: `created_at LIKE '2024-03%'`.
+
+Two rules are worth stating because Qdrant answers rather than fails without them. A pattern
+Qdrant has no match for is an error naming what to write instead, not a broader search trimmed
+in the driver: `'%lamp'` has no suffix match and the error points at `'%lamp%'`, a `%` in the
+middle of a pattern asks for neither of the two matches, `_` isn't a single-character wildcard
+(and no `ESCAPE` clause is read, so a literal `%` or `_` can't be written), `'%'` and `'%%'`
+ask for every value and point at `IS NOT NULL`, and a pattern against an `INTEGER`, `DOUBLE` or
+`BOOLEAN` column is an error since Qdrant compares those rather than matching them. And a
+phrase needs a text index built with `phrase_matching`: without one Qdrant answers a phrase
+match with no points at all rather than an error, so the driver checks the index first and the
+error names `CREATE INDEX … USING text WITH (phrase_matching = true)`, which it also writes.
+`BETWEEN`, `at_least`, the geo and array functions, and `EXISTS` are still the target.
+
+`LIKE` reads as an operator only after a column, and the text conditions are function names, so
+a collection may still have payload fields called `like`, `text_match` or `phrase_match`: the
+driver takes no name of its own here.
 
 | SQL | Qdrant condition |
 | --- | --- |
@@ -145,11 +170,12 @@ array functions, and `EXISTS` are still the target.
 | `lang IN ('en', 'de')` / `NOT IN` | `match` any / except |
 | `<`, `<=`, `>`, `>=`, `BETWEEN` on numbers | `range` |
 | … on `TIMESTAMP WITH TIME ZONE` columns | `datetime_range` |
-| `name LIKE 'Desk%'` | `match` prefix |
-| `name LIKE '%lamp%'` | `match` substring |
-| `text_match(title, 'refund policy')` | `match` text: every word, through the full-text index |
-| `text_any(title, 'refund return')` | `match` text_any: any word |
-| `phrase_match(title, 'refund policy')` | `match` phrase; needs `phrase_matching` on the text index |
+| `name LIKE 'Desk%'` | `match` prefix (runs) |
+| `name LIKE '%lamp%'` | `match` substring (runs) |
+| `name LIKE 'Desk lamp'` | `match` value: a pattern with no wildcard (runs) |
+| `text_match(title, 'refund policy')` | `match` text: every word, through the full-text index (runs) |
+| `text_any(title, 'refund return')` | `match` text_any: any word (runs) |
+| `phrase_match(title, 'refund policy')` | `match` phrase; needs `phrase_matching` on the text index (runs) |
 | `tags @> '["office"]'` | `match` on an array field: any element equals (one condition per listed element) |
 | `jsonb_array_length(tags) >= 2` | `values_count` |
 | `field IS NULL` / `IS NOT NULL` | `is_empty`: missing, `null`, or `[]` |
@@ -640,10 +666,11 @@ These are errors, not emulated:
 - Conditions that compare two columns, or apply functions to a column other than those
   listed here: Qdrant's filters only compare one field with constants. Checking them in the
   driver after Qdrant answers is a possible later feature (see the roadmap).
-- `LIKE` patterns other than prefix (`'abc%'`) and substring (`'%abc%'`), and `ILIKE`. Qdrant
-  has no suffix, wildcard, or case-insensitive substring match, and the driver doesn't filter
-  rows itself, so `'%lamp'` is an error rather than a broader `'%lamp%'` search trimmed in
-  the driver. The error suggests `'%lamp%'`.
+- `LIKE` patterns other than prefix (`'abc%'`), substring (`'%abc%'`) and one with no wildcard
+  at all, and `ILIKE`. Qdrant has no suffix, single-character, or case-insensitive match, and
+  the driver doesn't filter rows itself, so `'%lamp'` is an error rather than a broader
+  `'%lamp%'` search trimmed in the driver. The error suggests `'%lamp%'`. `_` is not a wildcard
+  and no `ESCAPE` clause is read, so a pattern can't match a literal `%` or `_` either.
 - Transactions and savepoints: every statement applies on its own, because Qdrant has no
   transactions. An opt-in write buffer that holds writes until `commit()` may come later
   (see the roadmap); it still wouldn't make commits atomic.

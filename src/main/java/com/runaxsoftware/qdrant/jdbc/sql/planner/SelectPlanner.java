@@ -136,7 +136,7 @@ final class SelectPlanner {
         boolean withPayload = columns.stream().anyMatch(
             x -> x.kind() == ColumnKind.PAYLOAD || x.kind() == ColumnKind.PAYLOAD_FIELD);
         boolean withVector = columns.stream().anyMatch(x -> x.kind() == ColumnKind.VECTOR);
-        JsonNode filter = FilterPlanner.plan(statement.where(), schema.name(),
+        JsonNode filter = FilterPlanner.plan(statement.where(), schema,
             column -> find(schema, column, statement.alias(), search != null));
 
         if (search != null) {
@@ -286,7 +286,7 @@ final class SelectPlanner {
         // A count of the whole collection needs none of its columns; a filter names some
         if (statement.where() != null) {
             TableSchema schema = catalog.table(table.name());
-            filter = FilterPlanner.plan(statement.where(), schema.name(),
+            filter = FilterPlanner.plan(statement.where(), schema,
                 column -> find(schema, column, statement.alias(), false));
         }
 
@@ -330,7 +330,7 @@ final class SelectPlanner {
                 + (index == null ? "not indexed" : "indexed as " + index.qdrantName()));
         }
 
-        JsonNode filter = FilterPlanner.plan(statement.where(), schema.name(),
+        JsonNode filter = FilterPlanner.plan(statement.where(), schema,
             named -> find(schema, named, statement.alias(), false));
 
         // Qdrant counts the values its index holds, so a group's type follows the index: an

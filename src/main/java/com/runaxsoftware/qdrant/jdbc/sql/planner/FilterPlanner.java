@@ -4,9 +4,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadIndexType;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnKind;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnType;
+import com.runaxsoftware.qdrant.jdbc.schema.TableSchema;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.And;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Column;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Comparison;
@@ -14,6 +16,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Expression;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.FunctionCall;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.InList;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.IsNull;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Like;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Literal;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Not;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Or;
@@ -25,6 +28,8 @@ import java.sql.SQLFeatureNotSupportedException;
 import java.sql.SQLSyntaxErrorException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -57,11 +62,25 @@ final class FilterPlanner {
 
     private static final Set<String> RANGES = Set.of("<", "<=", ">", ">=");
 
+    /**
+     * The full-text conditions, by the function that writes each: every word, any word, and the
+     * words in order. Qdrant runs them through a text index, and without one by reading the
+     * payload, so they need no index the way ORDER BY and GROUP BY do — except a phrase, which
+     * needs an index built to match phrases.
+     */
+    private static final String TEXT_MATCH = "text_match";
+    private static final String TEXT_ANY = "text_any";
+    private static final String PHRASE_MATCH = "phrase_match";
+    private static final Map<String, String> TEXT_CONDITIONS = Map.of(
+        TEXT_MATCH, "text", TEXT_ANY, "text_any", PHRASE_MATCH, "phrase");
+
+    private final TableSchema schema;
     private final String table;
     private final Columns columns;
 
-    private FilterPlanner(String table, Columns columns) {
-        this.table = table;
+    private FilterPlanner(TableSchema schema, Columns columns) {
+        this.schema = schema;
+        this.table = schema.name();
         this.columns = columns;
     }
 
@@ -69,15 +88,17 @@ final class FilterPlanner {
      * The filter for a WHERE clause, or {@code null} when there's none.
      *
      * @param where   the statement's WHERE, or {@code null}
-     * @param table   the collection the statement reads, for error messages
+     * @param schema  the collection the statement reads, for error messages and for the text
+     *                indexes a phrase match needs
      * @param columns finds the columns the conditions name
      */
-    static JsonNode plan(Expression where, String table, Columns columns) throws SQLException {
+    static JsonNode plan(Expression where, TableSchema schema, Columns columns)
+        throws SQLException {
         if (where == null) {
             return null;
         }
 
-        ObjectNode condition = new FilterPlanner(table, columns).condition(where, false);
+        ObjectNode condition = new FilterPlanner(schema, columns).condition(where, false);
 
         return isFilter(condition) ? condition : clause(MUST, List.of(condition));
     }
@@ -108,9 +129,175 @@ final class FilterPlanner {
         if (expression instanceof IsNull isNull) {
             return isNull(isNull, negated == isNull.negated());
         }
+        if (expression instanceof Like like) {
+            return like(like, negated != like.negated());
+        }
+        if (expression instanceof FunctionCall call) {
+            return textCondition(call, negated);
+        }
 
         throw new SQLSyntaxErrorException("Expected a condition in WHERE, such as price > 10",
             "42000");
+    }
+
+    /**
+     * column LIKE 'pattern'. Qdrant matches the start of a value and a substring of it, so a
+     * pattern is one of those or an error: the driver doesn't read points to check a pattern
+     * itself. Both are case-sensitive, as Qdrant's exact match is.
+     *
+     * @param negated whether the condition, with any NOT above it, asks for no match
+     */
+    private ObjectNode like(Like like, boolean negated) throws SQLException {
+        ColumnDefinition column = column(like.column());
+        Object value = value(like.pattern(), column);
+
+        if (!(value instanceof String pattern)) {
+            throw new SQLSyntaxErrorException("LIKE takes a text pattern, as name LIKE 'Desk%', "
+                + "not " + written(value), "42000");
+        }
+
+        payloadField(column, "matched");
+        ObjectNode condition = matching(column, pattern);
+
+        return negated ? notMatching(condition, column) : condition;
+    }
+
+    /**
+     * The Qdrant match a LIKE pattern asks for: {@code 'Desk%'} the values starting with it,
+     * {@code '%desk%'} the values holding it, and a pattern with no wildcard the values equal
+     * to it. Every other pattern is an error naming what Qdrant can do instead, rather than a
+     * broader search the driver would trim itself.
+     */
+    private ObjectNode matching(ColumnDefinition column, String pattern) throws SQLException {
+        if (pattern.indexOf('_') >= 0) {
+            throw new SQLFeatureNotSupportedException("LIKE '" + pattern + "' isn't supported: "
+                + "Qdrant has no single-character wildcard, so _ can't stand for one. A literal "
+                + "_ can't be escaped either, since the driver reads no ESCAPE clause");
+        }
+
+        boolean starts = pattern.startsWith("%");
+        boolean ends = pattern.endsWith("%");
+
+        // One '%' is both, and either way asks for every value the field has
+        if (starts && pattern.length() == 1) {
+            throw new SQLFeatureNotSupportedException("LIKE '%' matches every value of '"
+                + column.name() + "': use IS NOT NULL to ask for the points that have it");
+        }
+
+        String text = pattern.substring(starts ? 1 : 0, ends ? pattern.length() - 1 : pattern.length());
+
+        if (text.indexOf('%') >= 0) {
+            throw new SQLFeatureNotSupportedException("LIKE '" + pattern + "' isn't supported: "
+                + "Qdrant matches the start of a value ('Desk%') or a substring of it "
+                + "('%desk%'), and a % in the middle of a pattern asks for neither");
+        }
+        if (text.isEmpty()) {   // '%%'
+            throw new SQLFeatureNotSupportedException("LIKE '" + pattern + "' matches every value "
+                + "of '" + column.name() + "': use IS NOT NULL to ask for the points that have it");
+        }
+
+        if (starts && !ends) {
+            throw new SQLFeatureNotSupportedException("LIKE '" + pattern + "' isn't supported: "
+                + "Qdrant has no match for the end of a value, so write '%" + text + "%' for the "
+                + "values that hold '" + text + "' anywhere");
+        }
+
+        likeable(column);
+
+        if (!starts && !ends) {   // no wildcard at all, which is what = asks for
+            return equals(column, text);
+        }
+
+        return field(column).set("match", JSON.objectNode().put(starts ? "substring" : "prefix",
+            text));
+    }
+
+    /**
+     * Fails unless LIKE can match the column's values. Qdrant matches a prefix and a substring
+     * of the text it stores, and answers with no points for a number or a boolean rather than
+     * failing, so a pattern against one is an error here instead of an empty result.
+     */
+    private void likeable(ColumnDefinition column) throws SQLException {
+        String reason = switch (column.type()) {
+            case INTEGER, FLOAT -> "Qdrant matches a prefix and a substring of text, and "
+                + "compares numbers with =, <, <=, > and >=";
+            case BOOLEAN -> "a boolean is matched with = TRUE or = FALSE";
+            default -> null;   // text, JSON (an array of keywords), and a datetime's own text
+        };
+
+        if (reason != null) {
+            throw new SQLFeatureNotSupportedException("LIKE isn't supported on '" + column.name()
+                + "' of " + table + ", which is " + column.type().name().toLowerCase(Locale.ROOT)
+                + ": " + reason);
+        }
+    }
+
+    /**
+     * text_match(field, 'words'), text_any, and phrase_match: Qdrant's full-text conditions,
+     * which a text index serves and which run without one by reading the payload.
+     */
+    private ObjectNode textCondition(FunctionCall call, boolean negated) throws SQLException {
+        String match = TEXT_CONDITIONS.entrySet().stream()
+            .filter(entry -> call.is(entry.getKey()))
+            .map(Map.Entry::getValue)
+            .findFirst()
+            .orElse(null);
+
+        if (match == null) {
+            throw new SQLFeatureNotSupportedException("'" + call.name() + "' isn't a condition "
+                + "this driver has: a condition compares a column with constants, or is one of "
+                + TEXT_MATCH + "(field, 'words'), " + TEXT_ANY + "(field, 'words') and "
+                + PHRASE_MATCH + "(field, 'words')");
+        }
+        if (call.arguments().size() != 2) {
+            throw new SQLSyntaxErrorException(call.name() + " takes a column and the text to "
+                + "match, as " + call.name() + "(title, 'refund policy')", "42000");
+        }
+
+        ColumnDefinition column = column(call.arguments().get(0));
+        payloadField(column, "matched");
+        Object text = value(call.arguments().get(1), column);
+
+        if (!(text instanceof String words)) {
+            throw new SQLSyntaxErrorException(call.name() + " takes the text to match in quotes, "
+                + "as " + call.name() + "(title, 'refund policy'), not " + written(text), "42000");
+        }
+        if (words.isBlank()) {
+            throw new SQLSyntaxErrorException(call.name() + " takes at least one word to match",
+                "42000");
+        }
+        if (call.is(PHRASE_MATCH)) {
+            phraseIndex(column);
+        }
+
+        ObjectNode condition = field(column).set("match",
+            JSON.objectNode().put(match, words));
+
+        return negated ? notMatching(condition, column) : condition;
+    }
+
+    /**
+     * Fails unless the field's text index matches phrases. Qdrant answers a phrase match
+     * against an index built without {@code phrase_matching} with no points at all, rather than
+     * an error, so a statement that would quietly return nothing fails here instead.
+     */
+    private void phraseIndex(ColumnDefinition column) throws SQLException {
+        if (schema.collection().phraseFields().contains(column.source())) {
+            return;
+        }
+
+        PayloadIndexType index = schema.collection().payloadIndexes().get(column.source());
+        String has = index == null ? "isn't indexed"
+            : index == PayloadIndexType.TEXT
+                ? "has a text index that wasn't built to match phrases"
+                : "is indexed as " + index.qdrantName();
+
+        throw new SQLFeatureNotSupportedException("Matching a phrase in '" + column.name()
+            + "' of " + table + " needs a text index built with phrase_matching, and this field "
+            + has + ": Qdrant answers a phrase match without one with no points rather than an "
+            + "error. CREATE INDEX ON " + table + " (" + column.name()
+            + ") USING text WITH (phrase_matching = true) builds one, or " + TEXT_MATCH
+            + "() matches the same words in any order");
     }
 
     // A column compared with a constant

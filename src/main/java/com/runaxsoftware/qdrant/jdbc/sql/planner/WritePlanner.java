@@ -35,7 +35,7 @@ final class WritePlanner {
         }
 
         return new DeletePointsPlan(schema.name(), FilterPlanner.plan(statement.where(),
-            schema.name(),
+            schema,
             column -> SelectPlanner.find(schema, column, statement.alias(), false)));
     }
 

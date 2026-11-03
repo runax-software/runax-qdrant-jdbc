@@ -5,9 +5,9 @@ and how much SQL it accepts. Both are measured, not estimated — every number b
 the code or from a server that was asked. The point is to make the gaps legible, so a
 maintainer can tell a missing feature that blocks real use from one that nobody would notice.
 
-**Measured against** driver commit `75b32c3` (with `SET`, `UPDATE`, `INSERT`, `OFFSET` and the
-index and view statements, #27, #28, #31, #30 and #33) and this branch's vector changes on top,
-and Qdrant
+**Measured against** driver commit `a2d5716` (with `SET`, `UPDATE`, `INSERT`, `OFFSET`, the
+index and view statements and the vector changes, #27, #28, #31, #30, #33 and #35) and this
+branch's `LIKE` and full-text conditions on top, and Qdrant
 **1.20.0** (build
 `222b2e44ab1c3f17e8246396ead6558e45041df7`), running locally over REST on port 6333, with the
 three collections `./gradlew seedQdrant` loads. Qdrant 1.20 does not serve `/openapi.json` —
@@ -46,7 +46,7 @@ spec without judgement calls.
 | Area | Covered | Total | What the covered routes are for |
 | --- | --- | --- | --- |
 | Collections | 5 | 9 | Listing and describing tables, `CREATE TABLE`, `DROP TABLE`, `IF NOT EXISTS` |
-| Points | 7 | 14 | `SELECT` (scroll), `COUNT(*)`, `GROUP BY` (facet), `DELETE`, `TRUNCATE`, `UPDATE` (batch), `INSERT` (upsert, and the ID check before it) |
+| Points | 7 | 14 | `SELECT` (scroll), `COUNT(*)`, `GROUP BY` (facet), `DELETE`, `TRUNCATE`, `UPDATE` (batch), `INSERT` (upsert, and the ID check before it) — and `LIKE` and the full-text conditions, which are fields of the filter all of them send |
 | Search | 1 | 5 | `ORDER BY similarity(...) DESC`, including `embed()` |
 | Aliases | **3** | **3** | Views: listing, `system.aliases`, `CREATE [OR REPLACE] VIEW`, `ALTER VIEW`, `DROP VIEW`, and the aliases a dropped collection takes with it |
 | Indexes | **2** | **2** | `CREATE INDEX`, `DROP INDEX`, and the indexes `CREATE TABLE` declares |
@@ -129,7 +129,7 @@ can put data into Qdrant and one that cannot. It is used now, by `INSERT`. The c
 happens. The four single-purpose payload routes (`points/payload` in both methods,
 `payload/clear`, `payload/delete`) count as uncovered, although `UPDATE` does all four of
 their jobs through `points/batch`, in one call; nothing is missing there. The two vector routes,
-`PUT …/points/vectors` and `…/vectors/delete`, are the same case as of this branch: both still
+`PUT …/points/vectors` and `…/vectors/delete`, are the same case since #35: both still
 count as uncovered, and `UPDATE … SET dense = …` and `SET dense = NULL` do their work through
 `points/batch` too. Four of Qdrant's fourteen point routes are therefore uncovered only in the
 sense that the driver reaches the same behaviour through one route instead of four.
@@ -165,15 +165,21 @@ client.
 
 ## SQL coverage
 
-The ceiling is the lexer. `Lexer.java` recognises **31 keywords**, and a word outside that set
-becomes an identifier, so `HAVING`, `LIKE`, `BETWEEN`, `JOIN`, `UNION` and `CALL` cannot be
-lexed as syntax at all. `Parser.java` wires **fifteen statement kinds**, and `Plan.java`'s
-sealed interface permits **eighteen plan kinds** — the best single index of what can run. No
-parser class is a stub any more. Some words mean something in one statement only, and aren't
-keywords, so they stay usable as names: the type names a `CREATE TABLE` uses (`VECTOR`,
-`KEYWORD`, `DISTANCE`, `MODIFIER`); `INDEX`, `ON`, `USING` and `WITH` in the index statements;
-`VIEW`, `REPLACE`, `RENAME` and `TO` in the view statements; and `RESET`, `SHOW`, `ALL` and
-`DEFAULT` in the option statements. Each parser reads them where they can appear.
+The ceiling is the lexer, but less of one than it looks. `Lexer.java` recognises
+**31 keywords**, and a word outside that set becomes an identifier, so `HAVING`, `BETWEEN`,
+`JOIN`, `UNION` and `CALL` cannot be lexed as syntax at all. `Parser.java` wires **fifteen
+statement kinds**, and `Plan.java`'s sealed interface permits **eighteen plan kinds** — the best
+single index of what can run. No parser class is a stub any more.
+
+A word that means something in one place only need not be a keyword, though: read where it can
+appear, an identifier does the job and stays usable as a name. Many are: the type names a
+`CREATE TABLE` uses (`VECTOR`, `KEYWORD`, `DISTANCE`, `MODIFIER`); `INDEX`, `ON`, `USING` and
+`WITH` in the index statements; `VIEW`, `REPLACE`, `RENAME` and `TO` in the view statements;
+`RESET`, `SHOW`, `ALL` and `DEFAULT` in the option statements; and `LIKE`, read as an operator
+after a column, which is the one place it can go. So `LIKE` runs without the lexer growing a
+keyword, and a payload field may still be called `like`. The full-text conditions need even
+less — they're function names. This is why the keyword count above has stopped predicting how
+much SQL runs.
 
 ### Statements
 
@@ -217,6 +223,9 @@ is stored as a number, and text that can't be one is `22018`.
 | Clause | State | Condition |
 | --- | --- | --- |
 | `WHERE` | partial | Column-against-constant conditions only; needs no index at all |
+| `LIKE` / `NOT LIKE` | partial | `'Desk%'` is `prefix`, `'%desk%'` is `substring`, no wildcard is `=`; case-sensitive. A suffix, an interior `%`, `_`, `'%'` and `ILIKE` are errors naming what to write |
+| `text_match`, `text_any` | works | `match` text and text_any; no index needed, a text index makes them fast |
+| `phrase_match` | partial | Needs a text index built with `phrase_matching`, checked first because Qdrant answers without one with no points |
 | `LIMIT n` | works | A literal; `LIMIT ?` is rejected at parse time |
 | `OFFSET n` | partial | Every kind of read; Qdrant applies it only for a search, so the others skip in the driver, up to 10,000 rows |
 | `ORDER BY _id` | partial | Ascending only; `DESC` is an error, since Qdrant scrolls by ID upwards |
@@ -287,6 +296,13 @@ can express. The mapping below is what `FilterPlanner` emits.
 | `IN (…)` of all-text or all-whole-number values | `match: {any}` |
 | `IN (…)` of mixed values | `should` over one `match` each |
 | `NOT IN`, `<>`, `!=`, `NOT (…)` | `must_not` of the condition **and** `is_empty`, so a missing field does not match |
+| `name LIKE 'Desk%'` | `match: {prefix}` |
+| `name LIKE '%desk%'` | `match: {substring}` |
+| `name LIKE 'Desk lamp'` | `match: {value}`: a pattern with no wildcard |
+| `name NOT LIKE 'Desk%'` | `must_not` of the match **and** `is_empty` |
+| `text_match(title, 'refund policy')` | `match: {text}`: every word |
+| `text_any(title, 'refund shipping')` | `match: {text_any}`: any word |
+| `phrase_match(title, 'refund policy')` | `match: {phrase}`: the words in order |
 | `field IS NULL` | `is_empty`: missing, `null`, or `[]` |
 | `field IS NOT NULL` | `must_not` of `is_empty` |
 | `vector IS NULL` / `IS NOT NULL` | `has_vector`, negated or not, on named vectors and on the unnamed one, which `SET _vector = NULL` can take away |
@@ -390,22 +406,23 @@ message is good, the state is not set.
 ## Gaps that matter, ranked
 
 The gaps that led this list when it was first measured — no `INSERT`, no `UPDATE`, no
-`OFFSET`, no way to manage an index, and vectors that could be written once and never changed —
-are closed: the driver can create a collection, fill it, index it, save a grid's edits, page
-through it, switch an alias, re-embed it, and delete from it. What remains, most important
-first:
+`OFFSET`, no way to manage an index, vectors that could be written once and never changed, and
+no way to match text — are closed: the driver can create a collection, fill it, index it, save a
+grid's edits, page through it, switch an alias, re-embed it, match a pattern or a phrase in it,
+and delete from it. What remains, most important first:
 
-1. **`LIKE` and text matching.** `title` in `sample_articles` carries a Qdrant `text` index and
-   nothing in SQL reaches it; `match: {text}` and `match: {prefix}` are fields of a filter the
-   driver already builds, so this costs no new route. `WHERE name LIKE '%lamp%'` is what people
-   type first, and today `LIKE` is not even a keyword, so it fails as a syntax error.
-2. **`INSERT` only inserts.** `INSERT … ON CONFLICT (_id) DO UPDATE`, Qdrant's own upsert, has
+1. **`INSERT` only inserts.** `INSERT … ON CONFLICT (_id) DO UPDATE`, Qdrant's own upsert, has
    no SQL yet, so loading a batch that may repeat IDs means splitting it into `INSERT`s and
    `UPDATE`s. Rows the driver embeds are also embedded one provider call at a time.
-3. **Writing a vector costs a read.** Qdrant's `update_vectors` takes point IDs and rejects a
+2. **Writing a vector costs a read.** Qdrant's `update_vectors` takes point IDs and rejects a
    filter alone, so `UPDATE … SET dense = …` scrolls the matching IDs first and is capped at
    10,000 points. Re-embedding a collection larger than that still means splitting the statement
    up. Only Qdrant growing a filter form for that operation would lift the cap.
+3. **Text matching reaches the index but not the ranking.** `text_match` filters by a text
+   index; Qdrant's `text` *query*, which ranks by full-text relevance and is what a BM25-style
+   search needs, has no SQL yet, so `ORDER BY text_rank(title, 'refund policy') DESC` from the
+   dialect spec is still the target. `at_least` (`min_should`), `BETWEEN`, and the geo and
+   nested-array conditions are the rest of the filter surface.
 
 Below that line the remaining gaps are mostly ones a SQL user would not reach for first: hybrid
 search and fusion (one route, many body shapes), `ALTER TABLE` for a collection's settings

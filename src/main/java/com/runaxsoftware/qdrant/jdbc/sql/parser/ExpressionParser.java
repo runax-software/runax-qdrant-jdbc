@@ -71,8 +71,26 @@ public final class ExpressionParser {
 
             return new InList(column, values, negated);
         }
+
+        // LIKE only means an operator here, after a column, so it stays usable as a field name
+        if (this.tokenStream.matchWord("LIKE")) {
+            Expression pattern = parseValue();
+
+            if (this.tokenStream.peekWord("ESCAPE")) {
+                throw this.tokenStream.errorAt("ESCAPE isn't supported: the driver reads a "
+                    + "pattern as Qdrant matches it, where % is a wildcard only at the ends and "
+                    + "nothing escapes one", "0A000");
+            }
+
+            return new Like(column, pattern, negated);
+        }
+        if (this.tokenStream.peekWord("ILIKE")) {
+            throw this.tokenStream.errorAt("ILIKE isn't supported: Qdrant matches text as it's "
+                + "stored, with no case-insensitive match, so write the case the points hold",
+                "0A000");
+        }
         if (negated) {
-            throw this.tokenStream.error("Expected IN after NOT");
+            throw this.tokenStream.error("Expected IN or LIKE after NOT");
         }
 
         Token operator = this.tokenStream.peek();
@@ -81,7 +99,14 @@ public final class ExpressionParser {
 
             return new Comparison(column, operator.text(), parseValue());
         }
-        throw this.tokenStream.error("Expected a comparison such as =, <, IN or IS NULL");
+
+        // A call is a condition of its own, as text_match(title, 'refund policy') is; which
+        // calls may stand as one is the planner's to say
+        if (column instanceof FunctionCall) {
+            return column;
+        }
+
+        throw this.tokenStream.error("Expected a comparison such as =, <, IN, LIKE or IS NULL");
     }
 
     /**

@@ -11,6 +11,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Expression;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.FunctionCall;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.InList;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.IsNull;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Like;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Literal;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Not;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Or;
@@ -364,6 +365,53 @@ class ParserTest {
     }
 
     @Test
+    void parsesLikeAndNotLike() throws SQLSyntaxErrorException {
+        assertEquals(new Like(Column.of("name"), new Literal("Desk%"), false),
+                where("name LIKE 'Desk%'"));
+        assertEquals(new Like(Column.of("name"), new Literal("Desk%"), true),
+                where("name NOT LIKE 'Desk%'"));
+        assertEquals(new Like(Column.of("name"), new Literal("Desk%"), false),
+                where("name like 'Desk%'"));
+    }
+
+    @Test
+    void parsesAPatternGivenAsAPlaceholder() throws SQLSyntaxErrorException {
+        assertEquals(new Like(Column.of("name"), new Parameter(1), false), where("name LIKE ?"));
+    }
+
+    /**
+     * LIKE means an operator only after a column, so a payload field may still be called
+     * {@code like}, as the words that belong to one statement each stay usable as names.
+     */
+    @Test
+    void readsLikeAsANameWhereAnOperatorCantGo() throws SQLSyntaxErrorException {
+        assertEquals(eq("like", 1L), where("like = 1"));
+        assertEquals(new Like(Column.of("like"), new Literal("a%"), false), where("like LIKE 'a%'"));
+    }
+
+    @Test
+    void parsesACallAsAConditionOfItsOwn() throws SQLSyntaxErrorException {
+        assertEquals(new FunctionCall("text_match",
+                        List.of(Column.of("title"), new Literal("refund policy"))),
+                where("text_match(title, 'refund policy')"));
+        assertEquals(new Not(new FunctionCall("text_match",
+                        List.of(Column.of("title"), new Literal("refund")))),
+                where("NOT text_match(title, 'refund')"));
+    }
+
+    @Test
+    void rejectsPatternSyntaxItDoesntRead() {
+        assertError("ILIKE isn't supported: Qdrant matches text as it's stored, with no "
+                        + "case-insensitive match, so write the case the points hold at line 1, "
+                        + "column 31",
+                "SELECT * FROM docs WHERE name ILIKE 'desk%'");
+        assertError("ESCAPE isn't supported: the driver reads a pattern as Qdrant matches it, "
+                        + "where % is a wildcard only at the ends and nothing escapes one at "
+                        + "line 1, column 42",
+                "SELECT * FROM docs WHERE name LIKE 'a!%' ESCAPE '!'");
+    }
+
+    @Test
     void bindsAndTighterThanOr() throws SQLSyntaxErrorException {
         assertEquals(new Or(eq("a", 1L), new And(eq("b", 2L), eq("c", 3L))),
                 where("a = 1 OR b = 2 AND c = 3"));
@@ -634,8 +682,9 @@ class ParserTest {
     }
 
     @Test
-    void rejectsNotWithoutIn() {
-        assertError("Expected IN after NOT, found '=' at line 1, column 32", "SELECT * FROM docs WHERE a NOT = 1");
+    void rejectsNotWithoutInOrLike() {
+        assertError("Expected IN or LIKE after NOT, found '=' at line 1, column 32",
+                "SELECT * FROM docs WHERE a NOT = 1");
     }
 
     @Test
