@@ -61,13 +61,12 @@ class EmbedSearchIntegrationTest {
     static void createCollections() throws SQLException, IOException {
         openAi = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         openAi.createContext("/v1/embeddings", exchange -> {
-            openAiRequests.add(JSON.readTree(exchange.getRequestBody()));
+            JsonNode request = JSON.readTree(exchange.getRequestBody());
+            openAiRequests.add(request);
 
-            // "refund" is near point 1's dense vector, anything else near point 2's
-            boolean refund = openAiRequests.get(openAiRequests.size() - 1).path("input").asText()
-                .contains("refund");
-            byte[] body = ("{\"data\": [{\"embedding\": " + (refund ? "[1.0, 0.0]" : "[0.0, 1.0]")
-                + "}]}").getBytes(StandardCharsets.UTF_8);
+            // One embedding per text, in order: "refund" is near point 1's dense vector,
+            // anything else near point 2's
+            byte[] body = answerFor(request).getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, body.length);
             exchange.getResponseBody().write(body);
             exchange.close();
@@ -77,9 +76,10 @@ class EmbedSearchIntegrationTest {
         // Voyage's API answers the same shape; this one only records what it was asked for
         voyage = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         voyage.createContext("/v1/embeddings", exchange -> {
-            voyageRequests.add(JSON.readTree(exchange.getRequestBody()));
+            JsonNode request = JSON.readTree(exchange.getRequestBody());
+            voyageRequests.add(request);
 
-            byte[] body = "{\"data\": [{\"embedding\": [1.0, 0.0]}]}".getBytes(StandardCharsets.UTF_8);
+            byte[] body = answerFor(request).getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, body.length);
             exchange.getResponseBody().write(body);
             exchange.close();
@@ -152,7 +152,8 @@ class EmbedSearchIntegrationTest {
         assertEquals(List.of("1", "3"), ids);
         JsonNode request = openAiRequests.get(openAiRequests.size() - 1);
         assertEquals("text-embedding-3-small", request.path("model").asText());
-        assertEquals("refund please", request.path("input").asText());
+        assertEquals(1, request.path("input").size(), "a search embeds one text");
+        assertEquals("refund please", request.path("input").get(0).asText());
     }
 
     @Test
@@ -199,6 +200,64 @@ class EmbedSearchIntegrationTest {
             });
             assertEquals("Embedding with OpenAI needs its API key: set the openaiApiKey "
                 + "connection property", missing.getMessage());
+        }
+    }
+
+    /**
+     * The gap this closes: an INSERT used to call the provider once per row, so a thousand rows
+     * meant a thousand round trips. The providers take the whole batch in one request.
+     */
+    @Test
+    void embedsEveryRowOfAnInsertInOneProviderCall() throws SQLException {
+        String table = NAME + "_batch";
+        voyageRequests.clear();
+
+        try (Statement statement = connection.createStatement()) {
+            statement.executeUpdate("CREATE TABLE " + table + " (dense VECTOR(2))");
+
+            try {
+                statement.executeUpdate("INSERT INTO " + table + " (_id, dense) VALUES "
+                    + "(1, embed('first passage', 'voyage:voyage-3.5')), "
+                    + "(2, embed('second passage', 'voyage:voyage-3.5')), "
+                    + "(3, embed('third passage', 'voyage:voyage-3.5'))");
+
+                assertEquals(1, voyageRequests.size(), "three rows, one request");
+                assertEquals(3, voyageRequests.get(0).path("input").size(),
+                    voyageRequests.get(0).toString());
+                assertEquals("first passage", voyageRequests.get(0).path("input").get(0).asText());
+                assertEquals("third passage", voyageRequests.get(0).path("input").get(2).asText());
+
+                assertEquals(3, count(table), "and every point was stored");
+            } finally {
+                statement.executeUpdate("DROP TABLE IF EXISTS " + table);
+            }
+        }
+    }
+
+    /**
+     * Rows giving the same text for the same model share one vector: the answer is the same and
+     * a provider charges for each text sent.
+     */
+    @Test
+    void embedsARepeatedTextOnlyOnce() throws SQLException {
+        String table = NAME + "_repeat";
+        voyageRequests.clear();
+
+        try (Statement statement = connection.createStatement()) {
+            statement.executeUpdate("CREATE TABLE " + table + " (dense VECTOR(2))");
+
+            try {
+                statement.executeUpdate("INSERT INTO " + table + " (_id, dense) VALUES "
+                    + "(1, embed('same text', 'voyage:voyage-3.5')), "
+                    + "(2, embed('same text', 'voyage:voyage-3.5'))");
+
+                assertEquals(1, voyageRequests.size());
+                assertEquals(1, voyageRequests.get(0).path("input").size(),
+                    "one text sent for two rows");
+                assertEquals(2, count(table), "both points stored, with the same vector");
+            } finally {
+                statement.executeUpdate("DROP TABLE IF EXISTS " + table);
+            }
         }
     }
 
@@ -272,6 +331,30 @@ class EmbedSearchIntegrationTest {
         }
 
         assertEquals(List.of(), voyageRequests, "the provider was never called");
+    }
+
+    /**
+     * What a provider answers: one embedding per text of the request, each tagged with its index
+     * as the real APIs do. A text holding "refund" lands on point 1's dense vector, anything else
+     * on point 2's, so a search can be checked by which points come back.
+     */
+    private static String answerFor(JsonNode request) {
+        JsonNode input = request.path("input");
+        var items = new ArrayList<String>();
+
+        for (int i = 0; i < input.size(); i++) {
+            String vector = input.get(i).asText().contains("refund") ? "[1.0, 0.0]" : "[0.0, 1.0]";
+            items.add("{\"index\": " + i + ", \"embedding\": " + vector + "}");
+        }
+
+        return "{\"data\": [" + String.join(", ", items) + "]}";
+    }
+
+    private static long count(String table) throws SQLException {
+        try (Statement statement = connection.createStatement();
+             ResultSet rows = statement.executeQuery("SELECT COUNT(*) FROM " + table)) {
+            return rows.next() ? rows.getLong(1) : -1;
+        }
     }
 
     private static List<String> ids(String sql) throws SQLException {

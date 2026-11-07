@@ -67,7 +67,7 @@ class HttpEmbedderTest {
 
         assertEquals(List.of(0.25, -0.5, 1.0), vector);
         assertEquals(List.of("Bearer sk-test"), authorizations);
-        assertEquals(JSON.readTree("{\"model\": \"text-embedding-3-small\", \"input\": \"refund policy\"}"),
+        assertEquals(JSON.readTree("{\"model\": \"text-embedding-3-small\", \"input\": [\"refund policy\"]}"),
             bodies.get(0));
     }
 
@@ -102,16 +102,20 @@ class HttpEmbedderTest {
             () -> new VoyageAiEmbedder(HttpClient.newHttpClient(), baseUrl, "pa", TIMEOUT)
                 .embed(voyageModel("voyage-0"), TextRole.QUERY, "x"));
 
-        assertEquals("Voyage AI couldn't embed with 'voyage-0': Model voyage-0 is not supported",
+        assertEquals("Voyage AI couldn't embed with 'voyage:voyage-0': Model voyage-0 is not supported",
             error.getMessage());
         assertEquals("42000", error.getSQLState());
     }
 
+    /**
+     * A provider's failure is not the Qdrant connection's: a pool that sees an 08 SQLState closes
+     * the connection that reported it, and the connection is fine.
+     */
     @Test
     void reportsAnAnswerWithoutAnEmbedding() {
         answer = "{\"data\": []}";
 
-        assertEquals("08S01", assertThrows(SQLException.class, () -> openAi("sk").embed(openAiModel("m"), TextRole.QUERY, "x"))
+        assertEquals("HY000", assertThrows(SQLException.class, () -> openAi("sk").embed(openAiModel("m"), TextRole.QUERY, "x"))
             .getSQLState());
     }
 
@@ -119,7 +123,7 @@ class HttpEmbedderTest {
     void reportsAProviderItCantReach() {
         server.stop(0);
 
-        assertEquals("08001", assertThrows(SQLException.class, () -> openAi("sk").embed(openAiModel("m"), TextRole.QUERY, "x"))
+        assertEquals("HY000", assertThrows(SQLException.class, () -> openAi("sk").embed(openAiModel("m"), TextRole.QUERY, "x"))
             .getSQLState());
     }
 
@@ -139,6 +143,110 @@ class HttpEmbedderTest {
 
     private OpenAiEmbedder openAi(String key) {
         return new OpenAiEmbedder(HttpClient.newHttpClient(), baseUrl, key, TIMEOUT);
+    }
+
+    // Batching
+
+    @Test
+    void embedsAWholeBatchInOneRequest() throws SQLException {
+        answer = "{\"data\": [{\"index\": 0, \"embedding\": [1, 0]}, {\"index\": 1, \"embedding\": [0, 1]}]}";
+
+        List<List<Double>> vectors = openAi("sk-test").embed(openAiModel("m"), TextRole.DOCUMENT,
+            List.of("first", "second"));
+
+        assertEquals(1, bodies.size(), "one request, not one per text");
+        assertEquals(List.of("first", "second"),
+            List.of(bodies.get(0).path("input").get(0).asText(), bodies.get(0).path("input").get(1).asText()));
+        assertEquals(List.of(List.of(1.0, 0.0), List.of(0.0, 1.0)), vectors);
+    }
+
+    /**
+     * A provider may answer in any order and says which text each embedding is for, so the
+     * answers go back where the texts were. Reading them in arrival order would pair a row with
+     * another row's vector, which nothing downstream could detect.
+     */
+    @Test
+    void putsTheAnswersBackInTheOrderOfTheTexts() throws SQLException {
+        answer = "{\"data\": [{\"index\": 1, \"embedding\": [0, 1]}, {\"index\": 0, \"embedding\": [1, 0]}]}";
+
+        assertEquals(List.of(List.of(1.0, 0.0), List.of(0.0, 1.0)),
+            openAi("sk-test").embed(openAiModel("m"), TextRole.DOCUMENT, List.of("first", "second")));
+    }
+
+    @Test
+    void reportsAnAnswerWithTheWrongNumberOfEmbeddings() {
+        answer = "{\"data\": [{\"index\": 0, \"embedding\": [1, 0]}]}";
+
+        SQLException error = assertThrows(SQLException.class, () -> openAi("sk")
+            .embed(openAiModel("m"), TextRole.DOCUMENT, List.of("first", "second")));
+
+        assertEquals("HY000", error.getSQLState());
+        assertTrue(error.getMessage().contains("1 embeddings for 2 texts"), error.getMessage());
+    }
+
+    @Test
+    void reportsAnEmbeddingIndexThatDoesntFit() {
+        answer = "{\"data\": [{\"index\": 0, \"embedding\": [1, 0]}, {\"index\": 7, \"embedding\": [0, 1]}]}";
+
+        assertEquals("HY000", assertThrows(SQLException.class, () -> openAi("sk")
+            .embed(openAiModel("m"), TextRole.DOCUMENT, List.of("a", "b"))).getSQLState());
+    }
+
+    @Test
+    void embedsNoTextsWithoutCallingTheProvider() throws SQLException {
+        assertEquals(List.of(), openAi("sk").embed(openAiModel("m"), TextRole.DOCUMENT, List.of()));
+        assertEquals(List.of(), bodies);
+    }
+
+    /**
+     * An API key echoed back by a provider or a proxy must not reach the error a user sees.
+     */
+    @Test
+    void keepsTheApiKeyOutOfAProvidersOwnMessage() {
+        status = 400;
+        answer = "{\"error\": {\"message\": \"bad key sk-secret used\"}}";
+
+        SQLException error = assertThrows(SQLException.class,
+            () -> openAi("sk-secret").embed(openAiModel("m"), TextRole.QUERY, "x"));
+
+        assertFalse(error.getMessage().contains("sk-secret"), error.getMessage());
+        assertTrue(error.getMessage().contains("***"), error.getMessage());
+    }
+
+    // Splitting a batch to the provider's limits
+
+    @Test
+    void splitsABatchByTheMostTextsAProviderTakes() {
+        assertEquals(List.of(List.of("a", "b"), List.of("c")),
+            HttpEmbedder.batches(List.of("a", "b", "c"), 2, 1_000));
+        assertEquals(List.of(List.of("a", "b", "c")),
+            HttpEmbedder.batches(List.of("a", "b", "c"), 10, 1_000));
+        assertEquals(List.of(), HttpEmbedder.batches(List.of(), 10, 1_000));
+    }
+
+    @Test
+    void splitsABatchByTheMostTokensAProviderTakes() {
+        // Each text is estimated at its UTF-8 bytes, so "aaaa" is 4
+        assertEquals(List.of(List.of("aaaa", "bbbb"), List.of("cccc")),
+            HttpEmbedder.batches(List.of("aaaa", "bbbb", "cccc"), 100, 8));
+    }
+
+    /**
+     * A text over the limit on its own still gets sent, for the provider to truncate or reject:
+     * splitting it would change what it means.
+     */
+    @Test
+    void sendsATextOverTheTokenLimitOnItsOwn() {
+        assertEquals(List.of(List.of("aaaaaaaa"), List.of("b")),
+            HttpEmbedder.batches(List.of("aaaaaaaa", "b"), 100, 4));
+    }
+
+    @Test
+    void estimatesTokensAsUtf8Bytes() {
+        assertEquals(5, HttpEmbedder.estimateTokens("plain"));
+        assertEquals(2, HttpEmbedder.estimateTokens("ü"), "two bytes in UTF-8");
+        assertEquals(3, HttpEmbedder.estimateTokens("€"), "three");
+        assertEquals(6, HttpEmbedder.estimateTokens("😀"), "a surrogate pair, three bytes each half");
     }
 
     // What the providers are told beyond the text

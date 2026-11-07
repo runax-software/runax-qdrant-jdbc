@@ -5,9 +5,10 @@ and how much SQL it accepts. Both are measured, not estimated — every number b
 the code or from a server that was asked. The point is to make the gaps legible, so a
 maintainer can tell a missing feature that blocks real use from one that nobody would notice.
 
-**Measured against** driver commit `ef01aa9` — the whole of `SET`, `OFFSET`, the index and view
-statements, the write statements, the vector changes, the text conditions and `ON CONFLICT`
-(#27, #28, #30, #31, #33, #34, #35 and #36) — and Qdrant
+**Measured against** driver commit `5212b3d` — the whole of `SET`, `OFFSET`, the index and view
+statements, the write statements, the vector changes, the text conditions, `ON CONFLICT` and the
+embedder's model and role (#27, #28, #30, #31, #33, #34, #35, #36 and #39) — with this branch's
+batched embedding on top, and Qdrant
 **1.20.0** (build
 `222b2e44ab1c3f17e8246396ead6558e45041df7`), running locally over REST on port 6333, with the
 three collections `./gradlew seedQdrant` loads. Qdrant 1.20 does not serve `/openapi.json` —
@@ -418,25 +419,25 @@ message is good, the state is not set.
 
 The gaps that led this list when it was first measured — no `INSERT`, no `UPDATE`, no
 `OFFSET`, no way to manage an index, vectors that could be written once and never changed, no
-way to match text, and an `INSERT` that could only insert — are closed: the driver can create a
-collection, fill it, index it, save a grid's edits, page through it, switch an alias, re-embed
-it, match a pattern or a phrase in it, upsert into it, and delete from it. What remains, most
-important first:
+way to match text, an `INSERT` that could only insert, and a provider call per row — are closed:
+the driver can create a collection, fill it in one embedding call, index it, save a grid's edits,
+page through it, switch an alias, re-embed it, match a pattern or a phrase in it, upsert into it,
+and delete from it. What remains, most important first:
 
-1. **A row the driver embeds costs a provider call of its own.** `INSERT` with `embed('text')`
-   calls the provider once per row, so loading a thousand rows is a thousand round trips. The
-   providers take a batch of texts in one request and the embedder interface doesn't, which is
-   the change that would fix it. Qdrant-side `embed()` is already one call, since the text
-   travels with the point.
-2. **Writing a vector costs a read.** Qdrant's `update_vectors` takes point IDs and rejects a
+1. **Writing a vector costs a read.** Qdrant's `update_vectors` takes point IDs and rejects a
    filter alone, so `UPDATE … SET dense = …` scrolls the matching IDs first and is capped at
    10,000 points. Re-embedding a collection larger than that still means splitting the statement
    up. Only Qdrant growing a filter form for that operation would lift the cap.
-3. **Text matching reaches the index but not the ranking.** `text_match` filters by a text
+2. **Text matching reaches the index but not the ranking.** `text_match` filters by a text
    index; Qdrant's `text` *query*, which ranks by full-text relevance and is what a BM25-style
    search needs, has no SQL yet, so `ORDER BY text_rank(title, 'refund policy') DESC` from the
    dialect spec is still the target. `at_least` (`min_should`), `BETWEEN`, and the geo and
    nested-array conditions are the rest of the filter surface.
+3. **One `embed()` per statement, not per collection.** A batch now goes to the provider in one
+   request, but each statement embeds on its own: loading a collection through a thousand
+   `INSERT`s is still a thousand calls, where one `INSERT` of a thousand rows is one. Nothing in
+   the driver can join statements, so this is a note for whoever writes the loading side, not a
+   gap to close here.
 
 Below that line the remaining gaps are mostly ones a SQL user would not reach for first: hybrid
 search and fusion (one route, many body shapes), `ALTER TABLE` for a collection's settings

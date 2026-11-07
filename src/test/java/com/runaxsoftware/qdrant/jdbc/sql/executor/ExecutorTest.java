@@ -1186,9 +1186,9 @@ class ExecutorTest {
         List<QueryRequest> requests = new ArrayList<>();
         List<String> embedded = new ArrayList<>();
 
-        searching(requests, provider -> (model, role, text) -> {
-            embedded.add(provider + " " + model + " " + role + " " + text);
-            return List.of(0.1, 0.2);
+        searching(requests, provider -> (model, role, texts) -> {
+            embedded.add(provider + " " + model + " " + role + " " + String.join("|", texts));
+            return texts.stream().map(x -> List.of(0.1, 0.2)).toList();
         }).execute(embedded("openai:text-embedding-3-small", 2), STATEMENT).resultSet().close();
 
         assertEquals(List.of("OPENAI openai:text-embedding-3-small QUERY refund policy"), embedded);
@@ -1198,7 +1198,7 @@ class ExecutorTest {
 
     @Test
     void rejectsAVectorOfOtherDimensionsThanTheSearchedOne() {
-        Executor executor = searching(new ArrayList<>(), provider -> (model, role, text) -> List.of(0.1, 0.2, 0.3));
+        Executor executor = searching(new ArrayList<>(), provider -> (model, role, texts) -> texts.stream().map(x -> List.of(0.1, 0.2, 0.3)).toList());
 
         SQLException error = assertThrows(SQLException.class,
             () -> executor.execute(embedded("openai:text-embedding-3-small", 2), STATEMENT));
