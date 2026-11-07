@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A size in a model ID: `embed('refund policy', 'openai:text-embedding-3-large?dimensions=1024')`.
+  Models that can return fewer dimensions than they were trained for do that better than the
+  driver truncating a vector afterwards, so the size becomes OpenAI's `dimensions` or Voyage's
+  `output_dimension`. It belongs to the ID rather than to a connection setting, so a collection's
+  `runax.embed.<vector>` metadata names one vector exactly and two IDs asking for different sizes
+  count as different models — a search can't quietly ask for a size the points weren't stored
+  with. A size that doesn't match the vector's own is an error before the provider is called, so
+  a vector that couldn't be stored is never paid for. ([#39])
+
 - `INSERT … ON CONFLICT`, so a batch that may repeat point IDs is one statement instead of a
   split into `INSERT`s and `UPDATE`s. `ON CONFLICT [(_id)] DO NOTHING` leaves a point that's
   already there as it is, and `DO UPDATE` replaces it; without the clause a taken ID is still
@@ -249,6 +258,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Text stored by `INSERT` and `UPDATE` was embedded as a *search query* by Voyage AI, not as a
+  document. Voyage prepends a different retrieval prompt for each, so stored vectors were built
+  with the wrong one and matched queries less well than they should. The `Embedder` interface only
+  received a model name and a text, which was true enough when `embed()` existed in searches
+  alone; it now carries the text's role, and `embed()` in a ranking function is a query while
+  `embed()` in `INSERT` or `UPDATE` is a document. OpenAI's models embed both the same way and
+  are unaffected. ([#39])
+
 - The columns the driver keeps followed an `INSERT` or `UPDATE` that added a field only when a
   later `SELECT` named it; now the collection's columns are read again after either, so a
   `CREATE INDEX` on the new field finds its type. After an index change or a `DROP TABLE`, the
@@ -313,3 +330,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#34]: https://github.com/runax-software/runax-qdrant-jdbc/pull/34
 [#35]: https://github.com/runax-software/runax-qdrant-jdbc/pull/35
 [#36]: https://github.com/runax-software/runax-qdrant-jdbc/pull/36
+[#39]: https://github.com/runax-software/runax-qdrant-jdbc/pull/39

@@ -49,17 +49,18 @@ abstract class HttpEmbedder implements Embedder {
     }
 
     /**
-     * The request body for one text.
+     * The request body for one text, as the provider takes it.
      */
-    abstract ObjectNode body(String model, String text);
+    abstract ObjectNode body(EmbeddingModel model, TextRole role, String text);
 
     @Override
-    public List<Double> embed(String model, String text) throws SQLException {
+    public List<Double> embed(EmbeddingModel model, TextRole role, String text)
+        throws SQLException {
         HttpRequest request = HttpRequest.newBuilder(endpoint)
             .timeout(timeout)
             .header("Authorization", "Bearer " + apiKey)
             .header("Content-Type", "application/json")
-            .POST(HttpRequest.BodyPublishers.ofString(body(model, text).toString()))
+            .POST(HttpRequest.BodyPublishers.ofString(body(model, role, text).toString()))
             .build();
 
         HttpResponse<String> response;
@@ -75,7 +76,7 @@ abstract class HttpEmbedder implements Embedder {
             throw new SQLException("Interrupted while waiting for " + providerName, "HY008", e);
         }
 
-        return vector(response, model);
+        return vector(response, model.name());
     }
 
     private List<Double> vector(HttpResponse<String> response, String model) throws SQLException {

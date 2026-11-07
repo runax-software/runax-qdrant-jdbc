@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.runaxsoftware.qdrant.jdbc.embedding.Embedders;
+import com.runaxsoftware.qdrant.jdbc.embedding.TextRole;
 import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetHit;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetRequest;
@@ -363,7 +364,7 @@ public final class Executor {
         for (Map.Entry<String, EmbedText> embed : point.embeds().entrySet()) {
             EmbedText text = embed.getValue();
             List<Double> vector = embedders.embedder(text.model().provider())
-                .embed(text.model().name(), text.text());
+                .embed(text.model(), TextRole.DOCUMENT, text.text());
 
             if (vector.size() != text.dimensions()) {
                 throw new SQLException(text.model() + " made a vector of " + vector.size()
@@ -486,7 +487,7 @@ public final class Executor {
         for (Map.Entry<String, EmbedText> embed : plan.embeds().entrySet()) {
             EmbedText text = embed.getValue();
             List<Double> vector = embedders.embedder(text.model().provider())
-                .embed(text.model().name(), text.text());
+                .embed(text.model(), TextRole.DOCUMENT, text.text());
 
             if (vector.size() != text.dimensions()) {
                 throw new SQLException(text.model() + " made a vector of " + vector.size()
@@ -552,7 +553,7 @@ public final class Executor {
             document = new Document(embed.text(), embed.model().name());
         } else if (embed != null) {
             query = embedders.embedder(embed.model().provider())
-                .embed(embed.model().name(), embed.text());
+                .embed(embed.model(), TextRole.QUERY, embed.text());
 
             if (query.size() != embed.dimensions()) {
                 throw new SQLException(embed.model() + " made a vector of " + query.size()
