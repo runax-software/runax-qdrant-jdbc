@@ -1,11 +1,23 @@
 # Runax JDBC Driver for Qdrant
 
+[![CI](https://github.com/runax-software/runax-qdrant-jdbc/actions/workflows/ci.yml/badge.svg)](https://github.com/runax-software/runax-qdrant-jdbc/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 A JDBC driver that lets SQL tools browse and query [Qdrant](https://qdrant.tech)
 collections with SQL, including vector similarity search. JetBrains DataGrip is the
 first target; any JDBC client (DBeaver, BI tools) should work the same way.
 
-> **Status: early development.** Nothing is published to Maven Central yet, so the driver is
-> built from source (`./gradlew shadowJar`). It does run SQL: `SELECT` with filters, patterns
+```sql
+SELECT _id, _score, title
+FROM docs
+WHERE lang = 'en'
+ORDER BY similarity(dense, embed('refund policy', 'openai:text-embedding-3-small')) DESC
+LIMIT 10
+```
+
+> **Status: early development.** Nothing is published to Maven Central yet: download the jar
+> from the [releases](https://github.com/runax-software/runax-qdrant-jdbc/releases), or build
+> it from source (`./gradlew shadowJar`). It does run SQL: `SELECT` with filters, patterns
 > and full-text matching, vector similarity search, `COUNT(*)` and `GROUP BY`, `INSERT`,
 > `UPDATE`, `DELETE`, and DDL for collections, indexes and views — fifteen statement kinds.
 > Exactly how much of Qdrant and how much SQL that amounts to is measured in
@@ -21,13 +33,46 @@ first target; any JDBC client (DBeaver, BI tools) should work the same way.
 - **Similarity search** — rank points by similarity to a vector, with the score as a
   `_score` column, and `embed('text')` to search with text, embedded by Qdrant or by a
   provider such as OpenAI.
-- **System tables** — `system.collections` and `system.aliases` describe the server
-  itself, so a collection's status, point counts, shards, and aliases are SQL rows rather
-  than REST calls.
+- **System tables** — ten read-only tables in a `system` schema describe the server itself
+  (`collections`, `aliases`, `snapshots`, `shards`, `shard_keys`, `cluster`, `peers`,
+  `telemetry`, `metrics`, `issues`), so a collection's status, point counts, shards, and
+  aliases are SQL rows rather than REST calls.
 - **Honest errors** — SQL that Qdrant can't run (joins, arbitrary aggregates) fails with
   a clear error instead of scanning a whole collection on the client.
 - **One small jar** — talks to Qdrant's REST API with the JDK's own HTTP client, so the
   only library inside is Jackson, relocated so it can't clash with the tool's own copy.
+
+## Requirements
+
+- **Java 17** or newer, in the tool that loads the driver (DataGrip ships its own).
+- **Qdrant 1.20** over its REST API, self-hosted or Qdrant Cloud. The integration tests run
+  against 1.20.0; older versions may lack routes the driver calls, as
+  [docs/coverage.md](docs/coverage.md) notes.
+- For `embed()` with a driver-side provider, an OpenAI or Voyage AI API key.
+
+## Install
+
+Download `qdrant-jdbc-<version>-all.jar` from the
+[latest release](https://github.com/runax-software/runax-qdrant-jdbc/releases/latest), or build
+it yourself:
+
+```bash
+git clone https://github.com/runax-software/runax-qdrant-jdbc.git
+cd runax-qdrant-jdbc
+./gradlew shadowJar    # writes build/libs/qdrant-jdbc-<version>-all.jar
+```
+
+It's one self-contained jar: add it to your tool as a custom driver, as below. The driver class
+is `com.runaxsoftware.qdrant.jdbc.QdrantDriver`, and it registers itself, so plain JDBC code
+only needs the jar on its classpath:
+
+```java
+try (Connection connection = DriverManager.getConnection("jdbc:qdrant://localhost:6333");
+     ResultSet rows = connection.createStatement().executeQuery(
+         "SELECT name, status, points_count FROM system.collections")) {
+    while (rows.next()) System.out.println(rows.getString("name"));
+}
+```
 
 ## Connection
 
@@ -50,12 +95,16 @@ Other settings go in the URL (`?tls=true&timeout=60`) or in the connection prope
 | `sampleSize` | `100` | Points read to work out a collection's columns |
 | `defaultLimit` | `1000` | Rows a read returns when the statement gives no `LIMIT` and sets no maximum rows, for the reads Qdrant answers in one call and pages no further: an ordered read, a similarity search, and a `GROUP BY`. The statement warns when this bounds it; `0` makes such a statement an error instead |
 | `schemaCache` | `3600` | Seconds to keep a collection's columns, and the lists of collections and aliases, before reading them again; listing tables, as DataGrip's Refresh does, reads them again sooner, asking for a table by a name the kept lists don't have lists them again, and `0` reads them every time |
-| `logFile` | — | File to log every JDBC call to, for troubleshooting; the API key is never logged |
+| `logFile` | — | File to log every JDBC call to, for troubleshooting; API keys are never logged |
+| `openaiApiKey` | — | OpenAI API key, for `embed('text', 'openai:…')`; never shown or logged |
+| `openaiUrl` | `https://api.openai.com/v1` | OpenAI's API URL, or one that answers like it, such as an Azure OpenAI deployment or a proxy |
+| `voyageApiKey` | — | Voyage AI API key, for `embed('text', 'voyage:…')`; never shown or logged |
+| `voyageUrl` | `https://api.voyageai.com/v1` | Voyage AI's API URL |
 
 ## Try it in DataGrip
 
-1. Build the driver jar: `./gradlew shadowJar` writes
-   `build/libs/qdrant-jdbc-<version>-all.jar`.
+1. Get the driver jar, as under [Install](#install). Add the `-all` jar only: the plain one
+   next to it in `build/libs` has no Jackson inside, and DataGrip fails to load it.
 2. In DataGrip, open **Database Explorer → + → Driver**, name it `Qdrant (Runax)`, and
    under **Driver Files** add the jar as a custom JAR.
 3. Set **Class** to `com.runaxsoftware.qdrant.jdbc.QdrantDriver` and add the URL template
@@ -65,6 +114,11 @@ Other settings go in the URL (`?tls=true&timeout=60`) or in the connection prope
 5. **Test Connection**, then open the data source: collections show up as tables, with
    their columns, primary key, and payload indexes, and aliases as views with their
    collection's columns.
+6. To edit data in the grid, untick **Read-only** in the data source: the driver honours it,
+   and refuses every write on a read-only connection.
+
+After rebuilding the jar, remove it from the driver and add it again: DataGrip keeps the jar it
+loaded open, and a file rebuilt under it fails with `NoClassDefFoundError`.
 
 To try it on sample data, start Qdrant with `docker compose up -d` and load three small
 collections with `./gradlew seedQdrant`.
@@ -85,7 +139,7 @@ or a system table. Qdrant applies it itself only for a search; the other reads s
 driver, so they're capped at 10,000 rows and a deeper offset says so instead of reading a whole
 collection to return one screen.
 
-Similarity search, which runs today with the vector written out:
+Similarity search with a vector written out:
 
 ```sql
 SELECT _id, _score, title
@@ -190,6 +244,22 @@ The full mapping, covering writes, DDL, aliases, hybrid search, and the rest of 
 is in the [SQL dialect spec](docs/specs/sql-dialect.md). What of that runs today, measured
 against a given driver commit and Qdrant version, is in [docs/coverage.md](docs/coverage.md).
 
+## Limits
+
+The driver runs what Qdrant can run, and says so when it can't, rather than computing it on the
+client:
+
+- No `JOIN`, `UNION`, subqueries, or aggregates other than `COUNT(*)`.
+- A condition compares one column with constants; `price > cost` or `LOWER(name) = …` is an
+  error.
+- `ORDER BY` a payload field needs a range index on it (`CREATE INDEX ON docs (year)`), and
+  `GROUP BY` a countable one; ordering by text isn't something Qdrant does.
+- No transactions: every statement applies on its own, and `setAutoCommit(false)` only adds a
+  warning that says so.
+
+[docs/coverage.md](docs/coverage.md) lists every statement and clause, with the error for each
+one that doesn't run.
+
 ## Building
 
 ```bash
@@ -207,7 +277,8 @@ project, `runax-qdrant-datagrip`, built on this driver.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+Issues and pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Report security
+problems privately, as [SECURITY.md](SECURITY.md) describes, not in a public issue.
 
 ## License
 
