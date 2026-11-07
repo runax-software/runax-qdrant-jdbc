@@ -27,9 +27,10 @@ measured REST and SQL coverage is in [docs/coverage.md](docs/coverage.md).
   because Qdrant answers one without it with no points rather than an error. `at_least`, the
   geo functions, and the array functions come later.
 - [x] **COUNT(\*)** through the count API — `SELECT COUNT(*) FROM docs` is one exact count call
-  and one `BIGINT` row, without reading a single point or column. Still to come: counting the
-  points a `WHERE` matches, by sending the filter above to the count, and a count per group
-  through the facet API below.
+  and one `BIGINT` row, without reading a single point or column. Counting the points a `WHERE`
+  matches sends that filter to the count, and a count per group goes through the facet API, as
+  the `GROUP BY` item below describes. `COUNT(*)` has to be the only select item unless the
+  statement groups.
 - [x] **Similarity search with vector literals** —
   `ORDER BY similarity(vector, [0.1, ...]) DESC` through the Query API, with a `_score`
   column. Dense vectors only: searching a sparse vector or a multivector, and the other forms
