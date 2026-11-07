@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.runaxsoftware.qdrant.jdbc.embedding.Embedders;
+import com.runaxsoftware.qdrant.jdbc.embedding.EmbeddingModel;
 import com.runaxsoftware.qdrant.jdbc.embedding.TextRole;
 import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetHit;
@@ -345,8 +346,9 @@ public final class Executor {
             }
         }
 
+        Map<EmbedText, List<Double>> embedded = embedAll(plan.points(), plan.collection());
         var points = new ArrayList<JsonNode>(plan.points().size());
-        for (NewPoint point : plan.points()) points.add(point(point, plan.collection()));
+        for (NewPoint point : plan.points()) points.add(point(point, embedded));
 
         writer.insertPoints(plan.collection(), points, plan.onConflict().replaces(),
             plan.updateFilter());
@@ -355,25 +357,67 @@ public final class Executor {
     }
 
     /**
-     * A point as Qdrant takes it, with the vectors the driver embeds made now: the unnamed
+     * Every text the statement's points need embedded, embedded in one call per model: the
+     * providers take a batch, so a thousand rows that embed a column are one request rather than
+     * a thousand. Rows that give the same text for the same model share one vector, since the
+     * answer is the same and a provider charges for each.
+     *
+     * @return the vector for each distinct text-and-model the points name
+     */
+    private Map<EmbedText, List<Double>> embedAll(List<NewPoint> points, String collection)
+        throws SQLException {
+        // Grouped by model, since one call carries one model; LinkedHashMap keeps the texts in
+        // the order the statement gave them, which is the order the answers come back in
+        Map<EmbeddingModel, List<EmbedText>> byModel = new LinkedHashMap<>();
+
+        for (NewPoint point : points) {
+            for (EmbedText text : point.embeds().values()) {
+                List<EmbedText> texts = byModel.computeIfAbsent(text.model(),
+                    model -> new ArrayList<>());
+                if (!texts.contains(text)) texts.add(text);
+            }
+        }
+
+        Map<EmbedText, List<Double>> embedded = new LinkedHashMap<>();
+
+        for (Map.Entry<EmbeddingModel, List<EmbedText>> entry : byModel.entrySet()) {
+            List<EmbedText> texts = entry.getValue();
+            List<List<Double>> vectors = embedders.embedder(entry.getKey().provider())
+                .embed(entry.getKey(), TextRole.DOCUMENT,
+                    texts.stream().map(EmbedText::text).toList());
+
+            if (vectors.size() != texts.size()) {
+                throw new SQLException(entry.getKey() + " made " + vectors.size()
+                    + " vectors for " + texts.size() + " texts", "HY000");
+            }
+
+            for (int i = 0; i < texts.size(); i++) {
+                EmbedText text = texts.get(i);
+                List<Double> vector = vectors.get(i);
+
+                if (vector.size() != text.dimensions()) {
+                    throw new SQLException(text.model() + " made a vector of " + vector.size()
+                        + " dimensions, and the vector it goes into in " + collection + " has "
+                        + text.dimensions(), "42000");
+                }
+
+                embedded.put(text, vector);
+            }
+        }
+
+        return embedded;
+    }
+
+    /**
+     * A point as Qdrant takes it, with the vectors the driver embedded already made: the unnamed
      * vector on its own, named ones under their names.
      */
-    private JsonNode point(NewPoint point, String collection) throws SQLException {
+    private JsonNode point(NewPoint point, Map<EmbedText, List<Double>> embedded) {
         Map<String, JsonNode> vectors = new LinkedHashMap<>(point.vectors());
 
         for (Map.Entry<String, EmbedText> embed : point.embeds().entrySet()) {
-            EmbedText text = embed.getValue();
-            List<Double> vector = embedders.embedder(text.model().provider())
-                .embed(text.model(), TextRole.DOCUMENT, text.text());
-
-            if (vector.size() != text.dimensions()) {
-                throw new SQLException(text.model() + " made a vector of " + vector.size()
-                    + " dimensions, and '" + embed.getKey() + "' of " + collection + " has "
-                    + text.dimensions(), "42000");
-            }
-
             ArrayNode values = JSON.arrayNode();
-            vector.forEach(values::add);
+            embedded.get(embed.getValue()).forEach(values::add);
             vectors.put(embed.getKey(), values);
         }
 

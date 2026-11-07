@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Every text a statement embeds now goes to the provider in **one request**. An `INSERT` of a
+  thousand rows that embeds a column was a thousand round trips, one per row; it is one call,
+  split only as far as each provider's own limits on texts and tokens per request require
+  (OpenAI 2048 texts / 300k tokens, Voyage 1000 / 120k). Tokens are estimated as UTF-8 bytes,
+  which runs high on purpose so a batch stays inside the limit. Rows giving the same text for
+  the same model share one vector, since the answer is the same and a provider charges per text.
+  A provider may answer in any order and says which text each embedding is for, so vectors go
+  back where their texts were rather than in arrival order — pairing a row with another row's
+  vector is the kind of mistake nothing downstream could detect. ([#40])
 - A size in a model ID: `embed('refund policy', 'openai:text-embedding-3-large?dimensions=1024')`.
   Models that can return fewer dimensions than they were trained for do that better than the
   driver truncating a vector afterwards, so the size becomes OpenAI's `dimensions` or Voyage's
@@ -258,6 +267,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A provider's failure no longer reports a connection SQLState. An unreachable or broken OpenAI
+  or Voyage AI answered `08001` or `08S01`, which says *the connection is gone*; connection pools
+  close a connection that reports one. The connection to Qdrant is fine when a provider isn't, so
+  these are now `HY000`, a timeout `HYT00`, and a rejected key stays `28000`. An API key echoed
+  back by a provider or a proxy is also replaced with `***` before it reaches the message. ([#40])
 - Text stored by `INSERT` and `UPDATE` was embedded as a *search query* by Voyage AI, not as a
   document. Voyage prepends a different retrieval prompt for each, so stored vectors were built
   with the wrong one and matched queries less well than they should. The `Embedder` interface only
@@ -331,3 +345,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#35]: https://github.com/runax-software/runax-qdrant-jdbc/pull/35
 [#36]: https://github.com/runax-software/runax-qdrant-jdbc/pull/36
 [#39]: https://github.com/runax-software/runax-qdrant-jdbc/pull/39
+[#40]: https://github.com/runax-software/runax-qdrant-jdbc/pull/40

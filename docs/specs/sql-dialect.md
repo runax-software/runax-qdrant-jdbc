@@ -510,6 +510,13 @@ the vector's own is an error before the provider is called.
 | `openai` | The driver, through `POST {openaiUrl}/embeddings` | `openaiApiKey`; `openaiUrl` (default `https://api.openai.com/v1`) for Azure OpenAI or a proxy |
 | `voyage` | The driver, through `POST {voyageUrl}/embeddings` | `voyageApiKey`; `voyageUrl` (default `https://api.voyageai.com/v1`) |
 
+Every text one statement needs is embedded in one request: an `INSERT` of a thousand rows that
+embeds a column is one call to the provider, not a thousand, split only as far as the provider's
+own limits on texts and tokens per request require. Rows giving the same text for the same model
+share a vector, since the answer is the same and a provider charges per text. A provider may
+answer a batch in any order and says which text each embedding is for, so the vectors go back
+where their texts were.
+
 Whether a text is a search query or a document being stored is sent along with it, since some
 models embed the two differently so that a question lands near the passages answering it:
 `embed()` inside a ranking function is a query, and inside `INSERT` or `UPDATE` a document.

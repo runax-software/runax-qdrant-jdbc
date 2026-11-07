@@ -1,10 +1,12 @@
 package com.runaxsoftware.qdrant.jdbc.embedding;
 
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.time.Duration;
+import java.util.List;
 
 /**
  * Voyage AI's embeddings API.
@@ -16,15 +18,28 @@ import java.time.Duration;
  */
 public final class VoyageAiEmbedder extends HttpEmbedder {
 
+    /**
+     * The most texts in one request: Voyage's limit on {@code input}'s length.
+     */
+    static final int MAX_TEXTS = 1000;
+
+    /**
+     * The most tokens in one request, summed over its texts: Voyage's limit for its largest
+     * models, which is the lowest of its limits and so holds for all of them.
+     */
+    static final int MAX_TOKENS = 120_000;
+
     public VoyageAiEmbedder(HttpClient http, URI baseUrl, String apiKey, Duration timeout) {
-        super(http, baseUrl, apiKey, timeout, "Voyage AI");
+        super(http, baseUrl, apiKey, timeout, "Voyage AI", MAX_TEXTS, MAX_TOKENS);
     }
 
     @Override
-    ObjectNode body(EmbeddingModel model, TextRole role, String text) {
+    ObjectNode body(EmbeddingModel model, TextRole role, List<String> texts) {
         ObjectNode body = JSON.createObjectNode().put("model", model.name())
             .put("input_type", inputType(role));
-        body.putArray("input").add(text);
+        ArrayNode input = body.putArray("input");
+
+        for (String text : texts) input.add(text);
 
         if (model.dimensions() > 0) body.put("output_dimension", model.dimensions());
 
