@@ -127,6 +127,23 @@ push to `main`:
 `build-and-test-matrix (…)` checks aren't, so changing the JDK list never leaves a pull
 request waiting for a check that no longer runs.
 
+## Releasing
+
+A release is a tag. To release version `0.1.0`:
+
+1. In `CHANGELOG.md`, rename `## [Unreleased]` to `## [0.1.0] - <date>`, add a new empty
+   `## [Unreleased]` above it, and update the links at the bottom. Merge that to `main`.
+2. Tag the merged commit and push the tag:
+    ```bash
+    git tag v0.1.0
+    git push origin v0.1.0
+    ```
+
+`.github/workflows/release.yml` then builds `qdrant-jdbc-0.1.0-all.jar` with
+`-PreleaseVersion=0.1.0`, runs the unit tests, and publishes a GitHub release with the jar and
+that version's changelog section as its notes. It fails, publishing nothing, if the changelog
+has no section for the version. Any build without `-PreleaseVersion` is `0.1.0-SNAPSHOT`.
+
 ## Adding a dependency
 
 Every runtime dependency ends up inside the single driver jar that users drop into

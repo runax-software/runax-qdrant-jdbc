@@ -4,7 +4,8 @@ plugins {
 }
 
 group = "com.runaxsoftware"
-version = "0.1.0-SNAPSHOT"
+// A release build passes its version, as -PreleaseVersion=0.1.0; every other build is a snapshot.
+version = providers.gradleProperty("releaseVersion").getOrElse("0.1.0-SNAPSHOT")
 
 base {
     archivesName = "qdrant-jdbc"

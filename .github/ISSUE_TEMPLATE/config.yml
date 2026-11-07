@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/runax-software/runax-qdrant-jdbc/security/advisories/new
+    about: Please report vulnerabilities privately, not in a public issue.
+  - name: SQL the driver supports
+    url: https://github.com/runax-software/runax-qdrant-jdbc/blob/main/docs/coverage.md
+    about: Check whether a statement or clause is supported, and the error for each one that isn't.
