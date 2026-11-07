@@ -54,6 +54,8 @@ class EmbedSearchIntegrationTest {
     private static Connection connection;
     private static HttpServer openAi;
     private static final List<JsonNode> openAiRequests = new CopyOnWriteArrayList<>();
+    private static HttpServer voyage;
+    private static final List<JsonNode> voyageRequests = new CopyOnWriteArrayList<>();
 
     @BeforeAll
     static void createCollections() throws SQLException, IOException {
@@ -72,9 +74,23 @@ class EmbedSearchIntegrationTest {
         });
         openAi.start();
 
+        // Voyage's API answers the same shape; this one only records what it was asked for
+        voyage = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        voyage.createContext("/v1/embeddings", exchange -> {
+            voyageRequests.add(JSON.readTree(exchange.getRequestBody()));
+
+            byte[] body = "{\"data\": [{\"embedding\": [1.0, 0.0]}]}".getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        voyage.start();
+
         Properties properties = TestQdrant.properties();
         properties.setProperty("openaiApiKey", "sk-test");
         properties.setProperty("openaiUrl", "http://127.0.0.1:" + openAi.getAddress().getPort() + "/v1");
+        properties.setProperty("voyageApiKey", "pa-test");
+        properties.setProperty("voyageUrl", "http://127.0.0.1:" + voyage.getAddress().getPort() + "/v1");
 
         gateway = TestQdrant.gateway();
         connection = DriverManager.getConnection(TestQdrant.jdbcUrl(), properties);
@@ -102,6 +118,7 @@ class EmbedSearchIntegrationTest {
     static void deleteCollections() throws SQLException {
         if (connection != null) connection.close();
         if (openAi != null) openAi.stop(0);
+        if (voyage != null) voyage.stop(0);
 
         if (gateway != null) {
             gateway.deleteCollection(NAME);
@@ -183,6 +200,78 @@ class EmbedSearchIntegrationTest {
             assertEquals("Embedding with OpenAI needs its API key: set the openaiApiKey "
                 + "connection property", missing.getMessage());
         }
+    }
+
+    /**
+     * Voyage prepends a different retrieval prompt for a query and a document, so a text being
+     * stored must not be sent as a query. It was, until the embedder was told the role: this
+     * pins both directions against a server that records what it was asked for.
+     */
+    @Test
+    void tellsVoyageWhetherItIsEmbeddingAQueryOrADocument() throws SQLException {
+        String model = "voyage:voyage-3.5";
+        String table = NAME + "_roles";   // its own, since this one writes a point
+        voyageRequests.clear();
+
+        try (Statement statement = connection.createStatement()) {
+            statement.executeUpdate("CREATE TABLE " + table + " (dense VECTOR(2))");
+
+            try {
+                statement.executeUpdate("INSERT INTO " + table + " (_id, dense) VALUES "
+                    + "(1, embed('a stored passage', '" + model + "'))");
+
+                assertEquals(1, voyageRequests.size());
+                assertEquals("document", voyageRequests.get(0).path("input_type").asText(),
+                    "an INSERT stores documents");
+
+                try (ResultSet rows = statement.executeQuery("SELECT _id FROM " + table
+                    + " ORDER BY similarity(dense, embed('a search', '" + model + "')) DESC LIMIT 1")) {
+                    assertTrue(rows.next());
+                }
+
+                assertEquals(2, voyageRequests.size());
+                assertEquals("query", voyageRequests.get(1).path("input_type").asText(),
+                    "a search embeds a query");
+            } finally {
+                statement.executeUpdate("DROP TABLE IF EXISTS " + table);
+            }
+        }
+    }
+
+    /**
+     * A size in the model ID reaches the provider as its own parameter, so the provider returns a
+     * shorter vector rather than the driver truncating one it already paid for.
+     */
+    @Test
+    void sendsTheProviderTheSizeTheModelIdAsksFor() throws SQLException {
+        voyageRequests.clear();
+
+        try (Statement statement = connection.createStatement();
+             ResultSet rows = statement.executeQuery("SELECT _id FROM " + NAME
+                 + " ORDER BY similarity(dense, embed('a search', 'voyage:voyage-3.5?dimensions=2')) "
+                 + "DESC LIMIT 1")) {
+            assertTrue(rows.next());
+        }
+
+        assertEquals(2, voyageRequests.get(0).path("output_dimension").asInt(),
+            voyageRequests.get(0).toString());
+    }
+
+    /**
+     * The size has to match the vector, and the driver knows that before it pays to embed.
+     */
+    @Test
+    void refusesASizeTheVectorCantHoldWithoutCallingTheProvider() throws SQLException {
+        voyageRequests.clear();
+
+        try (Statement statement = connection.createStatement()) {
+            assertEquals("42000", assertThrows(SQLException.class,
+                () -> statement.executeQuery("SELECT _id FROM " + NAME + " ORDER BY similarity("
+                    + "dense, embed('a search', 'voyage:voyage-3.5?dimensions=1024')) DESC LIMIT 1"))
+                .getSQLState());
+        }
+
+        assertEquals(List.of(), voyageRequests, "the provider was never called");
     }
 
     private static List<String> ids(String sql) throws SQLException {

@@ -2,6 +2,7 @@ package com.runaxsoftware.qdrant.jdbc.sql.planner;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.runaxsoftware.qdrant.jdbc.embedding.EmbeddingModel;
 import com.runaxsoftware.qdrant.jdbc.embedding.Provider;
@@ -146,6 +147,48 @@ class EmbedPlannerTest {
         assertEquals("Searching 'keywords', a SPARSE_VECTOR of docs, with a vector written out "
                 + "isn't supported yet: search it with embed('text', 'qdrant:qdrant/bm25'), which "
                 + "Qdrant embeds", error.getMessage());
+    }
+
+    // The size a model ID asks for
+
+    @Test
+    void embedsWithTheSizeTheModelIdAsksForWhenItFitsTheVector() throws SQLException {
+        QueryPlan plan = query(PLAIN, "SELECT _id FROM docs ORDER BY similarity(dense, "
+                + "embed('refund policy', 'openai:text-embedding-3-large?dimensions=384')) DESC LIMIT 5");
+
+        assertEquals(new EmbedText(
+                new EmbeddingModel(Provider.OPENAI, "text-embedding-3-large", 384),
+                "refund policy", 384), plan.embed());
+    }
+
+    /**
+     * The size is known before the provider is called, so a vector that couldn't be stored is an
+     * error now rather than after paying to embed it.
+     */
+    @Test
+    void refusesASizeTheVectorCantHoldBeforeCallingTheProvider() {
+        SQLException error = assertThrows(SQLException.class,
+                () -> query(PLAIN, "SELECT _id FROM docs ORDER BY similarity(dense, "
+                        + "embed('refund policy', 'openai:text-embedding-3-large?dimensions=1024')) "
+                        + "DESC LIMIT 5"));
+
+        assertEquals("42000", error.getSQLState());
+        assertTrue(error.getMessage().contains("1024"), error.getMessage());
+        assertTrue(error.getMessage().contains("384"), error.getMessage());
+    }
+
+    /**
+     * A size makes a different model, so one that doesn't match the collection's metadata is
+     * caught by the check that already compares them.
+     */
+    @Test
+    void refusesASizeTheCollectionsModelDoesntAskFor() {
+        SQLException error = assertThrows(SQLException.class,
+                () -> query(KEPT, "SELECT _id FROM docs ORDER BY similarity(dense, "
+                        + "embed('refund policy', 'openai:text-embedding-3-small?dimensions=384')) "
+                        + "DESC LIMIT 5"));
+
+        assertEquals("42000", error.getSQLState());
     }
 
     private QueryPlan query(TableSchema schema, String sql) throws SQLException {

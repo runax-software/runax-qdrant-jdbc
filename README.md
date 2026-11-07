@@ -116,6 +116,15 @@ LIMIT 10
 | `openai:<model>` | The driver, through OpenAI's API | `openaiApiKey` (and `openaiUrl` for Azure or a proxy) |
 | `voyage:<model>` | The driver, through Voyage AI's API | `voyageApiKey` |
 
+A model that can return fewer dimensions than it was trained for takes the size to return, as
+`embed('refund policy', 'openai:text-embedding-3-large?dimensions=1024')`: the provider shortens
+the vector, which keeps more of its meaning than cutting one short afterwards. The size has to
+match the vector it goes into, and a mismatch is an error before the provider is called.
+
+Whether the text is a search query or a document being stored travels with it, because some
+models embed the two differently: `embed()` in a ranking function is a query, and in an `INSERT`
+or `UPDATE` a document.
+
 A vector is searched well only with the model its points were embedded with. Keep it in the
 collection's metadata as `runax.embed.<vector>`, and `embed('refund policy')` needs no model;
 naming a different one is then an error rather than a search that quietly finds nonsense:

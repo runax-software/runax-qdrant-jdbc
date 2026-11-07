@@ -474,6 +474,16 @@ final class SelectPlanner {
                 + ": embed it with a model Qdrant runs, as qdrant:qdrant/bm25 for a sparse one");
         }
 
+        // A size the ID asks for is known before the provider is called, so a mismatch fails here
+        // rather than after paying for a vector that can't be stored
+        if (model.dimensions() > 0 && vector.type() == ColumnType.VECTOR
+            && model.dimensions() != vector.size()) {
+            throw new SQLSyntaxErrorException(model + " is asked for " + model.dimensions()
+                + " dimensions, and '" + vector.name() + "' of " + schema.name() + " holds "
+                + vector.size() + ": ask for " + vector.size() + " dimensions, or leave the size "
+                + "out for the model's own", "42000");
+        }
+
         return new EmbedText(model, text, vector.type() == ColumnType.VECTOR ? vector.size() : 0);
     }
 

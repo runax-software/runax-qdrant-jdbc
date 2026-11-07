@@ -1186,19 +1186,19 @@ class ExecutorTest {
         List<QueryRequest> requests = new ArrayList<>();
         List<String> embedded = new ArrayList<>();
 
-        searching(requests, provider -> (model, text) -> {
-            embedded.add(provider + " " + model + " " + text);
+        searching(requests, provider -> (model, role, text) -> {
+            embedded.add(provider + " " + model + " " + role + " " + text);
             return List.of(0.1, 0.2);
         }).execute(embedded("openai:text-embedding-3-small", 2), STATEMENT).resultSet().close();
 
-        assertEquals(List.of("OPENAI text-embedding-3-small refund policy"), embedded);
+        assertEquals(List.of("OPENAI openai:text-embedding-3-small QUERY refund policy"), embedded);
         assertEquals(List.of(0.1, 0.2), requests.get(0).query());
         assertNull(requests.get(0).document(), "Qdrant gets the vector, not the text");
     }
 
     @Test
     void rejectsAVectorOfOtherDimensionsThanTheSearchedOne() {
-        Executor executor = searching(new ArrayList<>(), provider -> (model, text) -> List.of(0.1, 0.2, 0.3));
+        Executor executor = searching(new ArrayList<>(), provider -> (model, role, text) -> List.of(0.1, 0.2, 0.3));
 
         SQLException error = assertThrows(SQLException.class,
             () -> executor.execute(embedded("openai:text-embedding-3-small", 2), STATEMENT));

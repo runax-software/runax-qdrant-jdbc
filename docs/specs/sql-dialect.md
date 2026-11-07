@@ -496,11 +496,25 @@ gone.
 it, a colon, and the model's own name, unchanged: `openai:text-embedding-3-small`,
 `voyage:voyage-3`, `qdrant:qdrant/bm25`, `qdrant:sentence-transformers/all-minilm-l6-v2`.
 
+A model that can return fewer dimensions than it was trained for takes the size it should
+return, as `openai:text-embedding-3-large?dimensions=1024`. The provider shortens the vector
+itself, which keeps more of the meaning than truncating one the driver already paid for. The
+size is part of the ID rather than a connection setting, so a collection's metadata names one
+vector exactly and a search can't quietly ask for a different size from the one its points were
+stored with: two IDs asking for different sizes are different models. A size that doesn't match
+the vector's own is an error before the provider is called.
+
 | Provider | Who embeds | Settings |
 | --- | --- | --- |
 | `qdrant` | Qdrant, through the Query API's document query: any kind of vector the model makes | None: every Qdrant runs `qdrant/bm25`; hosted models need Qdrant Cloud's inference |
 | `openai` | The driver, through `POST {openaiUrl}/embeddings` | `openaiApiKey`; `openaiUrl` (default `https://api.openai.com/v1`) for Azure OpenAI or a proxy |
-| `voyage` | The driver, through `POST {voyageUrl}/embeddings`, as a query | `voyageApiKey`; `voyageUrl` (default `https://api.voyageai.com/v1`) |
+| `voyage` | The driver, through `POST {voyageUrl}/embeddings` | `voyageApiKey`; `voyageUrl` (default `https://api.voyageai.com/v1`) |
+
+Whether a text is a search query or a document being stored is sent along with it, since some
+models embed the two differently so that a question lands near the passages answering it:
+`embed()` inside a ranking function is a query, and inside `INSERT` or `UPDATE` a document.
+Voyage takes this as its `input_type`; OpenAI's models embed both the same way and are sent no
+role. A size becomes OpenAI's `dimensions` or Voyage's `output_dimension`.
 
 The driver decides **which model** a vector uses. It keeps that in the collection's metadata,
 under `runax.embed.<vector>` (`runax.embed._vector` for the unnamed one), so every client
