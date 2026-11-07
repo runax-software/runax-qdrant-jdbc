@@ -1,8 +1,12 @@
 # SQL for Qdrant — dialect spec
 
-**Status:** draft. Today the driver only describes collections through `DatabaseMetaData`;
-this spec is the target for everything else. It maps each part of Qdrant 1.20's API to the
-SQL the driver will accept, so the [roadmap](../../ROADMAP.md) can be built against one plan.
+**Status:** part built, part target. This spec maps each part of Qdrant 1.20's API to the SQL
+the driver accepts, so the [roadmap](../../ROADMAP.md) can be built against one plan. A good
+deal of it runs today — reads with filters, patterns and full-text matching, similarity search,
+`COUNT(*)` and `GROUP BY`, the write statements, and DDL for collections, indexes and views —
+and the rest is still the target. Each section says which of its parts run, under
+**What runs today**; for the measured version of the same question, see
+[docs/coverage.md](../coverage.md).
 
 ## Principles
 
@@ -688,11 +692,10 @@ These are errors, not emulated:
 - Transactions and savepoints: every statement applies on its own, because Qdrant has no
   transactions. An opt-in write buffer that holds writes until `commit()` may come later
   (see the roadmap); it still wouldn't make commits atomic.
-- Server internals: telemetry (`/telemetry`), Prometheus metrics (`/metrics`), cluster and
-  Raft consensus state (`/cluster`), and Qdrant's performance hints (`/issues`). The driver
-  doesn't read them yet; use Qdrant's REST API directly or a monitoring tool such as
-  Prometheus. They're planned as [system tables](#system-tables), where collections and
-  aliases already are.
+- Writing to the `system` tables, or reading server internals any way but through them.
+  Telemetry, Prometheus metrics, cluster and Raft state, and Qdrant's performance hints are
+  all readable as [system tables](#system-tables) and are read-only there; of telemetry, only
+  what Qdrant answers with by default is exposed, not its deeper `?details_level=` levels.
 
 ## Open questions
 

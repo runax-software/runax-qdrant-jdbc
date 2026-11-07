@@ -4,9 +4,14 @@ A JDBC driver that lets SQL tools browse and query [Qdrant](https://qdrant.tech)
 collections with SQL, including vector similarity search. JetBrains DataGrip is the
 first target; any JDBC client (DBeaver, BI tools) should work the same way.
 
-> **Status: early development.** Nothing is published yet. The driver connects and lists
-> collections and their columns in DataGrip's database explorer, but doesn't run SQL yet.
-> The querying sections below describe the planned design — see [ROADMAP.md](ROADMAP.md).
+> **Status: early development.** Nothing is published to Maven Central yet, so the driver is
+> built from source (`./gradlew shadowJar`). It does run SQL: `SELECT` with filters, patterns
+> and full-text matching, vector similarity search, `COUNT(*)` and `GROUP BY`, `INSERT`,
+> `UPDATE`, `DELETE`, and DDL for collections, indexes and views — fifteen statement kinds.
+> Exactly how much of Qdrant and how much SQL that amounts to is measured in
+> [docs/coverage.md](docs/coverage.md), the target dialect is in
+> [docs/specs/sql-dialect.md](docs/specs/sql-dialect.md), and what's next is in
+> [ROADMAP.md](ROADMAP.md).
 
 - **Collections as tables** — collections show up in the database explorer, and points
   as rows: every payload field is a column under its own name, next to the driver's own

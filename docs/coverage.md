@@ -5,9 +5,9 @@ and how much SQL it accepts. Both are measured, not estimated — every number b
 the code or from a server that was asked. The point is to make the gaps legible, so a
 maintainer can tell a missing feature that blocks real use from one that nobody would notice.
 
-**Measured against** driver commit `844d89d` (with `SET`, `UPDATE`, `INSERT`, `OFFSET`, the
-index and view statements, the vector changes and the text conditions, #27, #28, #30, #31, #33,
-#34 and #35) and this branch's `ON CONFLICT` on top, and Qdrant
+**Measured against** driver commit `ef01aa9` — the whole of `SET`, `OFFSET`, the index and view
+statements, the write statements, the vector changes, the text conditions and `ON CONFLICT`
+(#27, #28, #30, #31, #33, #34, #35 and #36) — and Qdrant
 **1.20.0** (build
 `222b2e44ab1c3f17e8246396ead6558e45041df7`), running locally over REST on port 6333, with the
 three collections `./gradlew seedQdrant` loads. Qdrant 1.20 does not serve `/openapi.json` —
@@ -448,22 +448,23 @@ and vectors, `CALL` procedures for snapshots and shard keys, `WHERE` and `ORDER 
 
 [ROADMAP.md](../ROADMAP.md) has the plan and the ticks, and
 [docs/specs/sql-dialect.md](specs/sql-dialect.md) has the full target dialect, including the
-syntax for everything above that does not exist yet. Neither is duplicated here. Both are
-ahead of or behind the code in four places, all of which are stale prose rather than wrong
-plans:
+syntax for everything above that does not exist yet. Neither is duplicated here.
 
-- The **README status block** says the driver "doesn't run SQL yet". It runs everything in the
-  tables above.
-- The **dialect spec's header** says "today the driver only describes collections through
-  `DatabaseMetaData`". Same staleness, same fix.
-- The dialect spec's **Not supported** section ends by saying the driver does not read
-  telemetry, metrics, cluster state or issues yet. It reads all four, and the same file's
-  *System tables* section documents them — the file contradicts itself.
-- The roadmap's **`COUNT(*)`** item is ticked but still lists as "to come" both counting what a
-  `WHERE` matches and a count per group through the facet API. Both work, and the `GROUP BY`
-  item below it is ticked for the second one.
+At this commit they agree with the code. The four places they didn't — the README saying the
+driver "doesn't run SQL yet", the dialect spec's header saying it "only describes collections
+through `DatabaseMetaData`", that spec's *Not supported* section denying it reads telemetry,
+metrics, cluster state and issues while its own *System tables* section documented all four,
+and the roadmap's ticked `COUNT(*)` item still listing filtered and grouped counts as "to
+come" — are fixed.
 
-Everything else the roadmap ticks does behave as described, including the limits it admits to:
+The failure mode to watch for is the one those four shared: prose that was true when written
+and that nothing forces to be re-read. Two habits keep it from coming back. A sentence saying
+what the driver can't do yet is worth a glance whenever that thing lands, which is why each
+section of the dialect spec marks what runs rather than hiding it in prose. And a doc written
+on a branch shouldn't say "this branch": it stops being one at merge, and that phrase has
+already gone stale twice here.
+
+Everything the roadmap ticks does behave as described, including the limits it admits to:
 `LIMIT ?` and `OFFSET ?` are rejected, `ORDER BY _id DESC` is an error, dense vectors are the
 only ones a written-out vector can search, and an ordered, grouped or ranked read is bounded
 by a `LIMIT`, by `setMaxRows`, or by `defaultLimit` with a warning.
