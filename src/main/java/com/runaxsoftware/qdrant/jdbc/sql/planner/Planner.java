@@ -9,6 +9,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateIndexStateme
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateTableStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateViewStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DeleteStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DistanceMatrixStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropColumnStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropIndexStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropTableStatement;
@@ -53,6 +54,7 @@ public final class Planner {
     private final AlterPlanner alterPlanner = new AlterPlanner();
     private final SettingsPlanner settingsPlanner = new SettingsPlanner();
     private final CallPlanner callPlanner = new CallPlanner();
+    private final MatrixPlanner matrixPlanner = new MatrixPlanner();
 
     public Plan plan(Statement statement, Catalog catalog) throws SQLException {
         if (statement instanceof SelectStatement select) {
@@ -96,6 +98,9 @@ public final class Planner {
         }
         if (statement instanceof AlterSystemStatement system) {
             return settingsPlanner.plan(system);
+        }
+        if (statement instanceof DistanceMatrixStatement matrix) {
+            return matrixPlanner.plan(matrix, catalog);
         }
         if (statement instanceof CallStatement call) {
             return callPlanner.plan(call);

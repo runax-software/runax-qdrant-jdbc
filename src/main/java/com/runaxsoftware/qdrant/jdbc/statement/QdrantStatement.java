@@ -11,6 +11,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.executor.Executor;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.Parser;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.TableName;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DeleteStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DistanceMatrixStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Statement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.UpdateStatement;
@@ -408,6 +409,7 @@ public class QdrantStatement extends AbstractStatement {
      */
     private static String collectionRead(Statement statement) {
         TableName table = statement instanceof SelectStatement select ? select.table()
+            : statement instanceof DistanceMatrixStatement matrix ? matrix.table()
             : statement instanceof DeleteStatement delete ? delete.table()
             : statement instanceof UpdateStatement update ? update.table()
             : null;

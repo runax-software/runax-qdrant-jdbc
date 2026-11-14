@@ -112,6 +112,16 @@ public final class FakeQdrantServer implements AutoCloseable {
         QUERY_GROUPS,
 
         /**
+         * {@code POST /collections/{name}/points/search/matrix/pairs}.
+         */
+        MATRIX_PAIRS,
+
+        /**
+         * {@code POST /collections/{name}/points/search/matrix/offsets}.
+         */
+        MATRIX_OFFSETS,
+
+        /**
          * {@code POST /collections/{name}/points/query/batch}: several searches in one call.
          */
         QUERY_BATCH,
@@ -730,6 +740,8 @@ public final class FakeQdrantServer implements AutoCloseable {
                 case QUERY -> query(exchange, segments[2], body);
                 case QUERY_BATCH -> queryBatch(exchange, segments[2], body);
                 case QUERY_GROUPS -> queryGroups(exchange, segments[2], body);
+                case MATRIX_PAIRS -> matrix(exchange, segments[2], body, false);
+                case MATRIX_OFFSETS -> matrix(exchange, segments[2], body, true);
                 case COUNT -> count(exchange, segments[2]);
                 case FACET -> facet(exchange, segments[2], body);
                 case ALIASES -> ok(exchange, Json.object("aliases", aliasList()));
@@ -832,6 +844,15 @@ public final class FakeQdrantServer implements AutoCloseable {
         if (method.equals("POST") && segments.length == 6 && segments[3].equals("points")
             && segments[4].equals("query") && segments[5].equals("batch")) {
             return Endpoint.QUERY_BATCH;
+        }
+
+        if (method.equals("POST") && segments.length == 7 && segments[3].equals("points")
+            && segments[4].equals("search") && segments[5].equals("matrix")) {
+            switch (segments[6]) {
+                case "pairs": return Endpoint.MATRIX_PAIRS;
+                case "offsets": return Endpoint.MATRIX_OFFSETS;
+                default: break;
+            }
         }
 
         if (method.equals("POST") && segments.length == 6 && segments[3].equals("points")
@@ -1131,6 +1152,44 @@ public final class FakeQdrantServer implements AutoCloseable {
         }
 
         ok(exchange, Json.object("groups", Json.array(listed.toArray())));
+    }
+
+    /**
+     * A distance matrix of the collection's first {@code sample} points: each with the one
+     * after it as its only neighbour, scored 0.9, 0.8 and so on, as pairs or as offsets.
+     */
+    private void matrix(HttpExchange exchange, String name, JsonNode request, boolean offsets)
+        throws IOException {
+        if (find(name) == null) {
+            notFound(exchange, name);
+            return;
+        }
+
+        List<ObjectNode> all = points.get(resolve(name));
+        int sample = Math.min(all.size(), request.path("sample").asInt(10));
+        List<JsonNode> ids = new ArrayList<>();
+        List<JsonNode> pairs = new ArrayList<>();
+        List<Integer> rows = new ArrayList<>();
+        List<Integer> cols = new ArrayList<>();
+        List<Double> scores = new ArrayList<>();
+
+        for (int i = 0; i < sample; i++) ids.add(all.get(i).get("id"));
+
+        for (int i = 0; i < sample && sample > 1; i++) {
+            int neighbour = (i + 1) % sample;
+            double score = Math.round((0.9 - i * 0.1) * 100) / 100.0;
+
+            pairs.add(Json.object("a", ids.get(i), "b", ids.get(neighbour), "score", score));
+            rows.add(i);
+            cols.add(neighbour);
+            scores.add(score);
+        }
+
+        ok(exchange, offsets
+            ? Json.object("offsets_row", Json.array(rows.toArray()),
+                "offsets_col", Json.array(cols.toArray()), "scores", Json.array(scores.toArray()),
+                "ids", Json.array(ids.toArray()))
+            : Json.object("pairs", Json.array(pairs.toArray())));
     }
 
     private ObjectNode queried(String name, JsonNode request) {

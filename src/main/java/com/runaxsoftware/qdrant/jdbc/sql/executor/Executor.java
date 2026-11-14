@@ -12,6 +12,8 @@ import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetHit;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.Document;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.MatrixPair;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.MatrixRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadIndexType;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QueryRequest;
@@ -39,6 +41,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetColumn;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.GroupedQueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.InsertPointsPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.MatrixPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.NewPoint;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ProcedurePlan;
@@ -224,6 +227,11 @@ public final class Executor {
                     grouped.search().collection()),
                 limit == 0 ? List.of() : groupedRows(grouped, limit), statement),
                 warning(bounded, "A similarity search"));
+        }
+
+        if (plan instanceof MatrixPlan matrix) {
+            return ExecutionResult.rows(new ListResultSet(matrixColumns(matrix),
+                matrixRows(matrix, limit(matrix.limit(), maxRows)), statement));
         }
 
         if (plan instanceof CountPlan count) {
@@ -914,6 +922,11 @@ public final class Executor {
             }
 
             @Override
+            public List<MatrixPair> matrix(MatrixRequest matrix) throws SQLException {
+                return gateway.matrix(matrix);
+            }
+
+            @Override
             public List<ScoredPoint> searchGroups(QueryRequest query, String groupBy,
                                                   long groupSize) throws SQLException {
                 return gateway.queryGroups(query, groupBy, groupSize);
@@ -1160,6 +1173,46 @@ public final class Executor {
         found.sort(plan.lowerIsBest() ? byScore : byScore.reversed());
 
         return rows(search, found.stream().skip(search.offset()).limit(limit).toList());
+    }
+
+    private static List<ResultColumn> matrixColumns(MatrixPlan plan) {
+        var columns = new ArrayList<ResultColumn>(plan.columns().size());
+
+        for (int i = 0; i < plan.columns().size(); i++) {
+            columns.add(ResultColumn.of(plan.names().get(i), plan.columns().get(i).sqlType()));
+        }
+
+        return columns;
+    }
+
+    /**
+     * The matrix's rows, in Qdrant's order: each sampled point's neighbours together, the
+     * closest first. Qdrant answers the whole matrix at once, so the OFFSET and the limit are
+     * taken here, and a limit of no rows asks for nothing.
+     */
+    private List<Object[]> matrixRows(MatrixPlan plan, Long limit) throws SQLException {
+        if (limit != null && limit <= 0) return List.of();
+
+        var rows = new ArrayList<Object[]>();
+
+        for (MatrixPair pair : searcher.matrix(plan.request()).stream().skip(plan.offset())
+            .limit(limit == null ? Long.MAX_VALUE : limit).toList()) {
+            Object[] row = new Object[plan.columns().size()];
+
+            for (int i = 0; i < row.length; i++) {
+                row[i] = switch (plan.columns().get(i)) {
+                    case A -> pair.a().asText();
+                    case B -> pair.b().asText();
+                    case SCORE -> pair.score();
+                    case ROW -> pair.row();
+                    case COL -> pair.col();
+                };
+            }
+
+            rows.add(row);
+        }
+
+        return rows;
     }
 
     // The points a search found as rows of the columns it selects

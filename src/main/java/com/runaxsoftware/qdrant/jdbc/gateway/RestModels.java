@@ -48,6 +48,42 @@ final class RestModels {
             Collections.unmodifiableMap(metadata), Set.copyOf(phraseFields));
     }
 
+    /**
+     * A distance matrix answered as pairs: each pair as Qdrant lists it.
+     */
+    static List<MatrixPair> matrixPairs(JsonNode result) {
+        List<MatrixPair> pairs = new ArrayList<>();
+
+        for (JsonNode pair : result.path("pairs")) {
+            pairs.add(new MatrixPair(pair.get("a"), pair.get("b"), pair.path("score").asDouble(0),
+                null, null));
+        }
+
+        return List.copyOf(pairs);
+    }
+
+    /**
+     * A distance matrix answered as offsets: three lists side by side, a row, a column and a
+     * score for each cell, and the sampled points' IDs by position, which name both points.
+     */
+    static List<MatrixPair> matrixOffsets(JsonNode result) {
+        JsonNode rows = result.path("offsets_row");
+        JsonNode cols = result.path("offsets_col");
+        JsonNode scores = result.path("scores");
+        JsonNode ids = result.path("ids");
+        List<MatrixPair> pairs = new ArrayList<>();
+
+        for (int i = 0; i < rows.size() && i < cols.size() && i < scores.size(); i++) {
+            long row = rows.get(i).asLong();
+            long col = cols.get(i).asLong();
+
+            pairs.add(new MatrixPair(ids.get((int) row), ids.get((int) col),
+                scores.get(i).asDouble(0), row, col));
+        }
+
+        return List.copyOf(pairs);
+    }
+
     static List<QdrantAlias> aliases(JsonNode result) {
         List<QdrantAlias> aliases = new ArrayList<>();
 

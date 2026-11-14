@@ -12,6 +12,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.runaxsoftware.qdrant.jdbc.embedding.Embedders;
 import com.runaxsoftware.qdrant.jdbc.embedding.EmbeddingModel;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.MatrixPair;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.MatrixRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.Document;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetHit;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetRequest;
@@ -33,6 +35,8 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.EmbedText;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetColumn;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.GroupedQueryPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.MatrixColumn;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.MatrixPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
@@ -774,6 +778,63 @@ class ExecutorTest {
 
         assertEquals(List.of(1L, 3L, 3L, 2L),
             requests.stream().map(QueryRequest::limit).toList());
+    }
+
+    @Test
+    void readsAMatrixsRowsInQdrantsOrderAndTakesTheOffsetAndLimitItself() throws SQLException {
+        var asked = new ArrayList<MatrixRequest>();
+        var request = new MatrixRequest("docs", "dense", 3L, 1L, null, true);
+        Executor matrix = new Executor(scroll -> {
+            throw new AssertionError("Scrolled " + scroll.collection());
+        }, new Searcher() {
+            @Override
+            public List<ScoredPoint> search(QueryRequest query) {
+                throw new AssertionError("Searched");
+            }
+
+            @Override
+            public List<MatrixPair> matrix(MatrixRequest matrix) {
+                asked.add(matrix);
+
+                return List.of(
+                    new MatrixPair(JSON.getNodeFactory().numberNode(1),
+                        JSON.getNodeFactory().textNode("5c56"), 0.9, 0L, 1L),
+                    new MatrixPair(JSON.getNodeFactory().textNode("5c56"),
+                        JSON.getNodeFactory().numberNode(3), 0.8, 1L, 2L),
+                    new MatrixPair(JSON.getNodeFactory().numberNode(3),
+                        JSON.getNodeFactory().numberNode(1), 0.7, 2L, 0L));
+            }
+        }, (collection, filter) -> 0, facet -> List.of(), table -> List.of());
+
+        try (ResultSet rows = matrix.execute(new MatrixPlan(request,
+            List.of(MatrixColumn.B, MatrixColumn.SCORE, MatrixColumn.ROW, MatrixColumn.COL),
+            List.of("neighbour", "_score", "_row", "_col"), 5L, 1), statement(0, 0)).resultSet()) {
+            assertEquals("neighbour", rows.getMetaData().getColumnLabel(1));
+            assertEquals(Types.DOUBLE, rows.getMetaData().getColumnType(2));
+            assertEquals(Types.BIGINT, rows.getMetaData().getColumnType(3));
+
+            assertTrue(rows.next());
+            assertEquals("3", rows.getString("neighbour"), "an ID is text, as _id is");
+            assertEquals(0.8, rows.getDouble("_score"));
+            assertEquals(1, rows.getLong("_row"));
+            assertEquals(2, rows.getLong("_col"));
+            assertTrue(rows.next());
+            assertFalse(rows.next());
+        }
+
+        assertEquals(List.of(request), asked);
+
+        try (ResultSet rows = matrix.execute(new MatrixPlan(request, List.of(MatrixColumn.A),
+            List.of("_a"), null, 0), statement(2, 0)).resultSet()) {
+            assertEquals(List.of("1", "5c56"), ids(rows), "the statement's maximum rows bound it");
+        }
+
+        try (ResultSet rows = matrix.execute(new MatrixPlan(request, List.of(MatrixColumn.A),
+            List.of("_a"), 0L, 0), statement(0, 0)).resultSet()) {
+            assertFalse(rows.next());
+        }
+
+        assertEquals(2, asked.size(), "a limit of no rows asks for no matrix");
     }
 
     @Test

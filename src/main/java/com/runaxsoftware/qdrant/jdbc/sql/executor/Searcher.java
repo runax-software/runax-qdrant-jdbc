@@ -1,5 +1,7 @@
 package com.runaxsoftware.qdrant.jdbc.sql.executor;
 
+import com.runaxsoftware.qdrant.jdbc.gateway.models.MatrixPair;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.MatrixRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QueryRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScoredPoint;
 
@@ -28,6 +30,14 @@ interface Searcher {
         for (QueryRequest query : queries) answers.add(search(query));
 
         return answers;
+    }
+
+    /**
+     * A distance matrix: sampled points, each with its nearest neighbours among the sample. Only
+     * a searcher that reaches Qdrant's matrix search has one.
+     */
+    default List<MatrixPair> matrix(MatrixRequest matrix) throws SQLException {
+        throw new SQLFeatureNotSupportedException("This searcher has no distance matrix");
     }
 
     /**
