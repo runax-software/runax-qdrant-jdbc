@@ -339,7 +339,7 @@ abstract class AbstractDatabaseMetaData implements DatabaseMetaData {
 
     @Override
     public boolean supportsMultipleResultSets() {
-        return false;
+        return true;
     }
 
     @Override

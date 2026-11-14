@@ -86,6 +86,35 @@ class SimilaritySearchIntegrationTest {
     }
 
     @Test
+    void runsSeveralSearchesInOneCallAndAnswersEachAsItWouldAlone() throws SQLException {
+        String near = "SELECT _id, _score FROM " + PREFIX + "products ORDER BY "
+            + "similarity(_vector, [0.9, 0.1, 0.1, 0.2]) DESC LIMIT 2";
+        String far = "SELECT _id FROM " + PREFIX + "products WHERE price > 20 ORDER BY "
+            + "similarity(_vector, [0.1, 0.2, 0.3, 0.4]) DESC LIMIT 3";
+
+        try (Statement statement = connection.createStatement()) {
+            List<String> alone = new ArrayList<>();
+            for (String sql : List.of(near, far)) {
+                try (ResultSet rows = statement.executeQuery(sql)) {
+                    while (rows.next()) alone.add(rows.getString("_id"));
+                }
+            }
+
+            List<String> together = new ArrayList<>();
+            assertTrue(statement.execute(near + ";\n" + far + ";"));
+            do {
+                try (ResultSet rows = statement.getResultSet()) {
+                    while (rows.next()) together.add(rows.getString("_id"));
+                }
+            } while (statement.getMoreResults());
+
+            assertEquals(5, alone.size());
+            assertEquals(alone, together);
+            assertTrue(connection.getMetaData().supportsMultipleResultSets());
+        }
+    }
+
+    @Test
     void searchesANamedVectorAndReturnsItWhenAsked() throws SQLException {
         try (Statement statement = connection.createStatement();
              ResultSet rows = statement.executeQuery("SELECT _id, _score, dense, title FROM "

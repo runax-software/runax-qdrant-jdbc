@@ -7,6 +7,9 @@ import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.SQLWarning;
 import java.sql.Statement;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.List;
 
 /**
  * The parts of {@link Statement} that don't depend on the SQL: the settings tools apply before
@@ -28,6 +31,9 @@ abstract class AbstractStatement implements Statement {
     private SQLWarning warnings;
     private ResultSet resultSet;
     private long updateCount = -1;
+
+    // The results after the current one, for getMoreResults, when one run answers with several
+    private final Deque<ResultSet> pending = new ArrayDeque<>();
 
     AbstractStatement(QdrantConnection connection) {
         this.connection = connection;
@@ -62,12 +68,14 @@ abstract class AbstractStatement implements Statement {
     public boolean getMoreResults(int current) throws SQLException {
         checkOpen();
 
-        // Every statement has a single result, so there's never a next one
+        // Only a batch of searches has a next result; anything else has the one
         updateCount = -1;
         if (current == Statement.KEEP_CURRENT_RESULT) resultSet = null;
         else closeResultSet();
 
-        return false;
+        resultSet = pending.poll();
+
+        return resultSet != null;
     }
 
     @Override
@@ -296,7 +304,7 @@ abstract class AbstractStatement implements Statement {
 
     @Override
     public void close() throws SQLException {
-        if (!closed) closeResultSet();
+        if (!closed) closeResults();
         closed = true;
     }
 
@@ -340,14 +348,30 @@ abstract class AbstractStatement implements Statement {
     }
 
     /**
-     * Closes the result of the previous run, as every JDBC run does before it starts.
+     * Keeps the results that follow the current one, in order, for {@link #getMoreResults()}.
+     */
+    void setPendingResults(List<ResultSet> results) {
+        pending.clear();
+        pending.addAll(results);
+    }
+
+    /**
+     * Closes the current result, as getMoreResults does before it moves on to the next.
      */
     void closeResultSet() throws SQLException {
-        if (resultSet == null) return;
-
         ResultSet previous = resultSet;
         resultSet = null;
-        previous.close();
+        if (previous != null) previous.close();
+    }
+
+    /**
+     * Closes the results of the previous run, the current one and any not reached yet, as every
+     * JDBC run does before it starts.
+     */
+    void closeResults() throws SQLException {
+        closeResultSet();
+
+        while (!pending.isEmpty()) pending.poll().close();
     }
 
     void checkOpen() throws SQLException {

@@ -199,6 +199,42 @@ public class QdrantGateway implements AutoCloseable {
      * with the points after it and nothing has to be discarded here.
      */
     public List<ScoredPoint> query(QueryRequest query) throws SQLException {
+        return RestModels.scoredPoints(request(HttpMethod.POST,
+            "/collections/" + segment(query.collection()) + "/points/query" + readParameters(),
+            queryBody(query)));
+    }
+
+    /**
+     * Several searches of one collection in one call, each answered as {@link #query} would
+     * answer it, in the order given.
+     *
+     * @param queries the searches, all of {@code collection}; none is sent when there are none
+     */
+    public List<List<ScoredPoint>> queryBatch(String collection, List<QueryRequest> queries)
+        throws SQLException {
+        if (queries.isEmpty()) return List.of();
+
+        ObjectNode body = JSON.createObjectNode();
+        ArrayNode searches = body.putArray("searches");
+        for (QueryRequest query : queries) searches.add(queryBody(query));
+
+        var answers = new ArrayList<List<ScoredPoint>>(queries.size());
+        for (JsonNode answer : request(HttpMethod.POST,
+            "/collections/" + segment(collection) + "/points/query/batch" + readParameters(),
+            body)) {
+            answers.add(RestModels.scoredPoints(answer));
+        }
+
+        if (answers.size() != queries.size()) {
+            throw new SQLException("Qdrant answered " + answers.size() + " of the "
+                + queries.size() + " searches it was sent", "08S01");
+        }
+
+        return answers;
+    }
+
+    // One search as the Query API takes it, alone or as one of a batch
+    private ObjectNode queryBody(QueryRequest query) {
         ObjectNode body = JSON.createObjectNode()
             .put("limit", query.limit())
             .put("with_payload", query.withPayload())
@@ -221,9 +257,7 @@ public class QdrantGateway implements AutoCloseable {
         ObjectNode params = searchParameters();
         if (!params.isEmpty()) body.set("params", params);
 
-        return RestModels.scoredPoints(request(HttpMethod.POST,
-            "/collections/" + segment(query.collection()) + "/points/query" + readParameters(),
-            body));
+        return body;
     }
 
     /**

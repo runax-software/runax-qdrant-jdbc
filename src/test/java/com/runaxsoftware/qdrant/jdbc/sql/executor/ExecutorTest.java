@@ -776,6 +776,29 @@ class ExecutorTest {
     }
 
     @Test
+    void runsSeveralSearchesAndReturnsEachOnesRowsInOrder() throws SQLException {
+        var requests = new ArrayList<QueryRequest>();
+
+        List<ExecutionResult> results = search(requests).executeSearches(
+            List.of(plan(1L), plan(0L), plan(null, 4)), statement(2, 0));
+
+        assertEquals(3, results.size());
+        assertEquals(List.of(1L, 2L), requests.stream().map(QueryRequest::limit).toList(),
+            "the search of no rows isn't sent, and the last is bounded by the maximum rows");
+        assertEquals(4, requests.get(1).offset());
+
+        assertEquals(List.of(1, 0, 2), results.stream().map(result -> {
+            try (ResultSet rows = result.resultSet()) {
+                int count = 0;
+                while (rows.next()) count++;
+                return count;
+            } catch (SQLException e) {
+                throw new AssertionError(e);
+            }
+        }).toList());
+    }
+
+    @Test
     void returnsOnlyTheRowsTheLimitAsksFor() throws SQLException {
         try (ResultSet rows = search(new ArrayList<>())
             .execute(plan(1L), STATEMENT).resultSet()) {

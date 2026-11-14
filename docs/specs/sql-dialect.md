@@ -244,6 +244,24 @@ The *query* argument can be:
 `recommend`, `discover`, `context`, and `feedback` take point IDs and vectors in the same
 forms, as `ARRAY[…]` or JSON.
 
+### Several searches in one call
+
+Searches of one collection, separated by semicolons and run with `Statement.execute`, go to
+Qdrant as one batch, which is one round trip and lets Qdrant run them side by side:
+
+```sql
+SELECT _id, _score FROM docs ORDER BY similarity(dense, [0.1, ...]) DESC LIMIT 5;
+SELECT _id, title  FROM docs WHERE lang = 'en' ORDER BY similarity(dense, [0.7, ...]) DESC LIMIT 3;
+```
+
+**This runs today.** Each search keeps its own columns, `WHERE`, `LIMIT`, `OFFSET` and vector,
+and its rows are a result set of their own, in the order written: `execute` answers with the
+first, and `getMoreResults()` moves to each next one. A search answers as it would alone, down
+to the bound and the warning a missing `LIMIT` gets. Only similarity searches batch, and only of
+one collection, as Qdrant's batch is per collection; a script holding anything else is an error
+before anything runs, since several writes in one string would stop halfway with no way to say
+how far they got. It works on a `Statement`: a `PreparedStatement` is one statement.
+
 ### Combining searches
 
 A subquery in `FROM` with its own `ORDER BY … LIMIT` is a **prefetch**: Qdrant runs it first

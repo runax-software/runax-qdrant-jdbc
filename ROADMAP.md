@@ -35,6 +35,9 @@ measured REST and SQL coverage is in [docs/coverage.md](docs/coverage.md).
   `ORDER BY similarity(vector, [0.1, ...]) DESC` through the Query API, with a `_score`
   column. Dense vectors only: searching a sparse vector or a multivector, and the other forms
   a search can take, come with the items below.
+- [x] **Batches of searches** — several similarity searches of one collection in one
+  `execute`, separated by semicolons, sent as one Query API batch and answered with a result
+  set each, through `getMoreResults`.
 - [x] **DataGrip compatibility** — harmless defaults for the `Connection` and
   `Statement` methods DataGrip calls on every connection, and support for the SQL it
   generates when opening, filtering, and sorting a table. The defaults and the statement

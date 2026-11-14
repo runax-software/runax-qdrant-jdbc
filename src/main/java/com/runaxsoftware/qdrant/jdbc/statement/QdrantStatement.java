@@ -25,6 +25,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropVectorPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropViewPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.InsertPointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.RenameViewPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.SetOptionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ShowOptionsPlan;
@@ -34,6 +35,7 @@ import com.runaxsoftware.qdrant.jdbc.system.SystemTable;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -79,7 +81,10 @@ public class QdrantStatement extends AbstractStatement {
     @Override
     public ResultSet executeQuery(String sql) throws SQLException {
         checkOpen();
-        return query(plan(sql));
+        List<Statement> statements = parseAll(sql);
+
+        return statements.size() == 1 ? query(plan(statements.get(0)))
+            : runSearches(statements).resultSet();
     }
 
     /**
@@ -95,10 +100,18 @@ public class QdrantStatement extends AbstractStatement {
         return run(plan).resultSet();
     }
 
+    /**
+     * Runs the SQL, which may be several similarity searches of one collection separated by
+     * semicolons: those go to Qdrant as one batch, and each one's rows are a result of its own,
+     * the first here and the rest through {@link #getMoreResults()}.
+     */
     @Override
     public boolean execute(String sql) throws SQLException {
         checkOpen();
-        return run(plan(sql)).hasResultSet();
+        List<Statement> statements = parseAll(sql);
+
+        return statements.size() == 1 ? run(plan(statements.get(0))).hasResultSet()
+            : runSearches(statements).hasResultSet();
     }
 
     boolean execute(Plan plan) throws SQLException {
@@ -173,9 +186,52 @@ public class QdrantStatement extends AbstractStatement {
         return executeLargeUpdate(sql);
     }
 
-    // Runs the plan; like every JDBC run, it first closes the result of the previous one
+    /**
+     * Runs several statements as one batch of searches, and keeps every result after the first
+     * for getMoreResults. Only searches of one collection can share a call, and nothing else has
+     * a reason to: several writes in one string would stop halfway on an error with no way to
+     * say how far they got.
+     */
+    private ExecutionResult runSearches(List<Statement> statements) throws SQLException {
+        var plans = new ArrayList<QueryPlan>(statements.size());
+
+        for (int i = 0; i < statements.size(); i++) {
+            Plan plan = plan(statements.get(i));
+
+            if (!(plan instanceof QueryPlan search)) {
+                throw new SQLFeatureNotSupportedException("Several statements in one call run "
+                    + "as a batch of similarity searches, and statement " + (i + 1) + " isn't "
+                    + "one: each needs ORDER BY similarity(...) DESC. Run other statements one "
+                    + "at a time");
+            }
+            if (!plans.isEmpty() && !plans.get(0).collection().equals(search.collection())) {
+                throw new SQLFeatureNotSupportedException("A batch of searches is of one "
+                    + "collection: statement 1 searches " + plans.get(0).collection()
+                    + " and statement " + (i + 1) + " " + search.collection()
+                    + ". Run searches of different collections one at a time");
+            }
+
+            plans.add(search);
+        }
+
+        closeResults();
+        setUpdateCount(-1);
+        generatedKeys = List.of();
+
+        List<ExecutionResult> results = executor.executeSearches(plans, this);
+        setResultSet(results.get(0).resultSet());
+        setPendingResults(results.stream().skip(1).map(ExecutionResult::resultSet).toList());
+
+        for (ExecutionResult result : results) {
+            if (result.warning() != null) warn(result.warning());
+        }
+
+        return results.get(0);
+    }
+
+    // Runs the plan; like every JDBC run, it first closes the results of the previous one
     private ExecutionResult run(Plan plan) throws SQLException {
-        closeResultSet();
+        closeResults();
         setUpdateCount(-1);
         generatedKeys = List.of();
 
@@ -311,6 +367,15 @@ public class QdrantStatement extends AbstractStatement {
         }
 
         return Parser.parse(sql);
+    }
+
+    // Every statement in the SQL: one, or several searches to run as a batch
+    private static List<Statement> parseAll(String sql) throws SQLException {
+        if (sql == null) {
+            throw new SQLException("The SQL is null", "HY009");
+        }
+
+        return Parser.parseAll(sql);
     }
 
     /**

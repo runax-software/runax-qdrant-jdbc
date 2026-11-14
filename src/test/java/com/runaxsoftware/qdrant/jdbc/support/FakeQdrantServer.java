@@ -107,6 +107,11 @@ public final class FakeQdrantServer implements AutoCloseable {
         QUERY,
 
         /**
+         * {@code POST /collections/{name}/points/query/batch}: several searches in one call.
+         */
+        QUERY_BATCH,
+
+        /**
          * {@code POST /collections/{name}/points/count}.
          */
         COUNT,
@@ -718,6 +723,7 @@ public final class FakeQdrantServer implements AutoCloseable {
                 case COLLECTION -> collectionInfo(exchange, segments[2]);
                 case SCROLL -> scroll(exchange, segments[2], body);
                 case QUERY -> query(exchange, segments[2], body);
+                case QUERY_BATCH -> queryBatch(exchange, segments[2], body);
                 case COUNT -> count(exchange, segments[2]);
                 case FACET -> facet(exchange, segments[2], body);
                 case ALIASES -> ok(exchange, Json.object("aliases", aliasList()));
@@ -815,6 +821,11 @@ public final class FakeQdrantServer implements AutoCloseable {
         if (method.equals("POST") && segments.length == 5 && segments[3].equals("points")
             && segments[4].equals("query")) {
             return Endpoint.QUERY;
+        }
+
+        if (method.equals("POST") && segments.length == 6 && segments[3].equals("points")
+            && segments[4].equals("query") && segments[5].equals("batch")) {
+            return Endpoint.QUERY_BATCH;
         }
 
         if (method.equals("POST") && segments.length == 5 && segments[3].equals("points")
@@ -1054,6 +1065,24 @@ public final class FakeQdrantServer implements AutoCloseable {
             return;
         }
 
+        ok(exchange, queried(name, request));
+    }
+
+    // Every search of a batch, answered as it would be alone, in the order asked
+    private void queryBatch(HttpExchange exchange, String name, JsonNode request)
+        throws IOException {
+        if (find(name) == null) {
+            notFound(exchange, name);
+            return;
+        }
+
+        List<JsonNode> answers = new ArrayList<>();
+        for (JsonNode search : request.path("searches")) answers.add(queried(name, search));
+
+        ok(exchange, Json.array(answers.toArray()));
+    }
+
+    private ObjectNode queried(String name, JsonNode request) {
         List<ObjectNode> all = points.get(resolve(name));
         int limit = request == null ? 10 : request.path("limit").asInt(10);
         int offset = request == null ? 0 : request.path("offset").asInt(0);
@@ -1077,7 +1106,7 @@ public final class FakeQdrantServer implements AutoCloseable {
             scored.add(returned);
         }
 
-        ok(exchange, Json.object("points", scored));
+        return Json.object("points", scored);
     }
 
     /**

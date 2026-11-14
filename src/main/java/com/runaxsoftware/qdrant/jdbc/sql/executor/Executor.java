@@ -59,6 +59,8 @@ import java.sql.Statement;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.Iterator;
+import java.util.Objects;
 import java.util.List;
 import java.util.Map;
 
@@ -121,7 +123,7 @@ public final class Executor {
      *                     nothing, or 0 to make such a statement an error
      */
     public Executor(QdrantGateway gateway, Embedders embedders, int defaultLimit) {
-        this(gateway::scroll, gateway::query, gateway::count, gateway::facet,
+        this(gateway::scroll, searcher(gateway), gateway::count, gateway::facet,
             new QdrantSystemTables(gateway), writer(gateway), embedders, defaultLimit);
     }
 
@@ -315,6 +317,43 @@ public final class Executor {
 
         throw new SQLFeatureNotSupportedException(
             "Running a " + plan.getClass().getSimpleName() + " isn't supported yet");
+    }
+
+    /**
+     * Runs several searches of one collection as one batch, and returns each one's rows in the
+     * order given, as running them one by one would. Each keeps its own limit, offset, filter
+     * and columns; a search bounded to no rows isn't sent.
+     *
+     * @param plans the searches, all of the same collection
+     */
+    public List<ExecutionResult> executeSearches(List<QueryPlan> plans, Statement statement)
+        throws SQLException {
+        long maxRows = statement.getLargeMaxRows();
+        var bounds = new ArrayList<Bounded>(plans.size());
+        var requests = new ArrayList<QueryRequest>(plans.size());
+
+        for (QueryPlan plan : plans) {
+            Bounded bounded = searchLimit(plan, maxRows);
+            bounds.add(bounded);
+
+            if (bounded.limit() > 0) requests.add(request(plan, bounded.limit()));
+        }
+
+        Iterator<List<ScoredPoint>> answers = searchBatch(plans.get(0).collection(), requests)
+            .iterator();
+        var results = new ArrayList<ExecutionResult>(plans.size());
+
+        for (int i = 0; i < plans.size(); i++) {
+            QueryPlan plan = plans.get(i);
+            List<Object[]> rows = bounds.get(i).limit() == 0 ? List.of()
+                : rows(plan, answers.next());
+
+            results.add(ExecutionResult.rows(new ListResultSet(
+                PointValues.resultColumns(plan.columns(), plan.collection()), rows, statement),
+                warning(bounds.get(i), "A similarity search")));
+        }
+
+        return results;
     }
 
     /**
@@ -648,16 +687,33 @@ public final class Executor {
         try {
             return searcher.search(request);
         } catch (SQLException e) {
-            if (request.document() == null || !String.valueOf(e.getMessage()).contains(NO_INFERENCE)) {
-                throw e;
-            }
-
-            throw new SQLException("This Qdrant can't embed text with 'qdrant:"
-                + request.document().model() + "': it runs no inference service, which hosted "
-                + "models need (Qdrant Cloud has one). Embed with a model the driver calls, as "
-                + "openai:text-embedding-3-small, or with qdrant:qdrant/bm25 for a sparse vector",
-                e.getSQLState(), e);
+            throw noInference(e, List.of(request));
         }
+    }
+
+    private List<List<ScoredPoint>> searchBatch(String collection, List<QueryRequest> requests)
+        throws SQLException {
+        try {
+            return searcher.searchBatch(collection, requests);
+        } catch (SQLException e) {
+            throw noInference(e, requests);
+        }
+    }
+
+    // The error itself, unless it is Qdrant saying it can't embed a search's text: then one
+    // that says what to do about it
+    private static SQLException noInference(SQLException e, List<QueryRequest> requests) {
+        Document document = requests.stream().map(QueryRequest::document)
+            .filter(Objects::nonNull).findFirst().orElse(null);
+
+        if (document == null || !String.valueOf(e.getMessage()).contains(NO_INFERENCE)) {
+            return e;
+        }
+
+        return new SQLException("This Qdrant can't embed text with 'qdrant:" + document.model()
+            + "': it runs no inference service, which hosted models need (Qdrant Cloud has "
+            + "one). Embed with a model the driver calls, as openai:text-embedding-3-small, or "
+            + "with qdrant:qdrant/bm25 for a sparse vector", e.getSQLState(), e);
     }
 
     /**
@@ -834,6 +890,23 @@ public final class Executor {
 
     private static QdrantAlias alias(List<QdrantAlias> aliases, String name) {
         return aliases.stream().filter(x -> x.name().equals(name)).findFirst().orElse(null);
+    }
+
+    // Qdrant runs a batch of searches in one call, which a searcher made of one method can't say
+    private static Searcher searcher(QdrantGateway gateway) {
+        return new Searcher() {
+            @Override
+            public List<ScoredPoint> search(QueryRequest query) throws SQLException {
+                return gateway.query(query);
+            }
+
+            @Override
+            public List<List<ScoredPoint>> searchBatch(String collection,
+                                                       List<QueryRequest> queries)
+                throws SQLException {
+                return gateway.queryBatch(collection, queries);
+            }
+        };
     }
 
     private static Writer writer(QdrantGateway gateway) {
@@ -1035,7 +1108,11 @@ public final class Executor {
      * the driver discards nothing.
      */
     private List<Object[]> searchRows(QueryPlan plan, long limit) throws SQLException {
-        List<ScoredPoint> found = search(request(plan, limit));
+        return rows(plan, search(request(plan, limit)));
+    }
+
+    // The points a search found as rows of the columns it selects
+    private static List<Object[]> rows(QueryPlan plan, List<ScoredPoint> found) {
         List<ColumnDefinition> columns = plan.columns();
         var rows = new ArrayList<Object[]>(found.size());
 
