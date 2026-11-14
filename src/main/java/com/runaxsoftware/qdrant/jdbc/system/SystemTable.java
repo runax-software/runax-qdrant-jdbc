@@ -262,7 +262,27 @@ public enum SystemTable {
             SystemColumn.of("segments", ColumnType.JSON,
                 "The segments, each with its id and point count, as Qdrant sends them"),
             SystemColumn.of("progress", ColumnType.JSON,
-                "The optimization's steps as a tree, each with its times and units done")));
+                "The optimization's steps as a tree, each with its times and units done"))),
+
+    /**
+     * The server's quotas in one row: the limits past which Qdrant refuses writes, and how much
+     * of each resource is used now. ALTER SYSTEM SET changes the limits.
+     */
+    QUOTAS("quotas", "The server's limits on memory and disk, and how much is used, in one row",
+        List.of(
+            SystemColumn.of("enabled", ColumnType.BOOLEAN,
+                "Whether the limits are enforced"),
+            SystemColumn.of("max_resident_memory_percent", ColumnType.INTEGER,
+                "The share of memory past which Qdrant refuses writes, or null for no limit"),
+            SystemColumn.of("max_disk_usage_percent", ColumnType.INTEGER,
+                "The share of the storage disk past which Qdrant refuses writes, or null"),
+            SystemColumn.of("release_margin_percent", ColumnType.INTEGER,
+                "How far under a limit usage falls before writes are taken again, or null for "
+                    + "Qdrant's default"),
+            SystemColumn.of("resident_memory_percent", ColumnType.INTEGER,
+                "The share of memory the server uses now"),
+            SystemColumn.of("disk_usage_percent", ColumnType.INTEGER,
+                "The share of the storage disk used now")));
 
     /**
      * The schema every system table is in.

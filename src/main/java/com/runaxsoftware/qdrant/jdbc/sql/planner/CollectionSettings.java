@@ -5,8 +5,9 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * The settings Qdrant's update-collection API changes, as of Qdrant 1.20. Qdrant drops a
- * setting it doesn't know without a word, so the driver checks a name against these first.
+ * The settings Qdrant's update-collection API changes, and the server's quotas, as of Qdrant
+ * 1.20. Qdrant drops a setting it doesn't know without a word, so the driver checks a name
+ * against these first.
  */
 final class CollectionSettings {
 
@@ -101,6 +102,21 @@ final class CollectionSettings {
     /** A sparse vector's settings. */
     static final SettingScope SPARSE_VECTOR = new SettingScope(
         List.of(SPARSE_INDEX), Map.of("modifier", SettingKind.WORD), false, false);
+
+    /** The quotas' name, in a statement and in the plan's changes. */
+    static final String QUOTAS = "quotas";
+
+    private static final SettingGroup QUOTA_LIMITS = new SettingGroup(List.of(QUOTAS), QUOTAS,
+        Map.of(
+            "enabled", SettingKind.BOOL,
+            "max_resident_memory_percent", SettingKind.PERCENT,
+            "max_disk_usage_percent", SettingKind.PERCENT,
+            "release_margin_percent", SettingKind.PERCENT),
+        Set.of());
+
+    /** The server's own settings, which ALTER SYSTEM changes. */
+    static final SettingScope SYSTEM = new SettingScope(
+        List.of(QUOTA_LIMITS), Map.of(), false, false);
 
     private CollectionSettings() {
     }

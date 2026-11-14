@@ -693,6 +693,7 @@ their names can't clash with a collection's. `DatabaseMetaData` lists them as
 | `system.issues` | `GET /issues` | `id`, `description`, `related_collection`, `timestamp`, `solution` |
 | `system.health` | `GET /healthz`, `GET /livez`, `GET /readyz` | `probe`, `ok`, `status_code`, `message` |
 | `system.optimizations` | `GET /collections/{name}/optimizations` for each | `collection_name`, `state`, `uuid`, `optimizer`, `status`, `status_detail`, `segments_count`, `points_count`, `started_at`, `finished_at`, `duration_sec`, `segments`, `progress` |
+| `system.quotas` | `GET /quotas` | `enabled`, `max_resident_memory_percent`, `max_disk_usage_percent`, `release_margin_percent`, `resident_memory_percent`, `disk_usage_percent` |
 
 ```sql
 SELECT name, status, points_count FROM system.collections;
@@ -753,6 +754,24 @@ sends, each step with its times and, for some, units done of a total; `started_a
 and the segments that need no optimizing aren't listed: they aren't optimizations. Within a
 collection the rows keep Qdrant's order, so the queue reads top to bottom.
 
+`system.quotas` is always one row: the limits on memory and disk past which Qdrant refuses
+writes, whether they're enforced, and how much of each is used now. `ALTER SYSTEM SET` changes
+the limits, since they belong to the server rather than to any collection:
+
+```sql
+ALTER SYSTEM SET (quotas.enabled = true, quotas.max_disk_usage_percent = 90);
+ALTER SYSTEM SET (max_resident_memory_percent = 85);     -- the name alone
+ALTER SYSTEM SET (quotas = '{"release_margin_percent": 5}');
+ALTER SYSTEM SET (quotas.max_disk_usage_percent = NULL);  -- no limit on disk
+```
+
+The settings are `enabled`, `max_resident_memory_percent`, `max_disk_usage_percent` and
+`release_margin_percent`, written as a collection's are in `ALTER TABLE … SET (…)`. A statement
+changes what it names and keeps the rest, though Qdrant itself replaces the whole config with
+each write: the driver reads the config first and sends it back changed, exact unless something
+else sets quotas between the two calls. Quotas are the only setting of the server there is so
+far, and a read-only connection refuses the statement.
+
 `system.health` is Qdrant's three health probes, one row each, always in the order `healthz`,
 `livez`, `readyz`. A probe says "no" with its HTTP status, so a failing one is a row with `ok`
 false, the status in `status_code`, and what Qdrant said in `message`, rather than an error.
@@ -798,7 +817,8 @@ These are errors, not emulated:
   transactions. An opt-in write buffer that holds writes until `commit()` may come later
   (see the roadmap); it still wouldn't make commits atomic.
 - Writing to the `system` tables, other than `TRUNCATE TABLE system.issues`, or reading server
-  internals any way but through them.
+  internals any way but through them. The quotas `system.quotas` shows are changed with `ALTER
+  SYSTEM SET`, not by writing to the table.
   Telemetry, Prometheus metrics, cluster and Raft state, and Qdrant's performance hints are
   all readable as [system tables](#system-tables) and, the issues aside, read-only there; of
   telemetry, only

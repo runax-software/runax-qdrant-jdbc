@@ -19,7 +19,7 @@ LIMIT 10
 > from the [releases](https://github.com/runax-software/runax-qdrant-jdbc/releases), or build
 > it from source (`./gradlew shadowJar`). It does run SQL: `SELECT` with filters, patterns
 > and full-text matching, vector similarity search, `COUNT(*)` and `GROUP BY`, `INSERT`,
-> `UPDATE`, `DELETE`, and DDL for collections, indexes and views — eighteen statement kinds.
+> `UPDATE`, `DELETE`, and DDL for collections, indexes and views — nineteen statement kinds.
 > Exactly how much of Qdrant and how much SQL that amounts to is measured in
 > [docs/coverage.md](docs/coverage.md), the target dialect is in
 > [docs/specs/sql-dialect.md](docs/specs/sql-dialect.md), and what's next is in
@@ -33,10 +33,10 @@ LIMIT 10
 - **Similarity search** — rank points by similarity to a vector, with the score as a
   `_score` column, and `embed('text')` to search with text, embedded by Qdrant or by a
   provider such as OpenAI.
-- **System tables** — twelve tables in a `system` schema describe the server itself
+- **System tables** — thirteen tables in a `system` schema describe the server itself
   (`collections`, `aliases`, `snapshots`, `shards`, `shard_keys`, `cluster`, `peers`,
-  `telemetry`, `metrics`, `issues`, `health`, `optimizations`), so a collection's status, point counts, shards,
-  and aliases are SQL rows rather than REST calls. They are read-only, but for
+  `telemetry`, `metrics`, `issues`, `health`, `optimizations`, `quotas`), so a collection's
+  status, point counts, shards, and aliases are SQL rows rather than REST calls. They are read-only, but for
   `TRUNCATE TABLE system.issues`.
 - **Honest errors** — SQL that Qdrant can't run (joins, arbitrary aggregates) fails with
   a clear error instead of scanning a whole collection on the client.
@@ -239,6 +239,7 @@ RESET ALL;
 | `DROP TABLE [IF EXISTS] docs` | Delete the collection | |
 | `ALTER TABLE docs ADD COLUMN image VECTOR(512)`, `ALTER TABLE docs DROP COLUMN image` | Create or delete a named vector | Dense, multi-, or sparse; payload fields have no column to alter |
 | `ALTER TABLE docs SET (hnsw.m = 16)`, `ALTER TABLE docs ALTER COLUMN dense SET (on_disk = true)` | Update collection | HNSW, optimizers, strict mode, quantization, metadata; a setting is `group.name`, its name alone, or its group as JSON |
+| `ALTER SYSTEM SET (quotas.max_disk_usage_percent = 90)` | Set global quotas | The server's limits on memory and disk; read them in `system.quotas` |
 | `CREATE INDEX ON docs (lang)`, `DROP INDEX lang_idx ON docs` | Create or delete a payload index | `USING text WITH (tokenizer = word, …)` for a type and its options |
 | `CREATE [OR REPLACE] VIEW current AS SELECT * FROM docs` | Create or switch an alias | Also `ALTER VIEW … RENAME TO`, `DROP VIEW` |
 | `CREATE TABLE docs (dense VECTOR(384) DISTANCE COSINE, lang KEYWORD INDEX)` | Create the collection, then its payload indexes | `_vector VECTOR(n)` makes the unnamed vector |

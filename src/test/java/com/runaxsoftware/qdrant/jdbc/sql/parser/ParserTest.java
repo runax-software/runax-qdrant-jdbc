@@ -24,6 +24,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.TableName;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.VectorLiteral;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AddColumnStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AlterSettingsStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AlterSystemStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AlterViewStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Assignment;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.ColumnSpec;
@@ -572,7 +573,7 @@ class ParserTest {
             + "column 27", "CREATE INDEX ON docs (lang, year)");
         assertError("Expected SELECT * FROM the collection the view shows, found 'docs' at line 1, "
             + "column 18", "CREATE VIEW v AS docs");
-        assertError("Expected TABLE or VIEW, found 'INDEX' at line 1, column 7",
+        assertError("Expected TABLE, VIEW or SYSTEM, found 'INDEX' at line 1, column 7",
             "ALTER INDEX lang_idx RENAME TO x");
         assertError("Expected TABLE, INDEX, VIEW or OR REPLACE VIEW, found 'SEQUENCE' at line 1, "
             + "column 8", "CREATE SEQUENCE s");
@@ -745,6 +746,20 @@ class ParserTest {
                 + "optimizers.max_optimization_threads = auto, "
                 + "metadata.runax.embed.Dense = 'openai:text-embedding-3-small', "
                 + "quantization = '{\"scalar\": {\"type\": \"int8\"}}')"));
+    }
+
+    @Test
+    void parsesAlterSystemSet() throws SQLSyntaxErrorException {
+        var settings = new LinkedHashMap<String, Expression>();
+        settings.put("quotas.enabled", new Literal(true));
+        settings.put("max_disk_usage_percent", new Literal(90L));
+        settings.put("quotas.max_resident_memory_percent", new Literal(null));
+
+        assertEquals(new AlterSystemStatement(settings),
+            Parser.parse("ALTER SYSTEM SET (quotas.enabled = true, max_disk_usage_percent = 90, "
+                + "quotas.max_resident_memory_percent = NULL)"));
+        assertError("Expected SET (...), found 'RESET' at line 1, column 14",
+            "ALTER SYSTEM RESET ALL");
     }
 
     @Test

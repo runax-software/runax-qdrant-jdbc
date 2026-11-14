@@ -598,6 +598,22 @@ class QdrantGatewayTest {
         assertEquals("Qdrant: Service internal error", error.getMessage());
     }
 
+    // Quotas
+
+    @Test
+    void readsTheQuotasAndReplacesTheirConfig() throws SQLException {
+        assertEquals("{\"enabled\":false}", gateway.quotas().path("config").toString());
+        assertEquals(17, gateway.quotas().path("usage").path("disk_usage_percent").asInt());
+
+        gateway.setQuotas(Json.object("enabled", true, "max_disk_usage_percent", 90));
+
+        var request = server.requests().get(server.requests().size() - 1);
+        assertEquals("PUT /quotas?wait=true", request.method() + " " + request.path() + "?"
+            + request.query());
+        assertEquals("{\"enabled\":true,\"max_disk_usage_percent\":90}",
+            gateway.quotas().path("config").toString());
+    }
+
     // Named vectors
 
     @Test

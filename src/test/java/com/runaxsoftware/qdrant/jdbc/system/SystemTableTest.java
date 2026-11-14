@@ -111,6 +111,16 @@ class SystemTableTest {
     }
 
     @Test
+    void namesTheTableOfQuotas() {
+        assertEquals("quotas", SystemTable.QUOTAS.tableName());
+        assertEquals(List.of("enabled", "max_resident_memory_percent", "max_disk_usage_percent",
+            "release_margin_percent", "resident_memory_percent", "disk_usage_percent"),
+            names(SystemTable.QUOTAS));
+        assertEquals(ColumnType.BOOLEAN, type(SystemTable.QUOTAS, "enabled"));
+        assertEquals(ColumnType.INTEGER, type(SystemTable.QUOTAS, "disk_usage_percent"));
+    }
+
+    @Test
     void namesTheTableOfHealthProbes() {
         assertEquals("health", SystemTable.HEALTH.tableName());
         assertEquals(List.of("probe", "ok", "status_code", "message"), names(SystemTable.HEALTH));

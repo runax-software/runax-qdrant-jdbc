@@ -46,7 +46,7 @@ class QdrantDatabaseMetaDataTest {
      * Every system table, in the order {@code getTables} lists them, which is by name.
      */
     private static final List<String> SYSTEM_TABLES = List.of("aliases", "cluster", "collections",
-        "health", "issues", "metrics", "optimizations", "peers", "shard_keys", "shards",
+        "health", "issues", "metrics", "optimizations", "peers", "quotas", "shard_keys", "shards",
         "snapshots", "telemetry");
 
     private FakeQdrantServer server;
@@ -650,6 +650,8 @@ class QdrantDatabaseMetaDataTest {
             "qdrant.system.optimizations SYSTEM TABLE Every collection's running, queued, and "
                 + "latest completed optimizations",
             "qdrant.system.peers SYSTEM TABLE Every peer of the cluster, with its address",
+            "qdrant.system.quotas SYSTEM TABLE The server's limits on memory and disk, and how "
+                + "much is used, in one row",
             "qdrant.system.shard_keys SYSTEM TABLE Every collection's shard keys, for custom "
                 + "sharding",
             "qdrant.system.shards SYSTEM TABLE Every shard of every collection, and the peer "

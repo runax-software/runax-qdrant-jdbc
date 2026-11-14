@@ -2,6 +2,7 @@ package com.runaxsoftware.qdrant.jdbc.sql.planner;
 
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AddColumnStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AlterSettingsStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AlterSystemStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AlterViewStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateIndexStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateTableStatement;
@@ -90,6 +91,9 @@ public final class Planner {
         }
         if (statement instanceof AlterSettingsStatement settings) {
             return settingsPlanner.plan(settings, catalog);
+        }
+        if (statement instanceof AlterSystemStatement system) {
+            return settingsPlanner.plan(system);
         }
         if (statement instanceof InsertStatement insert) {
             return insertPlanner.plan(insert, catalog);

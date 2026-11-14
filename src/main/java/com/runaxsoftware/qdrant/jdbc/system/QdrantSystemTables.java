@@ -61,6 +61,7 @@ public final class QdrantSystemTables implements SystemTableReader {
             case ISSUES -> issues();
             case HEALTH -> health();
             case OPTIMIZATIONS -> optimizations();
+            case QUOTAS -> quotas();
         };
     }
 
@@ -307,6 +308,21 @@ public final class QdrantSystemTables implements SystemTableReader {
         rows.sort(byText(0));
 
         return rows;
+    }
+
+    private List<Object[]> quotas() throws SQLException {
+        JsonNode quotas = gateway.quotas();
+        JsonNode config = quotas.path("config");
+        JsonNode usage = quotas.path("usage");
+
+        return List.<Object[]>of(new Object[]{
+            flag(config.path("enabled")),
+            number(config.path("max_resident_memory_percent")),
+            number(config.path("max_disk_usage_percent")),
+            number(config.path("release_margin_percent")),
+            number(usage.path("resident_memory_percent")),
+            number(usage.path("disk_usage_percent")),
+        });
     }
 
     // Rows

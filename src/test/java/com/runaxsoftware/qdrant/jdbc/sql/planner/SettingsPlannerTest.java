@@ -13,6 +13,7 @@ import com.runaxsoftware.qdrant.jdbc.schema.TableSchema;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.Parser;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdateCollectionPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdateQuotasPlan;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -165,6 +166,41 @@ class SettingsPlannerTest {
     void keepsTheSystemTablesAsTheyAre() {
         assertThrows(SQLFeatureNotSupportedException.class,
             () -> plan("ALTER TABLE system.collections SET (hnsw.m = 8)", NO_LOOKUPS));
+    }
+
+    // The server's settings
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "ALTER SYSTEM SET (quotas.enabled = true, quotas.max_disk_usage_percent = 90)",
+        "ALTER SYSTEM SET (enabled = true, max_disk_usage_percent = 90)",
+        "ALTER SYSTEM SET (quotas = '{\"enabled\": true, \"max_disk_usage_percent\": 90}')"})
+    void readsTheQuotasHoweverTheyAreSpelled(String sql) throws SQLException {
+        UpdateQuotasPlan plan = (UpdateQuotasPlan) plan(sql, NO_LOOKUPS);
+
+        assertEquals("{\"enabled\":true,\"max_disk_usage_percent\":90}", plan.changes().toString());
+        assertFalse(plan.returnsRows());
+        assertTrue(plan.changesData(), "a read-only connection refuses it");
+    }
+
+    @Test
+    void takesALimitAwayWithNull() throws SQLException {
+        assertEquals("{\"max_resident_memory_percent\":null,\"release_margin_percent\":0}",
+            ((UpdateQuotasPlan) plan("ALTER SYSTEM SET (quotas.max_resident_memory_percent = NULL, "
+                + "release_margin_percent = 0)", NO_LOOKUPS)).changes().toString());
+    }
+
+    @Test
+    void givesTheServerOnlyTheSettingsItHas() {
+        assertEquals("Setting 'quotas.max_disk_usage_percent' takes a whole number from 0 to 100, "
+                + "or NULL for no limit, not 250",
+            error("ALTER SYSTEM SET (quotas.max_disk_usage_percent = 250)").getMessage());
+        assertEquals("The server has no settings called 'hnsw', as in 'hnsw.m': it has quotas",
+            error("ALTER SYSTEM SET (hnsw.m = 16)").getMessage());
+        assertEquals("'max_cpu_percent', as in 'quotas.max_cpu_percent', isn't a quotas setting: "
+                + "they are enabled, max_disk_usage_percent, max_resident_memory_percent, "
+                + "release_margin_percent",
+            error("ALTER SYSTEM SET (quotas.max_cpu_percent = 90)").getMessage());
     }
 
     // A vector's settings
