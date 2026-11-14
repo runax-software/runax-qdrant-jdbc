@@ -15,6 +15,7 @@ import static com.runaxsoftware.qdrant.jdbc.support.FakeQdrantServer.unnamedVect
 import com.fasterxml.jackson.databind.JsonNode;
 import com.runaxsoftware.qdrant.jdbc.QdrantDriver;
 import com.runaxsoftware.qdrant.jdbc.support.FakeQdrantServer;
+import com.runaxsoftware.qdrant.jdbc.support.FakeQdrantServer.Endpoint;
 import com.runaxsoftware.qdrant.jdbc.support.Json;
 
 import org.junit.jupiter.api.AfterEach;
@@ -580,6 +581,74 @@ class QdrantStatementTest {
         assertFalse(statement.getMoreResults());
         assertTrue(rows.isClosed());
         assertNull(statement.getResultSet());
+    }
+
+    // Several searches in one call
+
+    @Test
+    void runsSeveralSearchesAsOneBatchWithAResultForEach() throws SQLException {
+        server.collection("docs", unnamedVector(4, "Cosine", Map.of()), List.of(
+            point(1, Json.object("name", "Lamp")), point(2, Json.object("name", "Desk")),
+            point(3, Json.object("name", "Chair"))));
+
+        assertTrue(statement.execute(
+            "SELECT _id FROM docs ORDER BY similarity(_vector, [0.1, 0.2, 0.3, 0.4]) DESC LIMIT 1; "
+                + "SELECT _id, name FROM docs ORDER BY similarity(_vector, [0.4, 0.3, 0.2, 0.1]) "
+                + "DESC LIMIT 3;"));
+
+        ResultSet first = statement.getResultSet();
+        assertEquals(1, first.getMetaData().getColumnCount());
+        assertTrue(first.next());
+        assertFalse(first.next());
+
+        assertTrue(statement.getMoreResults());
+        assertTrue(first.isClosed());
+
+        ResultSet second = statement.getResultSet();
+        assertEquals(2, second.getMetaData().getColumnCount());
+        int rows = 0;
+        while (second.next()) rows++;
+        assertEquals(3, rows);
+
+        assertFalse(statement.getMoreResults());
+        assertTrue(second.isClosed());
+        assertNull(statement.getResultSet());
+
+        assertEquals(1, server.calls(Endpoint.QUERY_BATCH));
+        assertEquals(0, server.calls(Endpoint.QUERY));
+    }
+
+    @Test
+    void closesTheResultsNotReachedOnTheNextRun() throws SQLException {
+        String search = "SELECT _id FROM products ORDER BY similarity(_vector, "
+            + "[0.1, 0.2, 0.3, 0.4]) DESC LIMIT 1";
+
+        ResultSet first = statement.executeQuery(search + "; " + search);
+        statement.executeQuery("SELECT 1");
+
+        assertTrue(first.isClosed());
+        assertFalse(statement.getMoreResults(), "the batch's second result went with the rerun");
+    }
+
+    @Test
+    void runsOnlySearchesOfOneCollectionTogether() {
+        String search = "SELECT _id FROM products ORDER BY similarity(_vector, "
+            + "[0.1, 0.2, 0.3, 0.4]) DESC LIMIT 1";
+        server.collection("docs", unnamedVector(4, "Cosine", Map.of()), List.of());
+
+        assertEquals("Several statements in one call run as a batch of similarity searches, and "
+                + "statement 2 isn't one: each needs ORDER BY similarity(...) DESC. Run other "
+                + "statements one at a time",
+            assertThrows(SQLFeatureNotSupportedException.class,
+                () -> statement.execute(search + "; SELECT _id FROM products")).getMessage());
+        assertEquals("A batch of searches is of one collection: statement 1 searches products "
+                + "and statement 2 docs. Run searches of different collections one at a time",
+            assertThrows(SQLFeatureNotSupportedException.class, () -> statement.execute(search
+                + "; SELECT _id FROM docs ORDER BY similarity(_vector, [0.1, 0.2, 0.3, 0.4]) "
+                + "DESC LIMIT 1")).getMessage());
+        assertThrows(SQLException.class,
+            () -> statement.executeUpdate("DELETE FROM products WHERE _id = 1; " + search));
+        assertEquals(0, server.calls(Endpoint.QUERY_BATCH));
     }
 
     @Test

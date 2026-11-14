@@ -598,6 +598,34 @@ class QdrantGatewayTest {
         assertEquals("Qdrant: Service internal error", error.getMessage());
     }
 
+    // Batches of searches
+
+    @Test
+    void sendsSeveralSearchesInOneCallAndAnswersEachInOrder() throws SQLException {
+        server.collection("products", plainCollection(), points(5));
+
+        List<List<ScoredPoint>> answers = gateway.queryBatch("products", List.of(
+            new QueryRequest("products", "", List.of(0.1, 0.2), 2, 0, false, false, null, null),
+            new QueryRequest("products", "", List.of(0.3, 0.4), 1, 3, true, false, null, null)));
+
+        assertEquals(List.of(2, 1), answers.stream().map(List::size).toList());
+        assertEquals(1, server.calls(Endpoint.QUERY_BATCH));
+        assertEquals(0, server.calls(Endpoint.QUERY));
+
+        JsonNode searches = server.requests().get(server.requests().size() - 1).body()
+            .path("searches");
+        assertEquals(2, searches.size());
+        assertEquals("[0.1,0.2]", searches.get(0).path("query").path("nearest").toString());
+        assertEquals(3, searches.get(1).path("offset").asInt());
+        assertTrue(searches.get(1).path("with_payload").asBoolean());
+    }
+
+    @Test
+    void sendsNoBatchOfNoSearches() throws SQLException {
+        assertEquals(List.of(), gateway.queryBatch("products", List.of()));
+        assertEquals(List.of(), server.requests());
+    }
+
     // Quotas
 
     @Test

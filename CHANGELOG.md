@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Several similarity searches of one collection in one call: `Statement.execute` takes them
+  separated by semicolons, sends them to Qdrant as one Query API batch, and answers with a
+  result set for each, the first at once and the rest through `getMoreResults()`. One round
+  trip instead of one per search, and Qdrant runs them side by side. Each search keeps its own
+  columns, filter, limit and offset, and answers exactly as it would alone. A script holding
+  anything but searches of one collection is an error before anything runs.
+  `supportsMultipleResultSets` is now true. ([#50])
 - `CALL`, for what Qdrant does that isn't about rows, and twelve procedures for a cluster:
   `create_shard_key` and `delete_shard_key`, `move_shard`, `replicate_shard`,
   `abort_shard_transfer`, `restart_shard_transfer`, `drop_replica`, `start_resharding`,
@@ -415,3 +422,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#46]: https://github.com/runax-software/runax-qdrant-jdbc/pull/46
 [#48]: https://github.com/runax-software/runax-qdrant-jdbc/pull/48
 [#49]: https://github.com/runax-software/runax-qdrant-jdbc/pull/49
+[#50]: https://github.com/runax-software/runax-qdrant-jdbc/pull/50

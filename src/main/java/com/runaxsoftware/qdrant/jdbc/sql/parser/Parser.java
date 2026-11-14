@@ -14,6 +14,8 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.statement.TruncateParser;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.statement.UpdateParser;
 
 import java.sql.SQLSyntaxErrorException;
+import java.util.ArrayList;
+import java.util.List;
 
 public final class Parser {
 
@@ -31,6 +33,27 @@ public final class Parser {
             throw tokenStream.error("Expected the end of the statement");
         }
         return statement;
+    }
+
+    /**
+     * Every statement of a script, in order: statements separated by semicolons, with one more
+     * semicolon allowed after the last. {@link #parse} reads SQL that must be one statement;
+     * this is for {@code Statement.execute}, which may run several and answer with a result for
+     * each.
+     */
+    public static List<Statement> parseAll(String sql) throws SQLSyntaxErrorException {
+        var tokenStream = new TokenStream(sql, new Lexer(sql).tokenize());
+        var statements = new ArrayList<Statement>();
+
+        do {
+            statements.add(parseStatement(tokenStream));
+        } while (tokenStream.matchSymbol(";") && tokenStream.peek().type() != TokenType.EOF);
+
+        if (tokenStream.peek().type() != TokenType.EOF) {
+            throw tokenStream.error("Expected the end of the statement");
+        }
+
+        return statements;
     }
 
     private static Statement parseStatement(TokenStream tokenStream) throws SQLSyntaxErrorException {

@@ -41,6 +41,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropViewStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.InsertStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.OnConflict;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Statement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.TruncateStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.UpdateStatement;
 import org.junit.jupiter.api.Test;
@@ -709,6 +710,29 @@ class ParserTest {
     void rejectsAnUpdateWithoutSet() {
         assertError("Expected SET, found 'lang' at line 1, column 15", "UPDATE docs t lang = 1");
         assertError("Expected =, found 'de' at line 1, column 22", "UPDATE docs SET lang 'de'");
+    }
+
+    // Several statements
+
+    @Test
+    void parsesEveryStatementOfAScript() throws SQLSyntaxErrorException {
+        List<Statement> statements = Parser.parseAll(
+            "SELECT _id FROM docs LIMIT 1; SELECT _id FROM docs LIMIT 2;\nSELECT 3;");
+
+        assertEquals(3, statements.size());
+        assertEquals(1L, ((SelectStatement) statements.get(0)).limit());
+        assertEquals(2L, ((SelectStatement) statements.get(1)).limit());
+        assertEquals(List.of(Parser.parse("SELECT 1")), Parser.parseAll("SELECT 1"));
+        assertEquals(List.of(Parser.parse("SELECT 1")), Parser.parseAll("SELECT 1;"));
+    }
+
+    @Test
+    void rejectsAScriptItCantRead() {
+        assertEquals("Expected the end of the statement, found 'SELECT' at line 1, column 10",
+            assertThrows(SQLSyntaxErrorException.class,
+                () -> Parser.parseAll("SELECT 1 SELECT 2")).getMessage());
+        assertThrows(SQLSyntaxErrorException.class, () -> Parser.parseAll("SELECT 1;;"));
+        assertThrows(SQLSyntaxErrorException.class, () -> Parser.parseAll(""));
     }
 
     // CALL
