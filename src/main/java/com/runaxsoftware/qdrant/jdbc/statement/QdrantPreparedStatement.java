@@ -31,6 +31,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
 import java.util.List;
+import java.util.Set;
 
 /**
  * A statement whose SQL is parsed once, with {@code ?} for values given before each run:
@@ -39,8 +40,9 @@ import java.util.List;
  * Syntax errors are reported when the statement is prepared; unknown names, when it runs, since
  * the collection's columns may change in between.
  *
- * <p>A placeholder stands for a constant: in a condition, in the select list, or as the vector
- * of a similarity search, given as {@code float[]} or {@code double[]}.
+ * <p>A placeholder stands for a constant: in a condition, in the select list, as the vector of a
+ * similarity search, given as {@code float[]} or {@code double[]}, or as the whole number of a
+ * LIMIT, an OFFSET or a {@code LIMIT n BY column}.
  */
 public final class QdrantPreparedStatement extends QdrantStatement implements PreparedStatement {
 
@@ -48,12 +50,14 @@ public final class QdrantPreparedStatement extends QdrantStatement implements Pr
 
     private final Statement statement;
     private final Object[] values;
+    private final Set<Integer> rowCounts;
     private final List<Object[]> batch = new ArrayList<>();
 
     public QdrantPreparedStatement(QdrantConnection connection, String sql) throws SQLException {
         super(connection);
         this.statement = parse(sql);
         this.values = new Object[Parameters.count(statement)];
+        this.rowCounts = Parameters.rowCounts(statement);
 
         Arrays.fill(values, UNSET);
     }
@@ -322,7 +326,7 @@ public final class QdrantPreparedStatement extends QdrantStatement implements Pr
     @Override
     public ParameterMetaData getParameterMetaData() throws SQLException {
         checkOpen();
-        return new QdrantParameterMetaData(values.length);
+        return new QdrantParameterMetaData(values.length, rowCounts);
     }
 
     /**

@@ -11,12 +11,15 @@ import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnKind;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnType;
 import com.runaxsoftware.qdrant.jdbc.schema.TableSchema;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.Parameters;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.Parser;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Literal;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.MatrixColumn;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.MatrixPlan;
 
 import org.junit.jupiter.api.Test;
 
+import java.sql.SQLDataException;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.util.List;
@@ -74,6 +77,19 @@ class MatrixPlannerTest {
         assertEquals(List.of("_row", "neighbour", "_score", "_a"), plan.names());
         assertEquals(20L, plan.limit());
         assertEquals(4, plan.offset());
+    }
+
+    @Test
+    void takesItsLimitAndOffsetAsValues() throws SQLException {
+        MatrixPlan plan = (MatrixPlan) planner.plan(Parameters.bind(Parser.parse(
+            "SELECT * FROM distance_matrix(docs, dense) LIMIT ? OFFSET ?"),
+            index -> new Literal(index * 10L)), CATALOG);
+
+        assertEquals(10L, plan.limit());
+        assertEquals(20, plan.offset());
+        assertThrows(SQLDataException.class, () -> planner.plan(Parameters.bind(
+            Parser.parse("SELECT * FROM distance_matrix(docs, dense) LIMIT ?"),
+            index -> new Literal(-1L)), CATALOG));
     }
 
     @Test

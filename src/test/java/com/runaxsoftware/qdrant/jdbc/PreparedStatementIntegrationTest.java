@@ -18,8 +18,9 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLDataException;
 import java.sql.SQLException;
-import java.sql.SQLSyntaxErrorException;
+import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -87,16 +88,40 @@ class PreparedStatementIntegrationTest {
 
     @Test
     void searchesWithAVectorGivenAsAnArray() throws SQLException {
-        assertThrows(SQLSyntaxErrorException.class, () -> connection.prepareStatement(
-            "SELECT _id FROM " + products + " LIMIT ?"),
-            "LIMIT takes a number written out, not a placeholder");
-
         try (PreparedStatement statement = connection.prepareStatement("SELECT _id FROM " + products
             + " WHERE in_stock = ? ORDER BY similarity(_vector, ?) DESC LIMIT 1")) {
             statement.setBoolean(1, true);
             statement.setObject(2, new double[] {0.9, 0.1, 0.1, 0.2});
 
             assertEquals(List.of("1"), ids(statement));
+        }
+    }
+
+    @Test
+    void pagesWithALimitAndOffsetGivenAsValues() throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+            "SELECT _id FROM " + products + " LIMIT ? OFFSET ?")) {
+            statement.setInt(1, 2);
+            statement.setInt(2, 1);
+            assertEquals(List.of("2", "3"), ids(statement));
+
+            statement.setInt(2, 3);
+            assertEquals(List.of("4", "5"), ids(statement), "the next page, from the same statement");
+        }
+
+        // A search's offset goes to Qdrant: the same rows as the numbers written out
+        String search = "SELECT _id FROM " + products
+            + " ORDER BY similarity(_vector, [0.9, 0.1, 0.1, 0.2]) DESC";
+        try (PreparedStatement statement = connection.prepareStatement(search + " LIMIT ? OFFSET ?")) {
+            statement.setInt(1, 2);
+            statement.setInt(2, 1);
+            assertEquals(written(search + " LIMIT 2 OFFSET 1"), ids(statement));
+        }
+
+        try (PreparedStatement statement = connection.prepareStatement(
+            "SELECT _id FROM " + products + " LIMIT ?")) {
+            statement.setInt(1, -1);
+            assertThrows(SQLDataException.class, statement::executeQuery);
         }
     }
 
@@ -135,6 +160,17 @@ class PreparedStatementIntegrationTest {
                 statement::executeBatch);
             assertArrayEquals(new int[] {1}, error.getUpdateCounts());
         }
+    }
+
+    private List<String> written(String sql) throws SQLException {
+        var ids = new ArrayList<String>();
+
+        try (Statement statement = connection.createStatement();
+             ResultSet rows = statement.executeQuery(sql)) {
+            while (rows.next()) ids.add(rows.getString(1));
+        }
+
+        return ids;
     }
 
     private static List<String> ids(PreparedStatement statement) throws SQLException {

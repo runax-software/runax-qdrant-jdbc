@@ -89,8 +89,8 @@ public final class SelectParser {
             } while(this.tokenStream.matchSymbol(","));
         }
 
-        Long limit = this.tokenStream.matchKeyword("LIMIT") ? this.tokenStream.expectWholeNumber() : null;
-        PerGroup perGroup = distinctOn == null ? null : new PerGroup(distinctOn, 1);
+        Expression limit = this.tokenStream.matchKeyword("LIMIT") ? parseRowCount() : null;
+        PerGroup perGroup = distinctOn == null ? null : new PerGroup(distinctOn, new Literal(1L));
 
         // LIMIT n BY column keeps n rows of each of the column's values; the LIMIT that may
         // follow it is the statement's own
@@ -101,10 +101,10 @@ public final class SelectParser {
             }
 
             perGroup = new PerGroup(this.expressionParser.parseColumn(), limit);
-            limit = this.tokenStream.matchKeyword("LIMIT") ? this.tokenStream.expectWholeNumber() : null;
+            limit = this.tokenStream.matchKeyword("LIMIT") ? parseRowCount() : null;
         }
 
-        Long offset = this.tokenStream.matchKeyword("OFFSET") ? this.tokenStream.expectWholeNumber() : null;
+        Expression offset = this.tokenStream.matchKeyword("OFFSET") ? parseRowCount() : null;
 
         if (matrix != null) {
             if (!groupBy.isEmpty() || !orderBy.isEmpty() || perGroup != null) {
@@ -119,6 +119,19 @@ public final class SelectParser {
 
         return new SelectStatement(items, table, alias, where, groupBy, orderBy, limit,
             offset, perGroup);
+    }
+
+    /**
+     * What a LIMIT or OFFSET says: a whole number written out, or a {@code ?} whose value a
+     * prepared statement gives before each run. The placeholder is numbered where it stands, so
+     * it counts after any in WHERE or ORDER BY, and the planner checks its value once it's bound.
+     */
+    private Expression parseRowCount() throws SQLSyntaxErrorException {
+        if (this.tokenStream.matchParameter()) {
+            return new Parameter(this.tokenStream.nextParameterIndex());
+        }
+
+        return new Literal(this.tokenStream.expectWholeNumber());
     }
 
     // distance_matrix(collection, vector [, sample [, neighbours]]), once its name is read

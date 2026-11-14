@@ -11,7 +11,9 @@ import java.util.List;
 
 /**
  * A SELECT. A {@code *} is one item like any other, so items always holds at least one; table,
- * alias, where, limit and offset are null when absent.
+ * alias, where, limit and offset are null when absent. LIMIT and OFFSET are a whole number
+ * written out, a {@link com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Literal} of a
+ * {@code Long}, or a {@code ?} placeholder; the planner checks the value once it's bound.
  *
  * @param items   the select list, in order
  * @param table   the table read, or {@code null} for a SELECT without FROM
@@ -32,8 +34,8 @@ public record SelectStatement(
     Expression where,
     List<Column> groupBy,
     List<OrderItem> orderBy,
-    Long limit,
-    Long offset,
+    Expression limit,
+    Expression offset,
     PerGroup perGroup
 ) implements Statement {
 
@@ -43,7 +45,7 @@ public record SelectStatement(
      */
     public SelectStatement(List<SelectItem> items, TableName table, String alias,
                            Expression where, List<Column> groupBy, List<OrderItem> orderBy,
-                           Long limit, Long offset) {
+                           Expression limit, Expression offset) {
         this(items, table, alias, where, groupBy, orderBy, limit, offset, null);
     }
 }

@@ -68,13 +68,14 @@ final class MatrixPlanner {
 
         JsonNode filter = FilterPlanner.plan(statement.where(), schema,
             column -> SelectPlanner.find(schema, column, statement.alias(), false));
+        Long offset = RowCounts.of(statement.offset(), "OFFSET");
 
         return new MatrixPlan(
             new MatrixRequest(schema.name(), vector.source(), statement.sample(),
                 statement.neighbours(), filter,
                 columns.stream().anyMatch(MatrixColumn::position)),
-            columns, names, statement.limit(),
-            statement.offset() == null ? 0 : statement.offset());
+            columns, names, RowCounts.of(statement.limit(), "LIMIT"),
+            offset == null ? 0 : offset);
     }
 
     // The vector the matrix compares by: a dense one or a multivector

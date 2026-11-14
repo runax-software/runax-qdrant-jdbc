@@ -15,12 +15,17 @@ import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnKind;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnType;
 import com.runaxsoftware.qdrant.jdbc.schema.TableSchema;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.Parameters;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.Parser;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Expression;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Literal;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.VectorLiteral;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConstantPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CountPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetColumn;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.PointPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.SystemTablePlan;
@@ -31,6 +36,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.sql.SQLDataException;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.SQLSyntaxErrorException;
@@ -309,6 +315,90 @@ class PlannerTest {
                 .offset());
         assertEquals(deep, system("SELECT * FROM system.collections OFFSET " + deep).offset());
         assertEquals(deep, count("SELECT COUNT(*) FROM docs OFFSET " + deep, NO_LOOKUPS).offset());
+    }
+
+    // LIMIT ? and OFFSET ?
+
+    /**
+     * A prepared statement's values are bound before it's planned, so a LIMIT or OFFSET given
+     * through a setter plans exactly as the same number written out does.
+     */
+    @Test
+    void plansALimitAndOffsetGivenAsValuesAsTheSameNumbersWrittenOut() throws SQLException {
+        ScrollPlan scroll = (ScrollPlan) bound("SELECT _id FROM docs WHERE title = ? LIMIT ? OFFSET ?",
+                new Literal("a"), new Literal(10L), new Literal(20L));
+        assertEquals(10L, scroll.limit());
+        assertEquals(20, scroll.offset());
+
+        QueryPlan search = (QueryPlan) bound("SELECT _id FROM docs ORDER BY similarity(_vector, ?) "
+                + "DESC LIMIT ? OFFSET ?", new VectorLiteral(List.of(0.1, 0.2, 0.3, 0.4)),
+                new Literal(5L), new Literal(2L));
+        assertEquals(5L, search.limit());
+        assertEquals(2, search.offset());
+
+        FacetPlan facet = (FacetPlan) bound("SELECT name, COUNT(*) FROM indexed GROUP BY name "
+                + "LIMIT ? OFFSET ?", new Literal(5L), new Literal(2L));
+        assertEquals(5L, facet.limit());
+        assertEquals(2, facet.offset());
+
+        CountPlan count = (CountPlan) bound("SELECT COUNT(*) FROM docs LIMIT ? OFFSET ?",
+                new Literal(1L), new Literal(1L));
+        assertEquals(1L, count.limit());
+        assertEquals(1, count.offset());
+
+        assertEquals(List.of(), ((ConstantPlan) bound("SELECT 1 LIMIT ?", new Literal(0L))).rows());
+        assertEquals(3, ((SystemTablePlan) bound("SELECT * FROM system.collections OFFSET ?",
+                new Literal(3L))).offset());
+
+        PointPlan point = (PointPlan) bound("SELECT _id FROM docs WHERE _id = 7 LIMIT ? OFFSET ?",
+                new Literal(0L), new Literal(1L));
+        assertEquals(0L, point.limit());
+        assertEquals(1, point.offset());
+    }
+
+    @Test
+    void capsAnOffsetGivenAsAValueAsItCapsOneWrittenOut() {
+        SQLException error = assertThrows(SQLFeatureNotSupportedException.class,
+                () -> bound("SELECT _id FROM docs OFFSET ?", new Literal(Planner.MAX_OFFSET + 1)));
+
+        assertTrue(error.getMessage().contains("OFFSET up to " + Planner.MAX_OFFSET + " runs"),
+                error.getMessage());
+    }
+
+    /**
+     * The parser refuses a LIMIT written as -1, 2.5 or '2', and a value given for a placeholder
+     * gets the same refusal once it's bound: the planner is the first to see it.
+     */
+    @Test
+    void rejectsALimitOrOffsetValueThatIsNotAWholeNumberOfRows() {
+        for (Expression value : List.of(new Literal(-1L), new Literal(2.5), new Literal("2"),
+                new Literal(null), new Literal(true), new VectorLiteral(List.of(1.0)))) {
+            for (String sql : List.of("SELECT _id FROM docs LIMIT ?", "SELECT _id FROM docs OFFSET ?",
+                    "SELECT 1 LIMIT ?", "SELECT COUNT(*) FROM docs OFFSET ?")) {
+                SQLException error = assertThrows(SQLDataException.class,
+                        () -> bound(sql, value), sql + " " + value);
+
+                assertEquals("22023", error.getSQLState());
+                assertTrue(error.getMessage().contains("takes a whole number of 0 or more"),
+                        error.getMessage());
+            }
+        }
+
+        assertEquals("LIMIT takes a whole number of 0 or more, not -1", assertThrows(
+                SQLDataException.class,
+                () -> bound("SELECT _id FROM docs LIMIT ?", new Literal(-1L))).getMessage());
+        assertEquals("OFFSET takes a whole number of 0 or more, not null", assertThrows(
+                SQLDataException.class,
+                () -> bound("SELECT _id FROM docs OFFSET ?", new Literal(null))).getMessage());
+    }
+
+    @Test
+    void asksForAPreparedStatementWhenAPlainOneHasALimitPlaceholder() {
+        SQLException error = assertThrows(SQLFeatureNotSupportedException.class,
+                () -> plan("SELECT _id FROM docs LIMIT ?", CATALOG));
+
+        assertTrue(error.getMessage().startsWith("Parameters are given through a "
+                + "PreparedStatement"), error.getMessage());
     }
 
     // Grouping
@@ -919,6 +1009,11 @@ class PlannerTest {
 
     private Plan plan(String sql, Catalog catalog) throws SQLException {
         return planner.plan(Parser.parse(sql), catalog);
+    }
+
+    // The plan for a statement with these values bound to its placeholders, as a prepared one runs
+    private Plan bound(String sql, Expression... values) throws SQLException {
+        return planner.plan(Parameters.bind(Parser.parse(sql), index -> values[index - 1]), CATALOG);
     }
 
     private ScrollPlan scroll(String sql) throws SQLException {
