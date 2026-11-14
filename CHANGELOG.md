@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from, and until now took a call to Qdrant's API. `_row` and `_col` give each point's position
   among the sample, for building a sparse matrix; naming one makes the driver ask Qdrant for
   the matrix as offsets rather than pairs. A `WHERE` over the collection's columns says which
-  points to sample from. With it every route of Qdrant's search area is covered. ([#52])
+  points to sample from. With it every route of Qdrant's search area is covered. ([#53])
 - The best points of each group in a similarity search, so ten results are ten documents rather
   than ten chunks of one. `SELECT DISTINCT ON (doc_id) …` keeps the best point of each value of
   a payload field, as PostgreSQL writes it, and `LIMIT 3 BY doc_id` the best three, as
@@ -438,4 +438,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#49]: https://github.com/runax-software/runax-qdrant-jdbc/pull/49
 [#50]: https://github.com/runax-software/runax-qdrant-jdbc/pull/50
 [#51]: https://github.com/runax-software/runax-qdrant-jdbc/pull/51
-[#52]: https://github.com/runax-software/runax-qdrant-jdbc/pull/52
+[#53]: https://github.com/runax-software/runax-qdrant-jdbc/pull/53
