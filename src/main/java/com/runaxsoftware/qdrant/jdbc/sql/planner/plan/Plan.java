@@ -6,7 +6,7 @@ package com.runaxsoftware.qdrant.jdbc.sql.planner.plan;
 public sealed interface Plan permits ConstantPlan, ScrollPlan, QueryPlan, CountPlan, FacetPlan,
     SystemTablePlan, DeletePointsPlan, DropCollectionPlan, CreateCollectionPlan, SetOptionPlan,
     ShowOptionsPlan, UpdatePointsPlan, InsertPointsPlan, CreateIndexPlan, DropIndexPlan,
-    CreateViewPlan, RenameViewPlan, DropViewPlan {
+    CreateViewPlan, RenameViewPlan, DropViewPlan, ClearIssuesPlan {
 
     /**
      * Whether running the plan returns rows, as a SELECT does, rather than changing what Qdrant

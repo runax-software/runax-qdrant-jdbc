@@ -86,4 +86,9 @@ interface Writer {
      * Applies alias actions together, atomically.
      */
     void changeAliases(List<JsonNode> actions) throws SQLException;
+
+    /**
+     * Forgets every issue Qdrant has reported about itself.
+     */
+    void clearIssues() throws SQLException;
 }

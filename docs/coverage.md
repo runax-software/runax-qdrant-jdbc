@@ -7,8 +7,8 @@ maintainer can tell a missing feature that blocks real use from one that nobody 
 
 **Measured against** driver commit `5212b3d` — the whole of `SET`, `OFFSET`, the index and view
 statements, the write statements, the vector changes, the text conditions, `ON CONFLICT` and the
-embedder's model and role (#27, #28, #30, #31, #33, #34, #35, #36 and #39) — with this branch's
-batched embedding on top, and Qdrant
+embedder's model and role (#27, #28, #30, #31, #33, #34, #35, #36 and #39) — with the batched
+embedding of #40 and the clearing of `system.issues` on top, and Qdrant
 **1.20.0** (build
 `222b2e44ab1c3f17e8246396ead6558e45041df7`), running locally over REST on port 6333, with the
 three collections `./gradlew seedQdrant` loads. Qdrant 1.20 does not serve `/openapi.json` —
@@ -40,7 +40,7 @@ one of them is indistinguishable from a bug.
 
 ## Qdrant REST coverage
 
-Qdrant 1.20 documents **69 routes**. The driver calls **27** of them, which is **39%**. The
+Qdrant 1.20 documents **69 routes**. The driver calls **28** of them, which is **41%**. The
 counts below are per area, using Qdrant's own OpenAPI tags, so they can be recomputed from the
 spec without judgement calls.
 
@@ -54,15 +54,15 @@ spec without judgement calls.
 | Snapshots | 2 | 17 | `system.snapshots` only |
 | Distributed | 3 | 9 | `system.cluster`, `system.peers`, `system.shards`, `system.shard_keys` |
 | Service | 3 | 6 | Version on connect, `system.telemetry`, `system.metrics` |
-| Beta | 1 | 2 | `system.issues` |
+| Beta | **2** | **2** | `system.issues`, and `TRUNCATE TABLE system.issues` |
 | Quotas | 0 | 2 | — |
-| **Total** | **27** | **69** | |
+| **Total** | **28** | **69** | |
 
-Two areas are covered whole: every alias route and every index route.
+Three areas are covered whole: every alias route, every index route, and both beta routes.
 
 ### The routes the driver calls
 
-Nineteen come from `QdrantGateway`, which is the only place that speaks HTTP, and eight more
+Twenty come from `QdrantGateway`, which is the only place that speaks HTTP, and eight more
 from `QdrantSystemTables`, which reads endpoints the gateway has no model for because their
 shape depends on the Qdrant version.
 
@@ -87,6 +87,7 @@ shape depends on the Qdrant version.
 | `GET /aliases` | `listAliases` | Aliases as views, `system.aliases`, and the checks before each view statement |
 | `GET /collections/{c}/aliases` | `collectionAliases` | The alias names whose kept columns an index change or a `DROP TABLE` makes wrong |
 | `POST /collections/aliases` | `changeAliases` | `CREATE [OR REPLACE] VIEW`, `ALTER VIEW … RENAME TO`, `DROP VIEW`, each one atomic change |
+| `DELETE /issues` | `clearIssues` | `TRUNCATE TABLE system.issues` |
 | `GET /snapshots` | `QdrantSystemTables` | `system.snapshots`, the whole-storage rows |
 | `GET /collections/{c}/snapshots` | `QdrantSystemTables` | `system.snapshots`, the per-collection rows |
 | `GET /collections/{c}/shards` | `QdrantSystemTables` | `system.shard_keys` |
@@ -99,9 +100,9 @@ shape depends on the Qdrant version.
 The driver also calls `POST /embeddings` on `api.openai.com` or `api.voyageai.com` for
 `embed('text', 'openai:…')`. That is not a Qdrant route and is not counted here.
 
-### Why 39% means less than it looks, in both directions
+### Why 41% means less than it looks, in both directions
 
-**The denominator is padded.** Of the 42 routes the driver does not call, 15 are snapshot
+**The denominator is padded.** Of the 41 routes the driver does not call, 15 are snapshot
 plumbing — creating, downloading, uploading and recovering snapshots of a collection or of one
 shard — and 6 more are cluster surgery: moving a shard, dropping a peer, recovering Raft. No
 SQL client would call those; they belong to an operator with a shell, and exposing them through
@@ -109,7 +110,7 @@ JDBC would mean inventing `CALL` syntax for operations that have nothing to do w
 dialect spec does plan exactly that (see its *Operations* section), but as procedures, and a
 procedure that wraps one route is not what "covering an API" usually means. Set aside the 15
 unused snapshot routes, the 6 unused cluster ones, the 3 health probes (`healthz`, `livez`,
-`readyz`) and the 2 quota routes, and 43 remain, of which the driver calls 27 — **63%**.
+`readyz`) and the 2 quota routes, and 43 remain, of which the driver calls 28 — **65%**.
 Neither number is wrong; they answer different questions.
 
 **The numerator hides how much each route carries.** One route is not one feature.
@@ -146,7 +147,7 @@ slightly wrong.
   `batch` and `groups`, `points/discover` and `discover/batch` — is in the 1.15 spec, gone from
   the 1.20 spec, and alive on a 1.20 server: each answers a JSON validation error rather than
   an empty 404. They were superseded by the Query API, not removed. Counting them puts the live
-  surface at 77 routes and the driver at 35%; this document uses the documented 69, because the
+  surface at 77 routes and the driver at 36%; this document uses the documented 69, because the
   spec is what a maintainer can check, and routes Qdrant has stopped documenting are not ones
   the driver should start calling.
 - **`/locks` is really gone.** `GET` and `POST /locks` are in the 1.15 spec and answer an empty
@@ -169,7 +170,7 @@ client.
 The ceiling is the lexer, but less of one than it looks. `Lexer.java` recognises
 **31 keywords**, and a word outside that set becomes an identifier, so `HAVING`, `BETWEEN`,
 `JOIN`, `UNION` and `CALL` cannot be lexed as syntax at all. `Parser.java` wires **fifteen
-statement kinds**, and `Plan.java`'s sealed interface permits **eighteen plan kinds** — the best
+statement kinds**, and `Plan.java`'s sealed interface permits **nineteen plan kinds** — the best
 single index of what can run. No parser class is a stub any more.
 
 A word that means something in one place only need not be a keyword, though: read where it can
@@ -193,6 +194,7 @@ above has stopped predicting how much SQL runs.
 | `SELECT COUNT(*)` | works | One exact count call; must be the only select item unless grouped |
 | `DELETE FROM … WHERE` | works | `WHERE` is required; the count returned is a separate count call |
 | `TRUNCATE TABLE` | works | Deletes every point; the collection and its indexes stay |
+| `TRUNCATE TABLE system.issues` | works | Clears the issues Qdrant reports, in one call; the count returned is 0, since Qdrant doesn't say how many there were. Every other write to a `system` table is an error |
 | `DROP TABLE [IF EXISTS]` | works | |
 | `CREATE TABLE [IF NOT EXISTS]` | partial | Vector and indexed payload columns; no `WITH (…)` |
 | `INSERT INTO … (columns) VALUES …` | works | One upsert; the column list is required; a taken ID is `23505`; a row without `_id` gets a UUID, from `getGeneratedKeys` |

@@ -7,6 +7,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateTableStateme
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DeleteStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropTableStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.TruncateStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ClearIssuesPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DeletePointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
@@ -17,7 +18,8 @@ import java.sql.SQLFeatureNotSupportedException;
 
 /**
  * Plans the statements that change what Qdrant holds: DELETE, TRUNCATE, DROP TABLE, and
- * CREATE TABLE.
+ * CREATE TABLE. The {@code system} schema's tables are read-only, but for TRUNCATE of
+ * {@code system.issues}.
  */
 final class WritePlanner {
 
@@ -39,7 +41,16 @@ final class WritePlanner {
             column -> SelectPlanner.find(schema, column, statement.alias(), false)));
     }
 
+    /**
+     * Deletes every point of a collection, or clears {@code system.issues}: the one system table
+     * Qdrant lets a client empty, and only all at once, which is what TRUNCATE says.
+     */
     Plan plan(TruncateStatement statement, Catalog catalog) throws SQLException {
+        if (isIssues(statement.table())) {
+            SelectPlanner.checkCatalog(statement.table());
+            return new ClearIssuesPlan();
+        }
+
         TableSchema schema = catalog.table(collection(statement.table(), "TRUNCATE"));
 
         return new DeletePointsPlan(schema.name(), JsonNodeFactory.instance.objectNode());
@@ -65,6 +76,12 @@ final class WritePlanner {
     static String collection(TableName table, String verb) throws SQLException {
         SelectPlanner.checkCatalog(table);
 
+        if (isIssues(table)) {
+            throw new SQLFeatureNotSupportedException("Can't " + verb + " " + table.qualified()
+                + ": Qdrant clears its issues all at once, so use TRUNCATE TABLE "
+                + SystemTable.SCHEMA + "." + SystemTable.ISSUES.tableName());
+        }
+
         if (SystemTable.isSystemSchema(table.schema())) {
             throw new SQLFeatureNotSupportedException("Can't " + verb + " "
                 + table.qualified() + ": the " + SystemTable.SCHEMA + " schema's tables are "
@@ -73,5 +90,10 @@ final class WritePlanner {
 
         SelectPlanner.checkCollectionSchema(table);
         return table.name();
+    }
+
+    private static boolean isIssues(TableName table) {
+        return SystemTable.isSystemSchema(table.schema())
+            && SystemTable.named(table.name()).filter(SystemTable.ISSUES::equals).isPresent();
     }
 }

@@ -148,6 +148,18 @@ class QdrantGatewayTest {
     }
 
     @Test
+    void clearsTheIssuesWithDelete() throws SQLException {
+        server.issue(FakeQdrantServer.issue("UNINDEXED_FIELD/docs/lang",
+            "Unindexed field 'lang' might be slowing queries down", "docs"));
+
+        gateway.clearIssues();
+
+        assertEquals("DELETE /issues", server.requests().get(0).method() + " "
+            + server.requests().get(0).path());
+        assertEquals(0, gateway.request(HttpMethod.GET, "/issues", null).path("issues").size());
+    }
+
+    @Test
     void readsACollectionByAnAlias() throws SQLException {
         server.collection("products_v2", plainCollection(), points(3)).alias("products",
             "products_v2");

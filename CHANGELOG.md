@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `TRUNCATE TABLE system.issues` clears the issues Qdrant reports about itself, so a list that
+  has been read and acted on can be emptied from the same console that showed it. It is the one
+  write a `system` table takes: Qdrant forgets its issues all at once and can't forget one, so
+  `DELETE FROM system.issues WHERE …` is an error naming the `TRUNCATE`, and every other system
+  table stays read-only. The statement reports no count, since Qdrant doesn't say how many
+  issues there were, and a read-only connection refuses it. ([#42])
 - Every text a statement embeds now goes to the provider in **one request**. An `INSERT` of a
   thousand rows that embeds a column was a thousand round trips, one per row; it is one call,
   split only as far as each provider's own limits on texts and tokens per request require
@@ -346,3 +352,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#36]: https://github.com/runax-software/runax-qdrant-jdbc/pull/36
 [#39]: https://github.com/runax-software/runax-qdrant-jdbc/pull/39
 [#40]: https://github.com/runax-software/runax-qdrant-jdbc/pull/40
+[#42]: https://github.com/runax-software/runax-qdrant-jdbc/pull/42

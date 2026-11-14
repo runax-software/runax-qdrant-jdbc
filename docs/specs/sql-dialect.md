@@ -683,6 +683,13 @@ Two of these tables aren't tabular at Qdrant's end and are projected rather than
 suggestion; `solution` is the JSON Qdrant sent, which is a variant whose shape is its own
 business. The read-only `CALL` procedures below move to these tables as they land.
 
+One of these tables takes one write. `TRUNCATE TABLE system.issues` clears the issues, which is
+all Qdrant offers: it forgets every issue at once and can't forget one, so `DELETE FROM
+system.issues WHERE …` is an error that names the `TRUNCATE`. The statement reports no count,
+since Qdrant doesn't say how many issues there were, and a read-only connection refuses it like
+any other write. Clearing settles nothing: Qdrant reports an issue again when it next comes
+across what caused it.
+
 ## Operations
 
 | SQL | Qdrant |
@@ -713,9 +720,11 @@ These are errors, not emulated:
 - Transactions and savepoints: every statement applies on its own, because Qdrant has no
   transactions. An opt-in write buffer that holds writes until `commit()` may come later
   (see the roadmap); it still wouldn't make commits atomic.
-- Writing to the `system` tables, or reading server internals any way but through them.
+- Writing to the `system` tables, other than `TRUNCATE TABLE system.issues`, or reading server
+  internals any way but through them.
   Telemetry, Prometheus metrics, cluster and Raft state, and Qdrant's performance hints are
-  all readable as [system tables](#system-tables) and are read-only there; of telemetry, only
+  all readable as [system tables](#system-tables) and, the issues aside, read-only there; of
+  telemetry, only
   what Qdrant answers with by default is exposed, not its deeper `?details_level=` levels.
 
 ## Open questions

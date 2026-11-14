@@ -132,7 +132,8 @@ measured REST and SQL coverage is in [docs/coverage.md](docs/coverage.md).
   with the schema-qualified names (`system.collections`, `qdrant.system.collections`) that
   reach them, and so are `snapshots`, `shard_keys`, `shards`, `cluster`, `peers`,
   `telemetry`, `metrics`, and `issues`. Read-only lists then move from `CALL` procedures to
-  these tables. A system table takes `SELECT`, a column list, `LIMIT`, and `OFFSET`; `WHERE`,
+  these tables. `TRUNCATE TABLE system.issues` clears the issues Qdrant reports, the one write a
+  system table takes. A system table takes `SELECT`, a column list, `LIMIT`, and `OFFSET`; `WHERE`,
   `ORDER BY`, and `COUNT(*)` over one come with the items above. Only the telemetry Qdrant
   answers with by default is exposed, not its deeper `?details_level=` levels.
 - [ ] **Buffered writes (later, opt-in)** — not real transactions, since Qdrant has none.
