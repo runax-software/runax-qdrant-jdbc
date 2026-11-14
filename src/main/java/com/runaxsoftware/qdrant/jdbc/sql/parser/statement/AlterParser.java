@@ -7,6 +7,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Literal;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.TableName;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AddColumnStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AlterSettingsStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AlterSystemStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropColumnStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Statement;
 
@@ -18,7 +19,8 @@ import java.util.Map;
  * Reads {@code ALTER TABLE docs ADD [COLUMN] [IF NOT EXISTS] column},
  * {@code ALTER TABLE docs DROP [COLUMN] [IF EXISTS] name}, {@code ALTER TABLE docs SET (setting
  * = value, ...)} and {@code ALTER TABLE docs ALTER [COLUMN] name SET (...)}, and hands
- * {@code ALTER VIEW} to the view parser. ADD, COLUMN, IF and EXISTS are words only here.
+ * {@code ALTER VIEW} to the view parser. {@code ALTER SYSTEM SET (...)} is read here too, for the
+ * server's own settings. ADD, COLUMN, SYSTEM, IF and EXISTS are words only here.
  */
 public final class AlterParser {
 
@@ -31,9 +33,17 @@ public final class AlterParser {
     public Statement parse() throws SQLSyntaxErrorException {
         this.tokenStream.expectKeyword("ALTER");
 
+        if (this.tokenStream.matchWord("SYSTEM")) {
+            if (!this.tokenStream.peekKeyword("SET")) {
+                throw this.tokenStream.error("Expected SET (...)");
+            }
+
+            return new AlterSystemStatement(parseSettings());
+        }
+
         if (!this.tokenStream.matchKeyword("TABLE")) {
             if (!this.tokenStream.peekWord("VIEW")) {
-                throw this.tokenStream.error("Expected TABLE or VIEW");
+                throw this.tokenStream.error("Expected TABLE, VIEW or SYSTEM");
             }
 
             return new ViewParser(this.tokenStream).parseAlter();

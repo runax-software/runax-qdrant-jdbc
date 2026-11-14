@@ -109,6 +109,16 @@ interface Writer {
     void deleteVector(String collection, String vector) throws SQLException;
 
     /**
+     * The server's quota config, as Qdrant has it now.
+     */
+    JsonNode quotas() throws SQLException;
+
+    /**
+     * Replaces the server's quota config.
+     */
+    void setQuotas(JsonNode config) throws SQLException;
+
+    /**
      * Forgets every issue Qdrant has reported about itself.
      */
     void clearIssues() throws SQLException;

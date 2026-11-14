@@ -505,6 +505,21 @@ class QdrantSystemTablesTest {
         assertEquals("with=queued,completed", request.query());
     }
 
+    // Quotas
+
+    @Test
+    void readsTheQuotasAsOneRowOfLimitsAndUsage() throws SQLException {
+        assertArrayEquals(new Object[]{false, null, null, null, 3L, 17L},
+            tables.read(SystemTable.QUOTAS).get(0));
+
+        server.quotas(Json.object("enabled", true, "max_resident_memory_percent", 80,
+            "max_disk_usage_percent", 90, "release_margin_percent", 5));
+
+        List<Object[]> rows = tables.read(SystemTable.QUOTAS);
+        assertEquals(1, rows.size());
+        assertArrayEquals(new Object[]{true, 80L, 90L, 5L, 3L, 17L}, rows.get(0));
+    }
+
     // Health
 
     @Test

@@ -172,6 +172,16 @@ public final class FakeQdrantServer implements AutoCloseable {
         CLEAR_ISSUES,
 
         /**
+         * {@code GET /quotas}.
+         */
+        QUOTAS,
+
+        /**
+         * {@code PUT /quotas}, which replaces the quota config.
+         */
+        SET_QUOTAS,
+
+        /**
          * {@code GET /healthz}, which answers in text and needs no API key.
          */
         HEALTHZ,
@@ -215,6 +225,7 @@ public final class FakeQdrantServer implements AutoCloseable {
     private final Map<String, List<ObjectNode>> collectionSnapshots = new ConcurrentHashMap<>();
     private final Map<String, List<JsonNode>> shardKeys = new ConcurrentHashMap<>();
     private final Map<String, ObjectNode> optimizations = new ConcurrentHashMap<>();
+    private volatile JsonNode quotas = Json.object("enabled", false);
     private final Map<String, ObjectNode> collectionClusters = new ConcurrentHashMap<>();
     private final List<ObjectNode> issues = new CopyOnWriteArrayList<>();
     private final List<String> listedOnly = new CopyOnWriteArrayList<>();
@@ -713,6 +724,12 @@ public final class FakeQdrantServer implements AutoCloseable {
                 case CLUSTER -> ok(exchange, cluster);
                 case TELEMETRY -> ok(exchange, telemetry);
                 case ISSUES -> ok(exchange, Json.object("issues", Json.array(issues.toArray())));
+                case QUOTAS -> ok(exchange, Json.object("config", quotas,
+                    "usage", Json.object("resident_memory_percent", 3, "disk_usage_percent", 17)));
+                case SET_QUOTAS -> {
+                    quotas = body;
+                    ok(exchange, BooleanNode.TRUE);
+                }
                 case CLEAR_ISSUES -> {
                     issues.clear();
                     ok(exchange, BooleanNode.TRUE);
@@ -742,11 +759,16 @@ public final class FakeQdrantServer implements AutoCloseable {
                 case "telemetry": return Endpoint.TELEMETRY;
                 case "metrics": return Endpoint.METRICS;
                 case "issues": return Endpoint.ISSUES;
+                case "quotas": return Endpoint.QUOTAS;
                 case "healthz": return Endpoint.HEALTHZ;
                 case "livez": return Endpoint.LIVEZ;
                 case "readyz": return Endpoint.READYZ;
                 default: break;
             }
+        }
+
+        if (method.equals("PUT") && segments.length == 2 && segments[1].equals("quotas")) {
+            return Endpoint.SET_QUOTAS;
         }
 
         if (method.equals("DELETE") && segments.length == 2 && segments[1].equals("issues")) {
@@ -849,6 +871,22 @@ public final class FakeQdrantServer implements AutoCloseable {
 
         ok(exchange, Json.array(
             collectionSnapshots.getOrDefault(resolve(name), List.of()).toArray()));
+    }
+
+    /**
+     * Sets the quota config {@code GET /quotas} answers with, until a {@code PUT} replaces it.
+     */
+    public FakeQdrantServer quotas(ObjectNode config) {
+        quotas = config;
+
+        return this;
+    }
+
+    /**
+     * The quota config as the latest {@code PUT /quotas}, or {@link #quotas(ObjectNode)}, left it.
+     */
+    public JsonNode quotas() {
+        return quotas;
     }
 
     /**

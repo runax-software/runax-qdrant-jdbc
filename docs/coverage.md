@@ -9,8 +9,8 @@ maintainer can tell a missing feature that blocks real use from one that nobody 
 statements, the write statements, the vector changes, the text conditions, `ON CONFLICT` and the
 embedder's model and role (#27, #28, #30, #31, #33, #34, #35, #36 and #39) — with the batched
 embedding of #40, the clearing of `system.issues` (#42), `system.health` (#43),
-`system.optimizations` (#44), `ALTER TABLE … ADD`/`DROP COLUMN` (#45) and
-`ALTER TABLE … SET` on top, and Qdrant
+`system.optimizations` (#44), `ALTER TABLE … ADD`/`DROP COLUMN` and
+`ALTER TABLE … SET` (#45, #46), and the quotas on top, and Qdrant
 **1.20.0** (build
 `222b2e44ab1c3f17e8246396ead6558e45041df7`), running locally over REST on port 6333, with the
 three collections `./gradlew seedQdrant` loads. Qdrant 1.20 does not serve `/openapi.json` —
@@ -42,7 +42,7 @@ one of them is indistinguishable from a bug.
 
 ## Qdrant REST coverage
 
-Qdrant 1.20 documents **69 routes**. The driver calls **35** of them, which is **51%**. The
+Qdrant 1.20 documents **69 routes**. The driver calls **37** of them, which is **54%**. The
 counts below are per area, using Qdrant's own OpenAPI tags, so they can be recomputed from the
 spec without judgement calls.
 
@@ -57,15 +57,15 @@ spec without judgement calls.
 | Distributed | 3 | 9 | `system.cluster`, `system.peers`, `system.shards`, `system.shard_keys` |
 | Service | **6** | **6** | Version on connect, `system.telemetry`, `system.metrics`, `system.health` |
 | Beta | **2** | **2** | `system.issues`, and `TRUNCATE TABLE system.issues` |
-| Quotas | 0 | 2 | — |
-| **Total** | **35** | **69** | |
+| Quotas | **2** | **2** | `system.quotas`, `ALTER SYSTEM SET (quotas.… = …)` |
+| **Total** | **37** | **69** | |
 
-Five areas are covered whole: every alias route, every index route, both beta routes, every
-service route, and every collection route.
+Six areas are covered whole: every alias route, every index route, both beta routes, every
+service route, every collection route, and both quota routes.
 
 ### The routes the driver calls
 
-Twenty-three come from `QdrantGateway`, which is the only place that speaks HTTP, and twelve more
+Twenty-five come from `QdrantGateway`, which is the only place that speaks HTTP, and twelve more
 from `QdrantSystemTables`: nine endpoints the gateway has no model for because their shape
 depends on the Qdrant version, and the three health probes, which answer in a line of text.
 
@@ -94,6 +94,8 @@ depends on the Qdrant version, and the three health probes, which answer in a li
 | `PUT /collections/{c}/vectors/{v}` | `createVector` | `ALTER TABLE … ADD COLUMN`: a named dense vector, multivector or sparse vector |
 | `DELETE /collections/{c}/vectors/{v}` | `deleteVector` | `ALTER TABLE … DROP COLUMN` |
 | `DELETE /issues` | `clearIssues` | `TRUNCATE TABLE system.issues` |
+| `GET /quotas` | `quotas` | `system.quotas`, and the config an `ALTER SYSTEM SET` changes part of |
+| `PUT /quotas` | `setQuotas` | `ALTER SYSTEM SET (quotas.… = …)`; Qdrant replaces the whole config, so the driver reads it first |
 | `GET /snapshots` | `QdrantSystemTables` | `system.snapshots`, the whole-storage rows |
 | `GET /collections/{c}/snapshots` | `QdrantSystemTables` | `system.snapshots`, the per-collection rows |
 | `GET /collections/{c}/shards` | `QdrantSystemTables` | `system.shard_keys` |
@@ -110,17 +112,17 @@ depends on the Qdrant version, and the three health probes, which answer in a li
 The driver also calls `POST /embeddings` on `api.openai.com` or `api.voyageai.com` for
 `embed('text', 'openai:…')`. That is not a Qdrant route and is not counted here.
 
-### Why 51% means less than it looks, in both directions
+### Why 54% means less than it looks, in both directions
 
-**The denominator is padded.** Of the 34 routes the driver does not call, 15 are snapshot
+**The denominator is padded.** Of the 32 routes the driver does not call, 15 are snapshot
 plumbing — creating, downloading, uploading and recovering snapshots of a collection or of one
 shard — and 6 more are cluster surgery: moving a shard, dropping a peer, recovering Raft. No
 SQL client would call those; they belong to an operator with a shell, and exposing them through
 JDBC would mean inventing `CALL` syntax for operations that have nothing to do with rows. The
 dialect spec does plan exactly that (see its *Operations* section), but as procedures, and a
 procedure that wraps one route is not what "covering an API" usually means. Set aside the 15
-unused snapshot routes, the 6 unused cluster ones and the 2 quota routes, and 46 remain, of
-which the driver calls 35 — **76%**.
+unused snapshot routes and the 6 unused cluster ones, and 48 remain, of which the driver calls
+37 — **77%**.
 Neither number is wrong; they answer different questions.
 
 **The numerator hides how much each route carries.** One route is not one feature.
@@ -157,7 +159,7 @@ slightly wrong.
   `batch` and `groups`, `points/discover` and `discover/batch` — is in the 1.15 spec, gone from
   the 1.20 spec, and alive on a 1.20 server: each answers a JSON validation error rather than
   an empty 404. They were superseded by the Query API, not removed. Counting them puts the live
-  surface at 77 routes and the driver at 45%; this document uses the documented 69, because the
+  surface at 77 routes and the driver at 48%; this document uses the documented 69, because the
   spec is what a maintainer can check, and routes Qdrant has stopped documenting are not ones
   the driver should start calling.
 - **`/locks` is really gone.** `GET` and `POST /locks` are in the 1.15 spec and answer an empty
@@ -172,15 +174,16 @@ Two more probe results, re-verified rather than assumed: `POST /collections/{c}/
 does **not** exist — the method is `PUT`, and `POST` gets an empty 404 — while
 `POST /collections/{c}/points/vectors/delete` does. And `/quotas`, new in the 1.20 spec, is
 real on a self-hosted server rather than Qdrant Cloud only; `GET /quotas` answers
-`{"config":{"enabled":false}, …}`. It is counted in the total above and is of no use to a SQL
-client.
+`{"config":{"enabled":false}, …}`. Probing it also showed that `PUT /quotas` replaces the config
+whole: a limit the body leaves out is a limit taken away, which is why `ALTER SYSTEM SET` reads
+the config before it writes one.
 
 ## SQL coverage
 
 The ceiling is the lexer, but less of one than it looks. `Lexer.java` recognises
 **31 keywords**, and a word outside that set becomes an identifier, so `HAVING`, `BETWEEN`,
-`JOIN`, `UNION` and `CALL` cannot be lexed as syntax at all. `Parser.java` wires **eighteen
-statement kinds**, and `Plan.java`'s sealed interface permits **twenty-two plan kinds** — the best
+`JOIN`, `UNION` and `CALL` cannot be lexed as syntax at all. `Parser.java` wires **nineteen
+statement kinds**, and `Plan.java`'s sealed interface permits **twenty-three plan kinds** — the best
 single index of what can run. No parser class is a stub any more.
 
 A word that means something in one place only need not be a keyword, though: read where it can
@@ -199,7 +202,7 @@ above has stopped predicting how much SQL runs.
 | Statement | State | Condition |
 | --- | --- | --- |
 | `SELECT … FROM <collection>` | works | Scrolls by cursor; `*` returns every column but the vectors |
-| `SELECT … FROM system.<table>` | works | Twelve tables; a column list and `LIMIT` only |
+| `SELECT … FROM system.<table>` | works | Thirteen tables; a column list and `LIMIT` only |
 | `SELECT` without `FROM` | partial | Constants only; a column or `*` is an error |
 | `SELECT COUNT(*)` | works | One exact count call; must be the only select item unless grouped |
 | `DELETE FROM … WHERE` | works | `WHERE` is required; the count returned is a separate count call |
@@ -219,6 +222,7 @@ above has stopped predicting how much SQL runs.
 | `ALTER TABLE … SET (…)` | works | A collection's `params`, `hnsw`, `optimizers`, `strict_mode`, `quantization` and `metadata`; a setting is written `hnsw.m`, `m` where one group has it, or with its group as JSON. An unknown name is an error, since Qdrant would drop it without a word |
 | `ALTER TABLE … ALTER [COLUMN] v SET (…)` | works | One vector's settings: `on_disk`, `hnsw` and `quantization` for a dense one, `modifier` and `index` for a sparse one |
 | `ALTER TABLE … RENAME`, `ALTER COLUMN … TYPE` | missing | Qdrant renames nothing and a vector's dimensions are fixed |
+| `ALTER SYSTEM SET (…)` | works | The server's quotas: `quotas.enabled` and three percentages, each written as `quotas.name`, the name alone, or `quotas = '{…}'`; `NULL` takes a limit away. Nothing else of the server is a setting yet |
 | `CALL` | missing | Not a keyword; `getProcedures` returns no rows |
 | `JOIN`, `UNION`, subqueries | missing | Rejected on purpose — see below |
 | Trailing `;` | works | One semicolon ends a statement; two statements in one call is an error |

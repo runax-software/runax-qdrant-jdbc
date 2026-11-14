@@ -45,6 +45,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.SystemTablePlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdateCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdatePointsPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdateQuotasPlan;
 import com.runaxsoftware.qdrant.jdbc.system.QdrantSystemTables;
 import com.runaxsoftware.qdrant.jdbc.system.SystemTableReader;
 
@@ -276,6 +277,11 @@ public final class Executor {
 
         if (plan instanceof UpdateCollectionPlan update) {
             writer.updateCollection(update.collection(), update.changes());
+            return ExecutionResult.updated(0);
+        }
+
+        if (plan instanceof UpdateQuotasPlan quotas) {
+            updateQuotas(quotas);
             return ExecutionResult.updated(0);
         }
 
@@ -745,6 +751,23 @@ public final class Executor {
     }
 
     /**
+     * Changes the quotas the plan names and keeps the rest. Qdrant takes a whole config and
+     * replaces the one it has, so the driver reads it first, exact unless something else sets
+     * quotas between the two calls. A null takes a limit away, which is leaving it out.
+     */
+    private void updateQuotas(UpdateQuotasPlan plan) throws SQLException {
+        ObjectNode config = JSON.objectNode();
+        writer.quotas().properties().forEach(entry -> config.set(entry.getKey(), entry.getValue()));
+
+        for (Map.Entry<String, JsonNode> change : plan.changes().properties()) {
+            if (change.getValue().isNull()) config.remove(change.getKey());
+            else config.set(change.getKey(), change.getValue());
+        }
+
+        writer.setQuotas(config);
+    }
+
+    /**
      * A point's vectors as Qdrant takes them: the unnamed one alone is the vector itself, and
      * any others go under their names. A collection that was given a named vector after it was
      * created has both kinds, and then the unnamed one goes under the name Qdrant keeps it by,
@@ -888,6 +911,16 @@ public final class Executor {
             @Override
             public void clearIssues() throws SQLException {
                 gateway.clearIssues();
+            }
+
+            @Override
+            public JsonNode quotas() throws SQLException {
+                return gateway.quotas().path("config");
+            }
+
+            @Override
+            public void setQuotas(JsonNode config) throws SQLException {
+                gateway.setQuotas(config);
             }
 
             @Override

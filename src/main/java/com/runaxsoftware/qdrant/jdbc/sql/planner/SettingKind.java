@@ -18,5 +18,8 @@ enum SettingKind {
     THREADS,
 
     /** A word, which Qdrant checks. */
-    WORD
+    WORD,
+
+    /** A whole number from 0 to 100, or NULL for no limit at all. */
+    PERCENT
 }

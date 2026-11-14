@@ -39,6 +39,7 @@ public class QdrantGateway implements AutoCloseable {
      **/
     public static final int DEFAULT_PORT = 6333;
 
+    private static final String QUOTAS_PATH = "/quotas";
     private static final int MAX_ERROR_LENGTH = 500;
 
     /**
@@ -397,6 +398,23 @@ public class QdrantGateway implements AutoCloseable {
 
     private static String vectorPath(String collection, String vector) {
         return "/collections/" + segment(collection) + "/vectors/" + segment(vector) + "?wait=true";
+    }
+
+    /**
+     * The server's quotas: under {@code config} the limits and whether they're enforced, and
+     * under {@code usage} how much memory and disk is used now.
+     */
+    public JsonNode quotas() throws SQLException {
+        return request(HttpMethod.GET, QUOTAS_PATH, null);
+    }
+
+    /**
+     * Sets the server's quotas, and waits until Qdrant has. The config replaces the one there:
+     * a limit it leaves out is a limit taken away, so a caller that changes one reads the rest
+     * first.
+     */
+    public void setQuotas(JsonNode config) throws SQLException {
+        request(HttpMethod.PUT, QUOTAS_PATH + "?wait=true", config);
     }
 
     /**

@@ -26,6 +26,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.InsertPointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.NewPoint;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdateCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdatePointsPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdateQuotasPlan;
 import com.runaxsoftware.qdrant.jdbc.support.Json;
 
 import org.junit.jupiter.api.Test;
@@ -52,6 +53,7 @@ class WriteExecutorTest {
     private List<QdrantAlias> aliases = List.of();
     private List<JsonNode> matchingIds = List.of();
     private List<VectorField> vectors = List.of();
+    private JsonNode quotas = Json.object("enabled", false);
 
     private final Executor executor = new Executor(
         request -> {
@@ -159,6 +161,17 @@ class WriteExecutorTest {
             }
 
             @Override
+            public JsonNode quotas() {
+                calls.add("quotas");
+                return quotas;
+            }
+
+            @Override
+            public void setQuotas(JsonNode config) {
+                calls.add("set quotas " + config);
+            }
+
+            @Override
             public void updateCollection(String collection, JsonNode changes) {
                 calls.add("alter " + collection + " " + changes);
             }
@@ -196,6 +209,20 @@ class WriteExecutorTest {
         assertEquals(0, executor.execute(new DeletePointsPlan("docs", FILTER), statement())
             .updateCount());
         assertEquals(List.of("count docs " + FILTER), calls);
+    }
+
+    @Test
+    void changesTheQuotasNamedAndKeepsTheRest() throws SQLException {
+        quotas = Json.object("enabled", false, "max_resident_memory_percent", 80,
+            "max_disk_usage_percent", 90);
+
+        ExecutionResult result = executor.execute(new UpdateQuotasPlan(Json.parse(
+            "{\"enabled\":true,\"max_resident_memory_percent\":null,"
+                + "\"release_margin_percent\":5}")), statement());
+
+        assertEquals(0, result.updateCount());
+        assertEquals(List.of("quotas", "set quotas {\"enabled\":true,"
+            + "\"max_disk_usage_percent\":90,\"release_margin_percent\":5}"), calls);
     }
 
     @Test

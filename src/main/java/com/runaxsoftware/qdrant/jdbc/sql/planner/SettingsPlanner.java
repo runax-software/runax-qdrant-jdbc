@@ -12,8 +12,10 @@ import com.runaxsoftware.qdrant.jdbc.schema.TableSchema;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Expression;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Literal;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AlterSettingsStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AlterSystemStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdateCollectionPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdateQuotasPlan;
 
 import java.sql.SQLException;
 import java.sql.SQLSyntaxErrorException;
@@ -66,6 +68,15 @@ final class SettingsPlanner {
         changes.putObject(sparse ? "sparse_vectors" : "vectors").set(column.source(), settings);
 
         return new UpdateCollectionPlan(schema.name(), changes);
+    }
+
+    /**
+     * The server's settings, which so far are its quotas.
+     */
+    Plan plan(AlterSystemStatement statement) throws SQLException {
+        ObjectNode body = body(CollectionSettings.SYSTEM, statement.options(), "The server");
+
+        return new UpdateQuotasPlan(body.path(CollectionSettings.QUOTAS));
     }
 
     /**
@@ -259,6 +270,13 @@ final class SettingsPlanner {
                     yield JSON.textNode("auto");
                 }
                 throw invalid(written, "a whole number of 0 or more, or auto", value);
+            }
+            case PERCENT -> {
+                if (value == null) yield JSON.nullNode();
+                if (value instanceof Long number && number >= 0 && number <= 100) {
+                    yield JSON.numberNode(number);
+                }
+                throw invalid(written, "a whole number from 0 to 100, or NULL for no limit", value);
             }
             case WORD -> {
                 if (value instanceof String text) yield JSON.textNode(text.toLowerCase(Locale.ROOT));

@@ -454,6 +454,36 @@ class SystemTablesIntegrationTest {
         throw new AssertionError("Qdrant reported no optimization of " + collection);
     }
 
+    /**
+     * Changes the server's quotas and puts back what was there. The limits stay unenforced
+     * throughout, so nothing else running against this server is refused a write.
+     */
+    @Test
+    void changesTheQuotasAndReadsThemBack() throws SQLException {
+        JsonNode before = gateway.quotas().path("config");
+
+        try (Statement statement = connection.createStatement()) {
+            assertEquals(0, statement.executeUpdate("ALTER SYSTEM SET (quotas.enabled = false, "
+                + "quotas.max_disk_usage_percent = 99, max_resident_memory_percent = 98)"));
+            assertEquals(0, statement.executeUpdate(
+                "ALTER SYSTEM SET (quotas.max_resident_memory_percent = NULL)"));
+
+            try (ResultSet rows = statement.executeQuery("SELECT enabled, "
+                + "max_resident_memory_percent, max_disk_usage_percent, disk_usage_percent "
+                + "FROM system.quotas")) {
+                assertTrue(rows.next());
+                assertFalse(rows.getBoolean("enabled"));
+                assertEquals(99, rows.getInt("max_disk_usage_percent"), "kept by the second SET");
+                rows.getInt("max_resident_memory_percent");
+                assertTrue(rows.wasNull(), "the limit was taken away");
+                assertTrue(rows.getInt("disk_usage_percent") > 0);
+                assertFalse(rows.next());
+            }
+        } finally {
+            gateway.setQuotas(before);
+        }
+    }
+
     @Test
     void readsTheHealthProbesOfARunningServer() throws SQLException {
         List<String> probes = new ArrayList<>();

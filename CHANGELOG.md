@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The server's quotas, the limits on memory and disk past which Qdrant refuses writes:
+  `system.quotas` shows them in one row beside how much of each resource is used now, and
+  `ALTER SYSTEM SET (quotas.enabled = true, quotas.max_disk_usage_percent = 90)` changes them.
+  A setting is written as a collection's is — `quotas.name`, the name alone, or `quotas =
+  '{…}'` — and `NULL` takes a limit away. Qdrant replaces the whole quota config with each
+  write, so a limit left out would be a limit lost; the driver reads the config first and sends
+  it back with only the named settings changed. ([#48])
 - `ALTER TABLE … SET (…)`, which changes a collection's settings in place: replication and
   payload storage, HNSW, the optimizers, strict mode, quantization, and metadata. A setting can
   be written by its group and name (`hnsw.m = 16`, or `hnsw_config.m` as Qdrant names the
@@ -394,3 +401,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#44]: https://github.com/runax-software/runax-qdrant-jdbc/pull/44
 [#45]: https://github.com/runax-software/runax-qdrant-jdbc/pull/45
 [#46]: https://github.com/runax-software/runax-qdrant-jdbc/pull/46
+[#48]: https://github.com/runax-software/runax-qdrant-jdbc/pull/48
