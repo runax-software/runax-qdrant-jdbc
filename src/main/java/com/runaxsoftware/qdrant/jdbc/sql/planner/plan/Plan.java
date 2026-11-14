@@ -8,7 +8,7 @@ public sealed interface Plan permits ConstantPlan, ScrollPlan, QueryPlan, CountP
     ShowOptionsPlan, UpdatePointsPlan, InsertPointsPlan, CreateIndexPlan, DropIndexPlan,
     CreateViewPlan, RenameViewPlan, DropViewPlan, ClearIssuesPlan, AddVectorPlan, DropVectorPlan,
     UpdateCollectionPlan, UpdateQuotasPlan, ProcedurePlan, GroupedQueryPlan,
-    MatrixPlan {
+    MatrixPlan, PointPlan {
 
     /**
      * Whether running the plan returns rows, as a SELECT does, rather than changing what Qdrant

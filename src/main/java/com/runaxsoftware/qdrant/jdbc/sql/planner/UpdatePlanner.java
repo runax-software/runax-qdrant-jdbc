@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.PointOperation;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnKind;
 import com.runaxsoftware.qdrant.jdbc.schema.TableSchema;
@@ -106,23 +107,26 @@ final class UpdatePlanner {
 
         // Replacing comes first, so the fields set beside it land in the new payload
         var operations = new ArrayList<JsonNode>();
-        if (cleared) operations.add(operation("clear_payload", JSON.objectNode(), filter));
-        if (replaced != null) operations.add(operation("overwrite_payload",
+        if (cleared) {
+            operations.add(operation(PointOperation.CLEAR_PAYLOAD, JSON.objectNode(), filter));
+        }
+        if (replaced != null) operations.add(operation(PointOperation.OVERWRITE_PAYLOAD,
             JSON.objectNode().set("payload", replaced), filter));
-        if (!fields.isEmpty()) operations.add(operation("set_payload",
+        if (!fields.isEmpty()) operations.add(operation(PointOperation.SET_PAYLOAD,
             JSON.objectNode().set("payload", fields), filter));
 
         for (Map.Entry<String, ObjectNode> object : nested.entrySet()) {
             ObjectNode change = JSON.objectNode();
             change.set("payload", object.getValue());
             change.put("key", object.getKey());
-            operations.add(operation("set_payload", change, filter));
+            operations.add(operation(PointOperation.SET_PAYLOAD, change, filter));
         }
 
         if (!deleted.isEmpty()) {
             ArrayNode keys = JSON.arrayNode();
             deleted.forEach(keys::add);
-            operations.add(operation("delete_payload", JSON.objectNode().set("keys", keys), filter));
+            operations.add(operation(PointOperation.DELETE_PAYLOAD,
+                JSON.objectNode().set("keys", keys), filter));
         }
 
         return new UpdatePointsPlan(schema.name(), filter, operations, vectors, embeds,
@@ -174,8 +178,10 @@ final class UpdatePlanner {
         return path;
     }
 
-    private static JsonNode operation(String name, ObjectNode change, JsonNode filter) {
+    // One operation as a batch takes it: its body, with the filter, under its name
+    private static JsonNode operation(PointOperation operation, ObjectNode change,
+                                      JsonNode filter) {
         change.set("filter", filter);
-        return JSON.objectNode().set(name, change);
+        return JSON.objectNode().set(operation.operationName(), change);
     }
 }

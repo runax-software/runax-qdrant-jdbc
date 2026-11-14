@@ -1,6 +1,9 @@
 package com.runaxsoftware.qdrant.jdbc;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
 import com.runaxsoftware.qdrant.jdbc.support.SampleCollections;
@@ -131,6 +134,27 @@ class FilterIntegrationTest {
             + "LIMIT 5");
         assertEquals(4, inStock.size());
         assertEquals(false, inStock.contains("3"));
+    }
+
+    @Test
+    void readsOnePointByItsIdOrNoRowWhenThereIsNone() throws SQLException {
+        try (Statement statement = connection.createStatement();
+             ResultSet rows = statement.executeQuery("SELECT _id, name, price, _vector FROM "
+                 + PREFIX + "products WHERE _id = 1")) {
+            assertTrue(rows.next());
+            assertEquals("1", rows.getString("_id"));
+            assertEquals("Desk lamp", rows.getString("name"));
+            assertEquals(39.9, rows.getDouble("price"));
+            assertTrue(rows.getString("_vector").startsWith("[0.9"), rows.getString("_vector"));
+            assertFalse(rows.next());
+        }
+
+        assertEquals(List.of(), ids("SELECT _id FROM " + PREFIX + "products WHERE _id = 987654"));
+        assertEquals(List.of("1"), ids("SELECT _id FROM " + PREFIX + "products WHERE _id = '1'"));
+        assertEquals(List.of(), ids("SELECT _id FROM " + PREFIX
+            + "products WHERE _id = 1 OFFSET 1"));
+        assertEquals("42S02", assertThrows(SQLException.class, () -> ids("SELECT _id FROM "
+            + PREFIX + "gone WHERE _id = 1")).getSQLState());
     }
 
     private static List<String> ids(String sql) throws SQLException {

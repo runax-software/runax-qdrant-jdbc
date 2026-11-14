@@ -95,12 +95,14 @@ final class RestModels {
         return List.copyOf(aliases);
     }
 
+    static Point point(JsonNode point) {
+        return new Point(point.get("id"), present(point.get("payload")), present(point.get("vector")));
+    }
+
     static ScrollPage scrollPage(JsonNode result) {
         List<Point> points = new ArrayList<>();
 
-        for (JsonNode point : result.path("points")) {
-            points.add(new Point(point.get("id"), present(point.get("payload")), present(point.get("vector"))));
-        }
+        for (JsonNode point : result.path("points")) points.add(point(point));
 
         JsonNode next = result.get("next_page_offset");
         return new ScrollPage(List.copyOf(points), next == null || next.isNull() ? null : next);

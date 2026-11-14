@@ -11,8 +11,8 @@ embedder's model and role (#27, #28, #30, #31, #33, #34, #35, #36 and #39) — w
 embedding of #40, the clearing of `system.issues` (#42), `system.health` (#43),
 `system.optimizations` (#44), `ALTER TABLE … ADD`/`DROP COLUMN` and
 `ALTER TABLE … SET` (#45, #46), the quotas (#48), `CALL` with the cluster
-procedures (#49), batches of searches (#50), grouped searches (#51), and the distance
-matrix on top, and Qdrant
+procedures (#49), batches of searches (#50), grouped searches (#51), the distance
+matrix (#53), and the rest of the point routes on top, and Qdrant
 **1.20.0** (build
 `222b2e44ab1c3f17e8246396ead6558e45041df7`), running locally over REST on port 6333, with the
 three collections `./gradlew seedQdrant` loads. Qdrant 1.20 does not serve `/openapi.json` —
@@ -44,14 +44,14 @@ one of them is indistinguishable from a bug.
 
 ## Qdrant REST coverage
 
-Qdrant 1.20 documents **69 routes**. The driver calls **47** of them, which is **68%**. The
+Qdrant 1.20 documents **69 routes**. The driver calls **54** of them, which is **78%**. The
 counts below are per area, using Qdrant's own OpenAPI tags, so they can be recomputed from the
 spec without judgement calls.
 
 | Area | Covered | Total | What the covered routes are for |
 | --- | --- | --- | --- |
 | Collections | **9** | **9** | Listing and describing tables, `CREATE TABLE`, `DROP TABLE`, `IF NOT EXISTS`, `system.optimizations`, and all of `ALTER TABLE`: `ADD COLUMN`, `DROP COLUMN`, `SET (…)` |
-| Points | 7 | 14 | `SELECT` (scroll), `COUNT(*)`, `GROUP BY` (facet), `DELETE`, `TRUNCATE`, `UPDATE` (batch), `INSERT` (upsert, and the ID check before it) — and `LIKE` and the full-text conditions, which are fields of the filter all of them send |
+| Points | **14** | **14** | `SELECT` (scroll, or one point by its ID), `COUNT(*)`, `GROUP BY` (facet), `DELETE`, `TRUNCATE`, `UPDATE` (a route for each kind of change, or the batch for several), `INSERT` (upsert, and the ID check before it) — and `LIKE` and the full-text conditions, which are fields of the filter all of them send |
 | Search | **5** | **5** | `ORDER BY similarity(...) DESC`, including `embed()`, several such searches in one call, the best points of each group with `DISTINCT ON` and `LIMIT … BY`, and `distance_matrix(…)` |
 | Aliases | **3** | **3** | Views: listing, `system.aliases`, `CREATE [OR REPLACE] VIEW`, `ALTER VIEW`, `DROP VIEW`, and the aliases a dropped collection takes with it |
 | Indexes | **2** | **2** | `CREATE INDEX`, `DROP INDEX`, and the indexes `CREATE TABLE` declares |
@@ -60,15 +60,15 @@ spec without judgement calls.
 | Service | **6** | **6** | Version on connect, `system.telemetry`, `system.metrics`, `system.health` |
 | Beta | **2** | **2** | `system.issues`, and `TRUNCATE TABLE system.issues` |
 | Quotas | **2** | **2** | `system.quotas`, `ALTER SYSTEM SET (quotas.… = …)` |
-| **Total** | **47** | **69** | |
+| **Total** | **54** | **69** | |
 
-Eight areas are covered whole: every alias route, every index route, both beta routes, every
-service route, every collection route, both quota routes, every distributed route, and every
-search route. What is left is in two: snapshots and points.
+Nine areas are covered whole: every alias route, every index route, both beta routes, every
+service route, every collection route, both quota routes, every distributed route, every search
+route, and every point route. What is left is in one: snapshots.
 
 ### The routes the driver calls
 
-Twenty-nine come from `QdrantGateway`, which is the only place that speaks HTTP, thirteen more
+Thirty-six come from `QdrantGateway`, which is the only place that speaks HTTP, thirteen more
 from `QdrantSystemTables` — ten endpoints the gateway has no model for because their shape
 depends on the Qdrant version, and the three health probes, which answer in a line of text —
 and five from `Procedure`, which declares each `CALL` procedure as the one request it makes.
@@ -84,6 +84,7 @@ and five from `Procedure`, which declares each `CALL` procedure as the one reque
 | `PUT /collections/{c}/index` | `createIndex` | `CREATE INDEX`, and the `… KEYWORD INDEX` columns of a `CREATE TABLE` |
 | `DELETE /collections/{c}/index/{field}` | `deleteIndex` | `DROP INDEX` |
 | `POST /collections/{c}/points/scroll` | `scroll`, `matchingIds` | `SELECT`, paged by cursor, the sample that infers columns, and the IDs an `UPDATE` of a vector writes to |
+| `GET /collections/{c}/points/{id}` | `point` | `SELECT … WHERE _id = 7`, when one ID is the whole `WHERE`: the point or no row, without a filter or a page |
 | `POST /collections/{c}/points/query` | `query` | `ORDER BY similarity(...) DESC` |
 | `POST /collections/{c}/points/query/batch` | `queryBatch` | Several searches of one collection run in one `execute`, each one's rows a result of its own |
 | `POST /collections/{c}/points/query/groups` | `queryGroups` | `SELECT DISTINCT ON (field) …` and `LIMIT n BY field` on a search: the best points of each of a payload field's values |
@@ -92,6 +93,12 @@ and five from `Procedure`, which declares each `CALL` procedure as the one reque
 | `POST /collections/{c}/points/count` | `count` | `COUNT(*)`, and the row count a `DELETE` or `UPDATE` reports |
 | `POST /collections/{c}/points/delete` | `deletePoints` | `DELETE … WHERE`, `TRUNCATE TABLE` |
 | `POST /collections/{c}/points/batch` | `updatePoints` | `UPDATE`: set, delete, overwrite and clear payload, and write and delete vectors, in one call |
+| `POST /collections/{c}/points/payload` | `updatePoints` | `UPDATE … SET field = value`, when setting fields is all the statement does |
+| `PUT /collections/{c}/points/payload` | `updatePoints` | `UPDATE … SET _payload = '{…}'`, alone |
+| `POST /collections/{c}/points/payload/delete` | `updatePoints` | `UPDATE … SET field = NULL`, alone |
+| `POST /collections/{c}/points/payload/clear` | `updatePoints` | `UPDATE … SET _payload = NULL`, alone |
+| `PUT /collections/{c}/points/vectors` | `updatePoints` | `UPDATE … SET dense = […]`, alone |
+| `POST /collections/{c}/points/vectors/delete` | `updatePoints` | `UPDATE … SET dense = NULL`, alone |
 | `POST /collections/{c}/points` | `existingIds` | `INSERT`: the IDs a statement gives, looked up so a taken one is an error — not called when `ON CONFLICT` says what to do instead |
 | `PUT /collections/{c}/points` | `insertPoints` | `INSERT`: one upsert, in `insert_only` mode or, for `ON CONFLICT … DO UPDATE`, in `upsert` mode with an `update_filter` |
 | `POST /collections/{c}/facet` | `facet` | `GROUP BY … COUNT(*)` |
@@ -126,17 +133,16 @@ and five from `Procedure`, which declares each `CALL` procedure as the one reque
 The driver also calls `POST /embeddings` on `api.openai.com` or `api.voyageai.com` for
 `embed('text', 'openai:…')`. That is not a Qdrant route and is not counted here.
 
-### Why 68% means less than it looks, in both directions
+### Why 78% means less than it looks, in both directions
 
-**The denominator is padded.** Of the 22 routes the driver does not call, 15 are snapshot
+**The denominator is padded.** The 15 routes the driver does not call are all snapshot
 plumbing — creating, downloading, uploading and recovering snapshots of a collection or of one
 shard. They belong to an operator with a shell more than to a SQL client, and what the driver
 can offer for them is what it offers for cluster surgery: a `CALL` procedure that wraps one
 route, which is covering an API only in the thinnest sense. Eight of the routes counted as
 covered above are exactly that, the cluster procedures, and they are tested on a cluster of one
-node, where a shard can't actually move. Set aside the 15 unused snapshot routes, and 54 remain,
-of which the driver calls 47 — **87%**. Neither number is wrong; they answer different
-questions.
+node, where a shard can't actually move. Set the snapshot routes aside and the driver calls
+every one of the 54 that remain. Neither number is wrong; they answer different questions.
 
 **The numerator hides how much each route carries.** One route is not one feature.
 `POST /collections/{c}/points/query` is a single row in the table above and is also the whole
@@ -153,13 +159,14 @@ route that carries all of `UPDATE`.
 **And one route can outweigh ten.** `PUT /collections/{c}/points` is upsert, and until #31 it
 was one row in the unused list next to `cluster/recover`: the difference between a driver that
 can put data into Qdrant and one that cannot. It is used now, by `INSERT`. The converse also
-happens. The four single-purpose payload routes (`points/payload` in both methods,
-`payload/clear`, `payload/delete`) count as uncovered, although `UPDATE` does all four of
-their jobs through `points/batch`, in one call; nothing is missing there. The two vector routes,
-`PUT …/points/vectors` and `…/vectors/delete`, are the same case since #35: both still
-count as uncovered, and `UPDATE … SET dense = …` and `SET dense = NULL` do their work through
-`points/batch` too. Four of Qdrant's fourteen point routes are therefore uncovered only in the
-sense that the driver reaches the same behaviour through one route instead of four.
+happens. Six point routes — four for payload (`points/payload` in both methods,
+`payload/clear`, `payload/delete`) and two for vectors (`PUT …/points/vectors` and
+`…/vectors/delete`) — each do one kind of change that `points/batch` does as well, several at a
+time. While `UPDATE` went through the batch alone, all six counted as uncovered although
+nothing was missing. An `UPDATE` that makes one kind of change now goes to that kind's own
+route, with the body the batch would have held, and a mixed one stays one batch call. That
+moved six routes into the covered column and changed nothing a statement can do: a reminder
+that the count measures routes reached, not things possible.
 
 ### Spec and server disagree, so both were checked
 
@@ -172,7 +179,7 @@ slightly wrong.
   `batch` and `groups`, `points/discover` and `discover/batch` — is in the 1.15 spec, gone from
   the 1.20 spec, and alive on a 1.20 server: each answers a JSON validation error rather than
   an empty 404. They were superseded by the Query API, not removed. Counting them puts the live
-  surface at 77 routes and the driver at 61%; this document uses the documented 69, because the
+  surface at 77 routes and the driver at 70%; this document uses the documented 69, because the
   spec is what a maintainer can check, and routes Qdrant has stopped documenting are not ones
   the driver should start calling.
 - **`/locks` is really gone.** `GET` and `POST /locks` are in the 1.15 spec and answer an empty
@@ -196,7 +203,7 @@ the config before it writes one.
 The ceiling is the lexer, but less of one than it looks. `Lexer.java` recognises
 **31 keywords**, and a word outside that set becomes an identifier, so `HAVING`, `BETWEEN`,
 `JOIN` and `UNION` cannot be lexed as syntax at all. `Parser.java` wires **twenty-one
-statement kinds**, and `Plan.java`'s sealed interface permits **twenty-six plan kinds** — the best
+statement kinds**, and `Plan.java`'s sealed interface permits **twenty-seven plan kinds** — the best
 single index of what can run. No parser class is a stub any more.
 
 A word that means something in one place only need not be a keyword, though: read where it can

@@ -10,6 +10,7 @@ import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.MatrixPair;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.MatrixRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.Point;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.PointOperation;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ProbeAnswer;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantCollection;
@@ -42,6 +43,10 @@ public class QdrantGateway implements AutoCloseable {
     public static final int DEFAULT_PORT = 6333;
 
     private static final String QUOTAS_PATH = "/quotas";
+
+    // The state every "not found" answer gets, and what Qdrant says when it's a point it lacks
+    private static final String NOT_FOUND = "42S02";
+    private static final String NO_SUCH_POINT = "Point with id";
     private static final int MAX_ERROR_LENGTH = 500;
 
     /**
@@ -145,6 +150,31 @@ public class QdrantGateway implements AutoCloseable {
 
     public RequestOptions options() {
         return options;
+    }
+
+    /**
+     * The point with this ID, with its payload and all its vectors, or {@code null} when the
+     * collection has none. Qdrant answers a missing point and a missing collection alike, as
+     * not found, and only its message says which; a missing collection stays an error.
+     *
+     * @param id a whole number or a UUID
+     */
+    public Point point(String collection, JsonNode id) throws SQLException {
+        JsonNode point;
+
+        try {
+            point = request(HttpMethod.GET, "/collections/" + segment(collection) + "/points/"
+                + segment(id.asText()) + readParameters(), null);
+        } catch (SQLException e) {
+            if (NOT_FOUND.equals(e.getSQLState())
+                && String.valueOf(e.getMessage()).contains(NO_SUCH_POINT)) {
+                return null;
+            }
+
+            throw e;
+        }
+
+        return RestModels.point(point);
     }
 
     public ScrollPage scroll(ScrollRequest scroll) throws SQLException {
@@ -338,12 +368,26 @@ public class QdrantGateway implements AutoCloseable {
     }
 
     /**
-     * Applies payload changes in order, through Qdrant's batch update API: one call, so the
-     * changes of one UPDATE reach Qdrant together.
+     * Applies changes to points' payload and vectors, in order and in one call. Several go
+     * through Qdrant's batch update API, so the changes of one UPDATE reach Qdrant together. A
+     * single one goes to the route Qdrant has for that kind of change alone, which takes the
+     * same body the batch holds under the operation's name.
      *
-     * @param operations the batch's operations, as Qdrant takes them
+     * @param operations the operations, each as a batch takes it: one object holding the
+     *                   operation's body under its name
      */
     public void updatePoints(String collection, List<JsonNode> operations) throws SQLException {
+        if (operations.size() == 1 && operations.get(0).size() == 1) {
+            String name = operations.get(0).fieldNames().next();
+            PointOperation operation = PointOperation.named(name).orElse(null);
+
+            if (operation != null) {
+                request(operation.method(), "/collections/" + segment(collection)
+                    + operation.path() + writeParameters(), operations.get(0).get(name));
+                return;
+            }
+        }
+
         ObjectNode body = JSON.createObjectNode();
         ArrayNode list = body.putArray("operations");
         operations.forEach(list::add);

@@ -15,6 +15,10 @@ import com.runaxsoftware.qdrant.jdbc.gateway.models.Document;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.MatrixPair;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.MatrixRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadIndexType;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.PointOperation;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.Point;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.ScrollPage;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.ScrollRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QueryRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScoredPoint;
@@ -44,6 +48,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.InsertPointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.MatrixPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.NewPoint;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.PointPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ProcedurePlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.RenameViewPlan;
@@ -128,7 +133,7 @@ public final class Executor {
      *                     nothing, or 0 to make such a statement an error
      */
     public Executor(QdrantGateway gateway, Embedders embedders, int defaultLimit) {
-        this(gateway::scroll, searcher(gateway), gateway::count, gateway::facet,
+        this(scroller(gateway), searcher(gateway), gateway::count, gateway::facet,
             new QdrantSystemTables(gateway), writer(gateway), embedders, defaultLimit);
     }
 
@@ -206,6 +211,12 @@ public final class Executor {
             return ExecutionResult.rows(
                 new ScrollResultSet(scroller, scroll, limit, pageSize, statement),
                 warning(bounded, "ORDER BY"));
+        }
+
+        if (plan instanceof PointPlan point) {
+            return ExecutionResult.rows(new ListResultSet(
+                PointValues.resultColumns(point.columns(), point.collection()),
+                pointRows(point, limit(point.limit(), maxRows)), statement));
         }
 
         if (plan instanceof QueryPlan query) {
@@ -591,7 +602,7 @@ public final class Executor {
         change.set("points", points);
         change.set("update_filter", plan.filter());
 
-        return JSON.objectNode().set("update_vectors", change);
+        return JSON.objectNode().set(PointOperation.UPDATE_VECTORS.operationName(), change);
     }
 
     /**
@@ -606,7 +617,7 @@ public final class Executor {
         change.set("filter", plan.filter());
         change.set("vector", names);
 
-        return JSON.objectNode().set("delete_vectors", change);
+        return JSON.objectNode().set(PointOperation.DELETE_VECTORS.operationName(), change);
     }
 
     /**
@@ -913,6 +924,21 @@ public final class Executor {
         return aliases.stream().filter(x -> x.name().equals(name)).findFirst().orElse(null);
     }
 
+    // Qdrant reads one point by its ID in a call of its own, which a scroller of pages can't say
+    private static Scroller scroller(QdrantGateway gateway) {
+        return new Scroller() {
+            @Override
+            public ScrollPage scroll(ScrollRequest request) throws SQLException {
+                return gateway.scroll(request);
+            }
+
+            @Override
+            public Point point(String collection, JsonNode id) throws SQLException {
+                return gateway.point(collection, id);
+            }
+        };
+    }
+
     // Qdrant runs a batch of searches in one call, which a searcher made of one method can't say
     private static Searcher searcher(QdrantGateway gateway) {
         return new Searcher() {
@@ -1173,6 +1199,25 @@ public final class Executor {
         found.sort(plan.lowerIsBest() ? byScore : byScore.reversed());
 
         return rows(search, found.stream().skip(search.offset()).limit(limit).toList());
+    }
+
+    /**
+     * The one point's row, or none: when there's no such point, when the statement's limit is
+     * no rows, or when an OFFSET passes over the only row there could be. The last two ask
+     * Qdrant for nothing.
+     */
+    private List<Object[]> pointRows(PointPlan plan, Long limit) throws SQLException {
+        if ((limit != null && limit <= 0) || plan.offset() > 0) return List.of();
+
+        Point point = scroller.point(plan.collection(), plan.id());
+        if (point == null) return List.of();
+
+        Object[] row = new Object[plan.columns().size()];
+        for (int i = 0; i < row.length; i++) {
+            row[i] = PointValues.of(point, null, plan.columns().get(i));
+        }
+
+        return List.<Object[]>of(row);
     }
 
     private static List<ResultColumn> matrixColumns(MatrixPlan plan) {
