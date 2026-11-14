@@ -368,6 +368,14 @@ public class QdrantGateway implements AutoCloseable {
     }
 
     /**
+     * Changes a collection's settings, or those of its vectors. Qdrant changes what the body
+     * names and leaves the rest, and it leaves out a name it doesn't know without saying so.
+     */
+    public void updateCollection(String collection, JsonNode changes) throws SQLException {
+        request(HttpMethod.PATCH, "/collections/" + segment(collection), changes);
+    }
+
+    /**
      * Adds a named vector to a collection, and waits until Qdrant has. Qdrant answers a vector
      * already there with the same settings as a success, so a caller checks first.
      *

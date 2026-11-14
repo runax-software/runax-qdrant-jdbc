@@ -24,6 +24,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropViewPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.RenameViewPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.InsertPointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.NewPoint;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdateCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdatePointsPlan;
 import com.runaxsoftware.qdrant.jdbc.support.Json;
 
@@ -158,6 +159,11 @@ class WriteExecutorTest {
             }
 
             @Override
+            public void updateCollection(String collection, JsonNode changes) {
+                calls.add("alter " + collection + " " + changes);
+            }
+
+            @Override
             public List<VectorField> vectors(String collection) {
                 calls.add("vectors " + collection);
                 return vectors;
@@ -190,6 +196,18 @@ class WriteExecutorTest {
         assertEquals(0, executor.execute(new DeletePointsPlan("docs", FILTER), statement())
             .updateCount());
         assertEquals(List.of("count docs " + FILTER), calls);
+    }
+
+    @Test
+    void sendsACollectionsChangedSettingsInOneCall() throws SQLException {
+        JsonNode changes = Json.object("hnsw_config", Json.object("m", 16));
+
+        ExecutionResult result = executor.execute(new UpdateCollectionPlan("docs", changes),
+            statement());
+
+        assertFalse(result.hasResultSet());
+        assertEquals(0, result.updateCount());
+        assertEquals(List.of("alter docs " + changes), calls);
     }
 
     @Test

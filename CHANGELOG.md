@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `ALTER TABLE … SET (…)`, which changes a collection's settings in place: replication and
+  payload storage, HNSW, the optimizers, strict mode, quantization, and metadata. A setting can
+  be written by its group and name (`hnsw.m = 16`, or `hnsw_config.m` as Qdrant names the
+  group), by its name alone where only one group has it (`m = 16`), or with its whole group as
+  JSON (`hnsw = '{"m": 16}'`); all three send the same change. `ALTER TABLE … ALTER COLUMN dense
+  SET (on_disk = true, hnsw.m = 8)` changes one vector's settings, dense or sparse. Qdrant
+  accepts a setting it doesn't know, drops it, and answers that all went well, so the driver
+  checks every name and value first and says which settings there are. Metadata merges, a key
+  set to `NULL` is removed, and `metadata.runax.embed.dense = 'openai:…'` sets a vector's
+  embedding model from SQL, which until now took a call to Qdrant's API. With this every route
+  of Qdrant's collections area is covered. ([#46])
 - `ALTER TABLE … ADD COLUMN` and `DROP COLUMN` for named vectors, so a collection that already
   holds points can gain a second embedding — `ALTER TABLE docs ADD COLUMN image VECTOR(512)
   DISTANCE COSINE` — or lose one, without being recreated. The column is written as `CREATE
@@ -382,3 +393,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#43]: https://github.com/runax-software/runax-qdrant-jdbc/pull/43
 [#44]: https://github.com/runax-software/runax-qdrant-jdbc/pull/44
 [#45]: https://github.com/runax-software/runax-qdrant-jdbc/pull/45
+[#46]: https://github.com/runax-software/runax-qdrant-jdbc/pull/46
