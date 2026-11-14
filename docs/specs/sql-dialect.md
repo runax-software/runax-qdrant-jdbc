@@ -636,6 +636,7 @@ their names can't clash with a collection's. `DatabaseMetaData` lists them as
 | `system.metrics` | `GET /metrics` | `name`, `labels`, `value`, `type`, `help` |
 | `system.issues` | `GET /issues` | `id`, `description`, `related_collection`, `timestamp`, `solution` |
 | `system.health` | `GET /healthz`, `GET /livez`, `GET /readyz` | `probe`, `ok`, `status_code`, `message` |
+| `system.optimizations` | `GET /collections/{name}/optimizations` for each | `collection_name`, `state`, `uuid`, `optimizer`, `status`, `status_detail`, `segments_count`, `points_count`, `started_at`, `finished_at`, `duration_sec`, `segments`, `progress` |
 
 ```sql
 SELECT name, status, points_count FROM system.collections;
@@ -652,7 +653,8 @@ rather than a column per field. A collection name is matched exactly, as Qdrant 
 but the driver's own names — the catalog, the two schemas, and the system tables and their
 columns — are matched whatever the case.
 
-`system.collections`, `system.snapshots`, `system.shard_keys`, and `system.shards` read one
+`system.collections`, `system.snapshots`, `system.shard_keys`, `system.shards`, and
+`system.optimizations` read one
 collection at a time, because Qdrant describes a collection only one at a time: each costs
 one call per collection, and a collection deleted between the listing and its read is left
 out rather than failing the statement. Nothing read here is cached; every statement sees the
@@ -683,6 +685,17 @@ Two of these tables aren't tabular at Qdrant's end and are projected rather than
 `system.issues` reports what Qdrant collected about itself, such as an `UNINDEXED_FIELD`
 suggestion; `solution` is the JSON Qdrant sent, which is a variant whose shape is its own
 business. The read-only `CALL` procedures below move to these tables as they land.
+
+`system.optimizations` is what Qdrant's optimizers are doing to each collection's segments: a
+row per optimization, whose `state` says which of Qdrant's lists it's in. `running` ones are
+under way, `queued` ones are Qdrant's estimate of what runs next and have no `uuid`, `status`
+or times yet, and `completed` ones are the latest Qdrant finished, of which it sends sixteen
+per collection. `status` is `optimizing`, `done`, `cancelled` or `error`, with the reason for
+the last two in `status_detail`. `progress` is the optimization's steps as the JSON tree Qdrant
+sends, each step with its times and, for some, units done of a total; `started_at`,
+`finished_at` and `duration_sec` are the root of that tree. A collection at rest has no rows,
+and the segments that need no optimizing aren't listed: they aren't optimizations. Within a
+collection the rows keep Qdrant's order, so the queue reads top to bottom.
 
 `system.health` is Qdrant's three health probes, one row each, always in the order `healthz`,
 `livez`, `readyz`. A probe says "no" with its HTTP status, so a failing one is a row with `ok`

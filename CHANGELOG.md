@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `system.optimizations`, what Qdrant's optimizers are doing to each collection: a row per
+  optimization that is running, queued, or among the latest completed, with its optimizer,
+  status, the segments and points it takes, when it started and finished, and its steps as
+  Qdrant's own progress tree. It answers "is my collection still indexing?" from a console,
+  which `system.collections` only hinted at with `optimizer_status`. ([#44])
 - `system.health`, Qdrant's three health probes as a table: one row each for `healthz`, `livez`
   and `readyz`, with `ok`, the HTTP `status_code` and the `message` Qdrant sent. A probe that
   fails is a row saying so rather than an error, since "not ready" is the answer the table is
@@ -359,3 +364,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#40]: https://github.com/runax-software/runax-qdrant-jdbc/pull/40
 [#42]: https://github.com/runax-software/runax-qdrant-jdbc/pull/42
 [#43]: https://github.com/runax-software/runax-qdrant-jdbc/pull/43
+[#44]: https://github.com/runax-software/runax-qdrant-jdbc/pull/44

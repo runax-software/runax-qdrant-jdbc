@@ -137,6 +137,11 @@ public final class FakeQdrantServer implements AutoCloseable {
         SHARD_KEYS,
 
         /**
+         * {@code GET /collections/{name}/optimizations}.
+         */
+        OPTIMIZATIONS,
+
+        /**
          * {@code GET /collections/{name}/cluster}: the collection's shards.
          */
         COLLECTION_CLUSTER,
@@ -209,6 +214,7 @@ public final class FakeQdrantServer implements AutoCloseable {
     private final List<ObjectNode> storageSnapshots = new CopyOnWriteArrayList<>();
     private final Map<String, List<ObjectNode>> collectionSnapshots = new ConcurrentHashMap<>();
     private final Map<String, List<JsonNode>> shardKeys = new ConcurrentHashMap<>();
+    private final Map<String, ObjectNode> optimizations = new ConcurrentHashMap<>();
     private final Map<String, ObjectNode> collectionClusters = new ConcurrentHashMap<>();
     private final List<ObjectNode> issues = new CopyOnWriteArrayList<>();
     private final List<String> listedOnly = new CopyOnWriteArrayList<>();
@@ -702,6 +708,7 @@ public final class FakeQdrantServer implements AutoCloseable {
                 case SNAPSHOTS -> ok(exchange, Json.array(storageSnapshots.toArray()));
                 case COLLECTION_SNAPSHOTS -> collectionSnapshots(exchange, segments[2]);
                 case SHARD_KEYS -> shardKeys(exchange, segments[2]);
+                case OPTIMIZATIONS -> optimizations(exchange, segments[2]);
                 case COLLECTION_CLUSTER -> collectionCluster(exchange, segments[2]);
                 case CLUSTER -> ok(exchange, cluster);
                 case TELEMETRY -> ok(exchange, telemetry);
@@ -781,6 +788,7 @@ public final class FakeQdrantServer implements AutoCloseable {
             switch (segments[3]) {
                 case "snapshots": return Endpoint.COLLECTION_SNAPSHOTS;
                 case "shards": return Endpoint.SHARD_KEYS;
+                case "optimizations": return Endpoint.OPTIMIZATIONS;
                 case "cluster": return Endpoint.COLLECTION_CLUSTER;
                 default: break;
             }
@@ -841,6 +849,45 @@ public final class FakeQdrantServer implements AutoCloseable {
 
         ok(exchange, Json.array(
             collectionSnapshots.getOrDefault(resolve(name), List.of()).toArray()));
+    }
+
+    /**
+     * Gives a collection optimizations, as the lists Qdrant answers with: {@code running},
+     * {@code queued}, and {@code completed}, each an array.
+     */
+    public FakeQdrantServer optimizations(String collection, ObjectNode lists) {
+        optimizations.put(collection, lists);
+
+        return this;
+    }
+
+    /**
+     * A collection's optimizations. Like Qdrant, the running ones are always answered and the
+     * queued and completed ones only when {@code ?with=} names them.
+     */
+    private void optimizations(HttpExchange exchange, String name) throws IOException {
+        if (find(name) == null) {
+            notFound(exchange, name);
+            return;
+        }
+
+        ObjectNode lists = optimizations.getOrDefault(resolve(name), Json.object());
+        String query = exchange.getRequestURI().getQuery();
+        List<String> with = query != null && query.startsWith("with=")
+            ? List.of(query.substring("with=".length()).split(",")) : List.of();
+
+        ObjectNode result = Json.object(
+            "summary", Json.object("queued_optimizations", lists.path("queued").size(),
+                "queued_segments", 0, "queued_points", 0, "idle_segments", 1),
+            "running", lists.has("running") ? lists.get("running") : Json.array());
+
+        for (String list : List.of("queued", "completed")) {
+            if (with.contains(list)) {
+                result.set(list, lists.has(list) ? lists.get(list) : Json.array());
+            }
+        }
+
+        ok(exchange, result);
     }
 
     /**
