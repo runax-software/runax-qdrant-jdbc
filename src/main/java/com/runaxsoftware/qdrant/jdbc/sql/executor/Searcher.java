@@ -4,6 +4,7 @@ import com.runaxsoftware.qdrant.jdbc.gateway.models.QueryRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScoredPoint;
 
 import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -27,5 +28,15 @@ interface Searcher {
         for (QueryRequest query : queries) answers.add(search(query));
 
         return answers;
+    }
+
+    /**
+     * Ranks the best points of each group: as many groups as the query's limit, each with up to
+     * {@code groupSize} points, group after group. Only a searcher that reaches Qdrant's grouped
+     * search can.
+     */
+    default List<ScoredPoint> searchGroups(QueryRequest query, String groupBy, long groupSize)
+        throws SQLException {
+        throw new SQLFeatureNotSupportedException("This searcher doesn't group");
     }
 }

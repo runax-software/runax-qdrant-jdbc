@@ -231,6 +231,7 @@ RESET ALL;
 | `GROUP BY field` + `COUNT(*)` | Facet API | Needs a keyword, integer, bool, or uuid index; bounded like an ordered read |
 | `ORDER BY similarity(v, [0.1, ...]) DESC` | Query API | Score returned as `_score`; bounded like an ordered read |
 | Several such searches of one collection, separated by `;` | Query API, batch | One call; a result set each, read with `getMoreResults` |
+| `SELECT DISTINCT ON (doc_id) … ORDER BY similarity(…) DESC`, `… LIMIT 3 BY doc_id LIMIT 10` | Query API, groups | The best point, or the best few, of each value of a payload field |
 | `FROM system.collections`, `system.aliases` | Collection and alias APIs | Read-only system tables |
 | `TRUNCATE TABLE system.issues` | Clear issues | The one write a system table takes |
 | `INSERT INTO docs (_id, lang, dense) VALUES (…)` | Upsert that skips points already there | A taken ID is an error; no `_id` gets a UUID, from `getGeneratedKeys` |

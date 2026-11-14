@@ -21,12 +21,14 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.SelectItem;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Star;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.TableName;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.VectorLiteral;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.PerGroup;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConstantPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.EmbedText;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CountPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetColumn;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.GroupedQueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
@@ -51,6 +53,12 @@ final class SelectPlanner {
     private static final String UNNAMED = "?column?";
 
     // The function a search orders by, lower case: the driver's own names ignore case
+    // The distances whose scores rank the lowest first
+    private static final Set<String> LOWER_IS_BEST = Set.of("Euclid", "Manhattan");
+
+    private static final String GROUPS_HAVE_NO_OFFSET =
+        "Qdrant's grouped search has no offset";
+
     private static final String SIMILARITY = "similarity";
 
     // The one aggregate Qdrant answers itself, lower case, and the name PostgreSQL gives its
@@ -112,6 +120,12 @@ final class SelectPlanner {
 
         SelectItem counted = counted(statement.items());
 
+        if (statement.perGroup() != null && (counted != null || !statement.groupBy().isEmpty())) {
+            throw new SQLFeatureNotSupportedException("DISTINCT ON and LIMIT ... BY keep the best "
+                + "points of each group, so they go with a search, not with COUNT(*) or GROUP BY, "
+                + "which count the groups instead");
+        }
+
         if (counted != null && statement.groupBy().isEmpty()) {
             if (statement.items().size() > 1) {
                 throw new SQLFeatureNotSupportedException("COUNT(*) is a row of its own: a "
@@ -139,6 +153,10 @@ final class SelectPlanner {
         JsonNode filter = FilterPlanner.plan(statement.where(), schema,
             column -> find(schema, column, statement.alias(), search != null));
 
+        if (statement.perGroup() != null) {
+            return grouped(statement, schema, search, columns, withPayload, withVector, filter);
+        }
+
         if (search != null) {
             // Qdrant's Query API skips by row count itself, so this offset needs no cap
             return new QueryPlan(schema.name(), columns, search.vector(), search.query(),
@@ -151,6 +169,49 @@ final class SelectPlanner {
 
         return new ScrollPlan(schema.name(), columns, withPayload, withVector, statement.limit(),
             skip(statement, SCROLL_PAGES_BY_ID), filter, ordering);
+    }
+
+    /**
+     * A search that keeps the best points of each group. The groups are the values of a payload
+     * field holding text or whole numbers, the two kinds Qdrant groups by; it needs no index.
+     */
+    private static Plan grouped(SelectStatement statement, TableSchema schema, Search search,
+                                List<ColumnDefinition> columns, boolean withPayload,
+                                boolean withVector, JsonNode filter) throws SQLException {
+        PerGroup perGroup = statement.perGroup();
+
+        if (search == null) {
+            throw new SQLFeatureNotSupportedException("DISTINCT ON and LIMIT ... BY keep the best "
+                + "points of each group, and only a search says which are best: add ORDER BY "
+                + "similarity(vector, [0.1, ...]) DESC. To count a field's values instead, use "
+                + "GROUP BY with COUNT(*)");
+        }
+        if (perGroup.size() < 1) {
+            throw new SQLSyntaxErrorException("LIMIT ... BY keeps at least one row of each "
+                + "group, not " + perGroup.size(), "42000");
+        }
+
+        ColumnDefinition column = find(schema, perGroup.column(), statement.alias(), false);
+
+        if (column.kind() != ColumnKind.PAYLOAD_FIELD
+            || (column.type() != ColumnType.TEXT && column.type() != ColumnType.INTEGER)) {
+            throw new SQLFeatureNotSupportedException("Grouping a search by '" + column.name()
+                + "' of " + schema.name() + " isn't supported: Qdrant groups by a payload field "
+                + "that holds text or whole numbers, and this one is "
+                + (column.kind() == ColumnKind.PAYLOAD_FIELD ? column.type().typeName()
+                : "not a payload field"));
+        }
+
+        // Euclid and Manhattan are distances, so the closest point has the lowest score
+        boolean lowerIsBest = schema.collection().vectors().stream()
+            .filter(vector -> vector.name().equals(search.vector()))
+            .anyMatch(vector -> LOWER_IS_BEST.contains(String.valueOf(vector.distance())));
+
+        return new GroupedQueryPlan(
+            new QueryPlan(schema.name(), columns, search.vector(), search.query(), withPayload,
+                withVector, statement.limit(), skip(statement, GROUPS_HAVE_NO_OFFSET), filter,
+                search.embed()),
+            column.source(), perGroup.size(), lowerIsBest);
     }
 
     /**

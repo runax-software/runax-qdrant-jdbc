@@ -37,6 +37,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropViewPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.EmbedText;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetColumn;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.GroupedQueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.InsertPointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.NewPoint;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
@@ -59,6 +60,7 @@ import java.sql.Statement;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.Comparator;
 import java.util.Iterator;
 import java.util.Objects;
 import java.util.List;
@@ -210,6 +212,17 @@ public final class Executor {
             return ExecutionResult.rows(new ListResultSet(
                 PointValues.resultColumns(query.columns(), query.collection()),
                 limit == 0 ? List.of() : searchRows(query, limit), statement),
+                warning(bounded, "A similarity search"));
+        }
+
+        if (plan instanceof GroupedQueryPlan grouped) {
+            Bounded bounded = searchLimit(grouped.search(), maxRows);
+            long limit = bounded.limit();
+
+            return ExecutionResult.rows(new ListResultSet(
+                PointValues.resultColumns(grouped.search().columns(),
+                    grouped.search().collection()),
+                limit == 0 ? List.of() : groupedRows(grouped, limit), statement),
                 warning(bounded, "A similarity search"));
         }
 
@@ -901,6 +914,12 @@ public final class Executor {
             }
 
             @Override
+            public List<ScoredPoint> searchGroups(QueryRequest query, String groupBy,
+                                                  long groupSize) throws SQLException {
+                return gateway.queryGroups(query, groupBy, groupSize);
+            }
+
+            @Override
             public List<List<ScoredPoint>> searchBatch(String collection,
                                                        List<QueryRequest> queries)
                 throws SQLException {
@@ -1109,6 +1128,38 @@ public final class Executor {
      */
     private List<Object[]> searchRows(QueryPlan plan, long limit) throws SQLException {
         return rows(plan, search(request(plan, limit)));
+    }
+
+    /**
+     * The rows of a grouped search: the best points overall, with at most the plan's number from
+     * any one group. Qdrant counts groups where SQL counts rows, and has no offset for them, so
+     * the driver asks for as many groups as there are rows to read, which is always enough since
+     * the best rows come from the best groups, then orders the points of those groups by score,
+     * passes over the offset, and keeps the limit.
+     */
+    private List<Object[]> groupedRows(GroupedQueryPlan plan, long limit) throws SQLException {
+        QueryPlan search = plan.search();
+        long groups = Math.min(limit, Long.MAX_VALUE - search.offset()) + search.offset();
+        QueryRequest ranked = request(search, groups);
+
+        // The offset is the driver's to pass over, so the request goes without one
+        QueryRequest request = new QueryRequest(ranked.collection(), ranked.vector(),
+            ranked.query(), ranked.limit(), 0, ranked.withPayload(), ranked.withVector(),
+            ranked.filter(), ranked.document());
+        List<ScoredPoint> found;
+
+        try {
+            found = new ArrayList<>(searcher.searchGroups(request, plan.groupBy(),
+                plan.groupSize()));
+        } catch (SQLException e) {
+            throw noInference(e, List.of(request));
+        }
+
+        // Stable, so points with the same score stay in Qdrant's order
+        Comparator<ScoredPoint> byScore = Comparator.comparingDouble(ScoredPoint::score);
+        found.sort(plan.lowerIsBest() ? byScore : byScore.reversed());
+
+        return rows(search, found.stream().skip(search.offset()).limit(limit).toList());
     }
 
     // The points a search found as rows of the columns it selects

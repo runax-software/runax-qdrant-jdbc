@@ -70,7 +70,7 @@ public final class Parameters {
             // GROUP BY names columns only, so it holds no placeholder
             return new SelectStatement(items, select.table(), select.alias(),
                 bind(select.where(), values), select.groupBy(), orderBy, select.limit(),
-                select.offset());
+                select.offset(), select.perGroup());
         }
         if (statement instanceof InsertStatement insert) {
             var rows = new ArrayList<List<Expression>>();

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The best points of each group in a similarity search, so ten results are ten documents rather
+  than ten chunks of one. `SELECT DISTINCT ON (doc_id) …` keeps the best point of each value of
+  a payload field, as PostgreSQL writes it, and `LIMIT 3 BY doc_id` the best three, as
+  ClickHouse does; both go through Qdrant's grouped Query API. The `LIMIT` and `OFFSET` after
+  them count rows, as in SQL: Qdrant counts groups and has no offset, so the driver asks for
+  enough groups and orders, skips and cuts the points itself. The field holds text or whole
+  numbers and needs no index. A point without the field is in no group. ([#51])
 - Several similarity searches of one collection in one call: `Statement.execute` takes them
   separated by semicolons, sends them to Qdrant as one Query API batch, and answers with a
   result set for each, the first at once and the rest through `getMoreResults()`. One round
@@ -423,3 +430,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#48]: https://github.com/runax-software/runax-qdrant-jdbc/pull/48
 [#49]: https://github.com/runax-software/runax-qdrant-jdbc/pull/49
 [#50]: https://github.com/runax-software/runax-qdrant-jdbc/pull/50
+[#51]: https://github.com/runax-software/runax-qdrant-jdbc/pull/51
