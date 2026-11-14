@@ -19,7 +19,7 @@ LIMIT 10
 > from the [releases](https://github.com/runax-software/runax-qdrant-jdbc/releases), or build
 > it from source (`./gradlew shadowJar`). It does run SQL: `SELECT` with filters, patterns
 > and full-text matching, vector similarity search, `COUNT(*)` and `GROUP BY`, `INSERT`,
-> `UPDATE`, `DELETE`, and DDL for collections, indexes and views — twenty statement kinds.
+> `UPDATE`, `DELETE`, and DDL for collections, indexes and views — twenty-one statement kinds.
 > Exactly how much of Qdrant and how much SQL that amounts to is measured in
 > [docs/coverage.md](docs/coverage.md), the target dialect is in
 > [docs/specs/sql-dialect.md](docs/specs/sql-dialect.md), and what's next is in
@@ -232,6 +232,7 @@ RESET ALL;
 | `ORDER BY similarity(v, [0.1, ...]) DESC` | Query API | Score returned as `_score`; bounded like an ordered read |
 | Several such searches of one collection, separated by `;` | Query API, batch | One call; a result set each, read with `getMoreResults` |
 | `SELECT DISTINCT ON (doc_id) … ORDER BY similarity(…) DESC`, `… LIMIT 3 BY doc_id LIMIT 10` | Query API, groups | The best point, or the best few, of each value of a payload field |
+| `SELECT * FROM distance_matrix(docs, dense, 100, 5)` | Search matrix | Sampled points and their nearest neighbours, as `_a`, `_b`, `_score` |
 | `FROM system.collections`, `system.aliases` | Collection and alias APIs | Read-only system tables |
 | `TRUNCATE TABLE system.issues` | Clear issues | The one write a system table takes |
 | `INSERT INTO docs (_id, lang, dense) VALUES (…)` | Upsert that skips points already there | A taken ID is an error; no `_id` gets a UUID, from `getGeneratedKeys` |

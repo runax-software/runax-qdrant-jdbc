@@ -3,6 +3,7 @@ package com.runaxsoftware.qdrant.jdbc.sql.parser.statement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ExpressionParser;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.TokenStream;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.*;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DistanceMatrixStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.PerGroup;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Statement;
@@ -11,6 +12,11 @@ import java.sql.SQLSyntaxErrorException;
 import java.util.ArrayList;
 
 public final class SelectParser {
+
+    private static final String MATRIX = "distance_matrix";
+
+    // What distance_matrix(...) was called with
+    private record MatrixCall(TableName table, String vector, Long sample, Long neighbours) {}
 
     private final TokenStream tokenStream;
     private final ExpressionParser expressionParser;
@@ -43,8 +49,13 @@ public final class SelectParser {
         // FROM is optional: SELECT 'keep alive' reads no collection
         TableName table = null;
         String alias = null;
+        MatrixCall matrix = null;
         if (this.tokenStream.matchKeyword("FROM")) {
             table = this.tableParser.parse();
+
+            // A name with brackets after it is a table function, and there is one
+            if (this.tokenStream.peekSymbol("(")) matrix = parseMatrix(table);
+
             alias = parseAlias();
         } else if (this.tokenStream.peekIdentifier()) {
             // "SELECT name docs" is a missing FROM; aliases need AS
@@ -94,8 +105,40 @@ public final class SelectParser {
         }
 
         Long offset = this.tokenStream.matchKeyword("OFFSET") ? this.tokenStream.expectWholeNumber() : null;
+
+        if (matrix != null) {
+            if (!groupBy.isEmpty() || !orderBy.isEmpty() || perGroup != null) {
+                throw this.tokenStream.error("Expected a column list, WHERE, LIMIT and OFFSET "
+                    + "only: " + MATRIX + " takes no GROUP BY, ORDER BY, DISTINCT ON or LIMIT "
+                    + "... BY");
+            }
+
+            return new DistanceMatrixStatement(items, matrix.table(), matrix.vector(),
+                matrix.sample(), matrix.neighbours(), alias, where, limit, offset);
+        }
+
         return new SelectStatement(items, table, alias, where, groupBy, orderBy, limit,
             offset, perGroup);
+    }
+
+    // distance_matrix(collection, vector [, sample [, neighbours]]), once its name is read
+    private MatrixCall parseMatrix(TableName function) throws SQLSyntaxErrorException {
+        if (function.schema() != null || !function.name().equalsIgnoreCase(MATRIX)) {
+            throw this.tokenStream.error("Expected a table: '" + function.qualified() + "' isn't "
+                + "a table function this driver has. It has " + MATRIX
+                + "(collection, vector [, sample [, neighbours]])");
+        }
+
+        this.tokenStream.expectSymbol("(");
+        TableName table = this.tableParser.parse();
+        this.tokenStream.expectSymbol(",");
+        String vector = this.tokenStream.expectIdentifier();
+        Long sample = this.tokenStream.matchSymbol(",") ? this.tokenStream.expectWholeNumber() : null;
+        Long neighbours = sample != null && this.tokenStream.matchSymbol(",")
+            ? this.tokenStream.expectWholeNumber() : null;
+        this.tokenStream.expectSymbol(")");
+
+        return new MatrixCall(table, vector, sample, neighbours);
     }
 
     // The one column in brackets after DISTINCT ON; Qdrant groups a search by one field

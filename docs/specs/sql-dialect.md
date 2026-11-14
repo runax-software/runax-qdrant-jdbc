@@ -296,6 +296,34 @@ the field is in no group and so in no row, and a point whose field is an array i
 for each of its values, so it can be a row more than once. Grouping by two fields, and Qdrant's
 lookup of each group's own record in another collection, aren't supported yet.
 
+### Distance matrix
+
+`distance_matrix(collection, vector [, sample [, neighbours]])` is a table in `FROM`: Qdrant
+samples points of the collection and finds each one's nearest neighbours among the sample, and
+each row is one such pair. It is what a clustering or a 2-D map of a collection is computed
+from.
+
+```sql
+-- 100 sampled points, each with its 5 nearest neighbours
+SELECT _a, _b, _score FROM distance_matrix(docs, dense, 100, 5);
+
+-- Only English documents, as positions for a sparse matrix
+SELECT _row, _col, _score FROM distance_matrix(docs, dense, 1000, 10) WHERE lang = 'en';
+```
+
+**This runs today.** The matrix has five columns: `_a` and `_b`, the IDs of a point and of its
+neighbour, as text like `_id`; `_score`, how close they are; and `_row` and `_col`, where each of
+the two sits among the sampled points, from 0. `*` is `_a, _b, _score`. Qdrant answers the same
+matrix from two routes, as pairs of IDs or as positions with the IDs listed once, and the
+driver asks for positions only when a statement names `_row` or `_col`.
+
+`sample` and `neighbours` default to Qdrant's own 10 and 3. A `WHERE` is over the collection's
+columns, not the matrix's, since it says which points to sample from. `LIMIT` and `OFFSET` are
+taken in the driver, as Qdrant answers the matrix whole, and there is no `ORDER BY`: the rows
+come as Qdrant gives them, each point's neighbours together, the closest first. The vector is
+dense or a multivector; Qdrant answers a sparse one with no pairs at all, so that's an error.
+Which points are sampled is Qdrant's choice and differs from one statement to the next.
+
 ### Combining searches
 
 A subquery in `FROM` with its own `ORDER BY … LIMIT` is a **prefetch**: Qdrant runs it first
@@ -343,9 +371,8 @@ LIMIT 10;
 | `SELECT COUNT(*) FROM docs WHERE …` | Count, exact unless `/*+ exact=false */` |
 | `SELECT lang, COUNT(*) FROM docs GROUP BY lang` | Facet on `lang` (keyword, integer, UUID, or bool index), sorted by count |
 | `… HAVING COUNT(*) > 5`, other `ORDER BY` | Applied to the facet results |
-| `SELECT * FROM query_groups(chunks, doc_id, 3, <ranking>)` | Query groups: the best 3 points for each `doc_id`; `LIMIT` counts groups |
-| `query_groups(…, lookup => 'docs')` | `with_lookup`: adds each group's record from `docs` as `_lookup` |
-| `SELECT * FROM distance_matrix(docs, dense, 100, 5)` | Search matrix pairs: 100 sampled points, their 5 nearest neighbours, as rows `(_a, _b, _score)` |
+| `SELECT DISTINCT ON (doc_id) …`, `… LIMIT 3 BY doc_id` on a search | Query groups: the best points for each `doc_id` (runs today; see [The best of each group](#the-best-of-each-group)) |
+| `SELECT * FROM distance_matrix(docs, dense, 100, 5)` | Search matrix: 100 sampled points, their 5 nearest neighbours, as rows `(_a, _b, _score)` (runs today; see [Distance matrix](#distance-matrix)) |
 
 **What runs today:** `SELECT COUNT(*) FROM docs [WHERE …]`, as one count call, exact,
 answering one `BIGINT` column called `count` or whatever the statement calls it. Counting a

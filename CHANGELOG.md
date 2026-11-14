@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `distance_matrix(collection, vector [, sample [, neighbours]])`, a table in `FROM`: Qdrant
+  samples points and finds each one's nearest neighbours among the sample, and each row is one
+  pair — `_a`, `_b` and `_score`. It is what clustering or a 2-D map of a collection starts
+  from, and until now took a call to Qdrant's API. `_row` and `_col` give each point's position
+  among the sample, for building a sparse matrix; naming one makes the driver ask Qdrant for
+  the matrix as offsets rather than pairs. A `WHERE` over the collection's columns says which
+  points to sample from. With it every route of Qdrant's search area is covered. ([#52])
 - The best points of each group in a similarity search, so ten results are ten documents rather
   than ten chunks of one. `SELECT DISTINCT ON (doc_id) …` keeps the best point of each value of
   a payload field, as PostgreSQL writes it, and `LIMIT 3 BY doc_id` the best three, as
@@ -431,3 +438,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#49]: https://github.com/runax-software/runax-qdrant-jdbc/pull/49
 [#50]: https://github.com/runax-software/runax-qdrant-jdbc/pull/50
 [#51]: https://github.com/runax-software/runax-qdrant-jdbc/pull/51
+[#52]: https://github.com/runax-software/runax-qdrant-jdbc/pull/52

@@ -34,6 +34,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateIndexStateme
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateTableStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateViewStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DeleteStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DistanceMatrixStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropColumnStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropIndexStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropTableStatement;
@@ -749,6 +750,46 @@ class ParserTest {
     void rejectsAnUpdateWithoutSet() {
         assertError("Expected SET, found 'lang' at line 1, column 15", "UPDATE docs t lang = 1");
         assertError("Expected =, found 'de' at line 1, column 22", "UPDATE docs SET lang 'de'");
+    }
+
+    // distance_matrix
+
+    @Test
+    void parsesASelectFromADistanceMatrix() throws SQLSyntaxErrorException {
+        assertEquals(new DistanceMatrixStatement(List.of(new SelectItem(Star.of(), null)),
+                TableName.of("docs"), "dense", 100L, 5L, null, null, null, null),
+            Parser.parse("SELECT * FROM distance_matrix(docs, dense, 100, 5)"));
+
+        DistanceMatrixStatement matrix = (DistanceMatrixStatement) Parser.parse(
+            "select m._a, m._b as neighbour from DISTANCE_MATRIX(collections.docs, _vector) m "
+                + "where lang = 'en' limit 20 offset 4");
+        assertEquals(TableName.of("collections", "docs"), matrix.table());
+        assertEquals("_vector", matrix.vector());
+        assertNull(matrix.sample());
+        assertNull(matrix.neighbours());
+        assertEquals("m", matrix.alias());
+        assertEquals(2, matrix.items().size());
+        assertEquals("neighbour", matrix.items().get(1).alias());
+        assertEquals(20L, matrix.limit());
+        assertEquals(4L, matrix.offset());
+
+        assertEquals(50L, ((DistanceMatrixStatement) Parser.parse(
+            "SELECT * FROM distance_matrix(docs, dense, 50)")).sample());
+    }
+
+    @Test
+    void rejectsATableFunctionItCantRead() {
+        assertError("Expected a table: 'unnest' isn't a table function this driver has. It has "
+            + "distance_matrix(collection, vector [, sample [, neighbours]]), found '(' at line 1, "
+            + "column 21", "SELECT * FROM unnest(tags)");
+        assertError("Expected ,, found ')' at line 1, column 35",
+            "SELECT * FROM distance_matrix(docs)");
+        assertError("Expected ), found ',' at line 1, column 49",
+            "SELECT * FROM distance_matrix(docs, dense, 10, 3, 1)");
+        assertError("Expected a column list, WHERE, LIMIT and OFFSET only: distance_matrix takes "
+            + "no GROUP BY, ORDER BY, DISTINCT ON or LIMIT ... BY, found the end of the statement "
+            + "at line 1, column 59",
+            "SELECT * FROM distance_matrix(docs, dense) ORDER BY _score");
     }
 
     // Several statements

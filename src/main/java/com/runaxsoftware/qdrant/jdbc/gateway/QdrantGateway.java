@@ -7,6 +7,8 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetHit;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetRequest;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.MatrixPair;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.MatrixRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.Point;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ProbeAnswer;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
@@ -249,6 +251,27 @@ public class QdrantGateway implements AutoCloseable {
         return RestModels.groupedPoints(request(HttpMethod.POST,
             "/collections/" + segment(query.collection()) + "/points/query/groups"
                 + readParameters(), body));
+    }
+
+    /**
+     * A distance matrix: Qdrant samples points and answers with each one's nearest neighbours
+     * among the sample. It answers the same matrix two ways, from two routes: as pairs of point
+     * IDs, or as row and column positions with the IDs listed once, and the request says which.
+     */
+    public List<MatrixPair> matrix(MatrixRequest matrix) throws SQLException {
+        ObjectNode body = JSON.createObjectNode();
+
+        if (matrix.sample() != null) body.put("sample", matrix.sample());
+        if (matrix.neighbours() != null) body.put("limit", matrix.neighbours());
+        if (!matrix.vector().isEmpty()) body.put("using", matrix.vector());
+        if (matrix.filter() != null) body.set("filter", matrix.filter());
+
+        JsonNode result = request(HttpMethod.POST, "/collections/" + segment(matrix.collection())
+            + "/points/search/matrix/" + (matrix.offsets() ? "offsets" : "pairs")
+            + readParameters(), body);
+
+        return matrix.offsets() ? RestModels.matrixOffsets(result)
+            : RestModels.matrixPairs(result);
     }
 
     // One search as the Query API takes it, alone or as one of a batch

@@ -8,4 +8,4 @@ public sealed interface Statement permits SelectStatement, DeleteStatement, Trun
     UpdateStatement, InsertStatement, CreateIndexStatement, DropIndexStatement,
     CreateViewStatement, AlterViewStatement, DropViewStatement, AddColumnStatement,
     DropColumnStatement, AlterSettingsStatement, AlterSystemStatement,
-    CallStatement {}
+    CallStatement, DistanceMatrixStatement {}

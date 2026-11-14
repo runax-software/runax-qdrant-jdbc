@@ -42,6 +42,9 @@ measured REST and SQL coverage is in [docs/coverage.md](docs/coverage.md).
   similarity(…) DESC LIMIT 10` for the best point of each value of a payload field, and `LIMIT 3
   BY doc_id` for the best three, through Qdrant's grouped Query API. The statement's own `LIMIT`
   and `OFFSET` still count rows.
+- [x] **Distance matrix** — `SELECT _a, _b, _score FROM distance_matrix(docs, dense, 100, 5)`:
+  sampled points and each one's nearest neighbours, as rows, with `_row` and `_col` for the
+  positions a sparse matrix is built from. The driver's one table function.
 - [x] **DataGrip compatibility** — harmless defaults for the `Connection` and
   `Statement` methods DataGrip calls on every connection, and support for the SQL it
   generates when opening, filtering, and sorting a table. The defaults and the statement

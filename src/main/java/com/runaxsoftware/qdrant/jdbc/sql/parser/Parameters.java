@@ -16,6 +16,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CallArgument;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CallStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Assignment;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DeleteStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DistanceMatrixStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.InsertStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.OnConflict;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
@@ -95,6 +96,11 @@ public final class Parameters {
             return new DeleteStatement(delete.table(), delete.alias(), bind(delete.where(), values));
         }
 
+        if (statement instanceof DistanceMatrixStatement matrix) {
+            return new DistanceMatrixStatement(matrix.items(), matrix.table(), matrix.vector(),
+                matrix.sample(), matrix.neighbours(), matrix.alias(),
+                bind(matrix.where(), values), matrix.limit(), matrix.offset());
+        }
         if (statement instanceof CallStatement call) {
             var arguments = new ArrayList<CallArgument>();
             for (CallArgument argument : call.arguments()) {

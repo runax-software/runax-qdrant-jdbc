@@ -15,6 +15,8 @@ import com.runaxsoftware.qdrant.jdbc.gateway.models.Point;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetHit;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.Ordering;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.MatrixPair;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.MatrixRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ProbeAnswer;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantCollection;
@@ -596,6 +598,36 @@ class QdrantGatewayTest {
 
         assertEquals("HY000", error.getSQLState());
         assertEquals("Qdrant: Service internal error", error.getMessage());
+    }
+
+    // Distance matrix
+
+    @Test
+    void readsADistanceMatrixAsPairsOrAsOffsetsFromTheRouteForEach() throws SQLException {
+        server.collection("docs", plainCollection(), points(3));
+
+        List<MatrixPair> pairs = gateway.matrix(new MatrixRequest("docs", "dense", 3L, 1L,
+            Json.object("must", Json.array()), false));
+
+        assertEquals(3, pairs.size());
+        assertEquals("1", pairs.get(0).a().asText());
+        assertEquals("2", pairs.get(0).b().asText());
+        assertEquals(0.9, pairs.get(0).score());
+        assertNull(pairs.get(0).row());
+
+        Request asked = server.requests().get(server.requests().size() - 1);
+        assertEquals("/collections/docs/points/search/matrix/pairs", asked.path());
+        assertEquals("{\"sample\":3,\"limit\":1,\"using\":\"dense\",\"filter\":{\"must\":[]}}",
+            asked.body().toString());
+
+        List<MatrixPair> offsets = gateway.matrix(new MatrixRequest("docs", "", null, null, null,
+            true));
+
+        assertEquals(new MatrixPair(pairs.get(2).a(), pairs.get(2).b(), 0.7, 2L, 0L),
+            offsets.get(2), "the same pair, with the positions that name its points");
+        asked = server.requests().get(server.requests().size() - 1);
+        assertEquals("/collections/docs/points/search/matrix/offsets", asked.path());
+        assertEquals("{}", asked.body().toString(), "Qdrant's own sample, neighbours and vector");
     }
 
     // Grouped searches
