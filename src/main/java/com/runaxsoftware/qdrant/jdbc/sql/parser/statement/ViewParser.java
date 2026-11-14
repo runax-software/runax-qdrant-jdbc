@@ -13,8 +13,8 @@ import java.sql.SQLSyntaxErrorException;
 /**
  * Reads the statements about views, which are Qdrant aliases: the rest of
  * {@code CREATE [OR REPLACE] VIEW name AS SELECT ...} once CREATE is read, of
- * {@code DROP VIEW [IF EXISTS] name} once DROP is read, and {@code ALTER VIEW name RENAME TO
- * other}. VIEW, REPLACE, RENAME and TO are words only here.
+ * {@code DROP VIEW [IF EXISTS] name} once DROP is read, and of {@code ALTER VIEW name RENAME TO
+ * other} once ALTER is. VIEW, REPLACE, RENAME and TO are words only here.
  */
 public final class ViewParser {
 
@@ -41,12 +41,6 @@ public final class ViewParser {
     }
 
     public Statement parseAlter() throws SQLSyntaxErrorException {
-        this.tokenStream.expectKeyword("ALTER");
-
-        if (this.tokenStream.peekKeyword("TABLE")) {
-            throw this.tokenStream.error("Expected VIEW: ALTER TABLE isn't supported yet");
-        }
-
         expectWord("VIEW");
         TableName view = new TableParser(this.tokenStream).parse();
         expectWord("RENAME");

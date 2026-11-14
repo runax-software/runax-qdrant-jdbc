@@ -3,6 +3,7 @@ package com.runaxsoftware.qdrant.jdbc.sql.executor;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadIndexType;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.VectorField;
 
 import java.sql.SQLException;
 import java.util.List;
@@ -86,6 +87,26 @@ interface Writer {
      * Applies alias actions together, atomically.
      */
     void changeAliases(List<JsonNode> actions) throws SQLException;
+
+    /**
+     * Changes the collection's settings, or those of its vectors.
+     */
+    void updateCollection(String collection, JsonNode changes) throws SQLException;
+
+    /**
+     * The collection's vectors, as Qdrant has them now.
+     */
+    List<VectorField> vectors(String collection) throws SQLException;
+
+    /**
+     * Adds a named vector to the collection.
+     */
+    void createVector(String collection, String vector, JsonNode config) throws SQLException;
+
+    /**
+     * Deletes a named vector from the collection.
+     */
+    void deleteVector(String collection, String vector) throws SQLException;
 
     /**
      * Forgets every issue Qdrant has reported about itself.

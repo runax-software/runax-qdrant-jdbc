@@ -8,8 +8,9 @@ maintainer can tell a missing feature that blocks real use from one that nobody 
 **Measured against** driver commit `5212b3d` — the whole of `SET`, `OFFSET`, the index and view
 statements, the write statements, the vector changes, the text conditions, `ON CONFLICT` and the
 embedder's model and role (#27, #28, #30, #31, #33, #34, #35, #36 and #39) — with the batched
-embedding of #40, the clearing of `system.issues` (#42), `system.health` (#43) and
-`system.optimizations` on top, and Qdrant
+embedding of #40, the clearing of `system.issues` (#42), `system.health` (#43),
+`system.optimizations` (#44), `ALTER TABLE … ADD`/`DROP COLUMN` (#45) and
+`ALTER TABLE … SET` on top, and Qdrant
 **1.20.0** (build
 `222b2e44ab1c3f17e8246396ead6558e45041df7`), running locally over REST on port 6333, with the
 three collections `./gradlew seedQdrant` loads. Qdrant 1.20 does not serve `/openapi.json` —
@@ -41,13 +42,13 @@ one of them is indistinguishable from a bug.
 
 ## Qdrant REST coverage
 
-Qdrant 1.20 documents **69 routes**. The driver calls **32** of them, which is **46%**. The
+Qdrant 1.20 documents **69 routes**. The driver calls **35** of them, which is **51%**. The
 counts below are per area, using Qdrant's own OpenAPI tags, so they can be recomputed from the
 spec without judgement calls.
 
 | Area | Covered | Total | What the covered routes are for |
 | --- | --- | --- | --- |
-| Collections | 6 | 9 | Listing and describing tables, `CREATE TABLE`, `DROP TABLE`, `IF NOT EXISTS`, `system.optimizations` |
+| Collections | **9** | **9** | Listing and describing tables, `CREATE TABLE`, `DROP TABLE`, `IF NOT EXISTS`, `system.optimizations`, and all of `ALTER TABLE`: `ADD COLUMN`, `DROP COLUMN`, `SET (…)` |
 | Points | 7 | 14 | `SELECT` (scroll), `COUNT(*)`, `GROUP BY` (facet), `DELETE`, `TRUNCATE`, `UPDATE` (batch), `INSERT` (upsert, and the ID check before it) — and `LIKE` and the full-text conditions, which are fields of the filter all of them send |
 | Search | 1 | 5 | `ORDER BY similarity(...) DESC`, including `embed()` |
 | Aliases | **3** | **3** | Views: listing, `system.aliases`, `CREATE [OR REPLACE] VIEW`, `ALTER VIEW`, `DROP VIEW`, and the aliases a dropped collection takes with it |
@@ -57,14 +58,14 @@ spec without judgement calls.
 | Service | **6** | **6** | Version on connect, `system.telemetry`, `system.metrics`, `system.health` |
 | Beta | **2** | **2** | `system.issues`, and `TRUNCATE TABLE system.issues` |
 | Quotas | 0 | 2 | — |
-| **Total** | **32** | **69** | |
+| **Total** | **35** | **69** | |
 
-Four areas are covered whole: every alias route, every index route, both beta routes, and
-every service route.
+Five areas are covered whole: every alias route, every index route, both beta routes, every
+service route, and every collection route.
 
 ### The routes the driver calls
 
-Twenty come from `QdrantGateway`, which is the only place that speaks HTTP, and twelve more
+Twenty-three come from `QdrantGateway`, which is the only place that speaks HTTP, and twelve more
 from `QdrantSystemTables`: nine endpoints the gateway has no model for because their shape
 depends on the Qdrant version, and the three health probes, which answer in a line of text.
 
@@ -89,6 +90,9 @@ depends on the Qdrant version, and the three health probes, which answer in a li
 | `GET /aliases` | `listAliases` | Aliases as views, `system.aliases`, and the checks before each view statement |
 | `GET /collections/{c}/aliases` | `collectionAliases` | The alias names whose kept columns an index change or a `DROP TABLE` makes wrong |
 | `POST /collections/aliases` | `changeAliases` | `CREATE [OR REPLACE] VIEW`, `ALTER VIEW … RENAME TO`, `DROP VIEW`, each one atomic change |
+| `PATCH /collections/{c}` | `updateCollection` | `ALTER TABLE … SET (…)` and `ALTER TABLE … ALTER COLUMN … SET (…)`: the collection's settings, a vector's, and metadata |
+| `PUT /collections/{c}/vectors/{v}` | `createVector` | `ALTER TABLE … ADD COLUMN`: a named dense vector, multivector or sparse vector |
+| `DELETE /collections/{c}/vectors/{v}` | `deleteVector` | `ALTER TABLE … DROP COLUMN` |
 | `DELETE /issues` | `clearIssues` | `TRUNCATE TABLE system.issues` |
 | `GET /snapshots` | `QdrantSystemTables` | `system.snapshots`, the whole-storage rows |
 | `GET /collections/{c}/snapshots` | `QdrantSystemTables` | `system.snapshots`, the per-collection rows |
@@ -106,9 +110,9 @@ depends on the Qdrant version, and the three health probes, which answer in a li
 The driver also calls `POST /embeddings` on `api.openai.com` or `api.voyageai.com` for
 `embed('text', 'openai:…')`. That is not a Qdrant route and is not counted here.
 
-### Why 46% means less than it looks, in both directions
+### Why 51% means less than it looks, in both directions
 
-**The denominator is padded.** Of the 37 routes the driver does not call, 15 are snapshot
+**The denominator is padded.** Of the 34 routes the driver does not call, 15 are snapshot
 plumbing — creating, downloading, uploading and recovering snapshots of a collection or of one
 shard — and 6 more are cluster surgery: moving a shard, dropping a peer, recovering Raft. No
 SQL client would call those; they belong to an operator with a shell, and exposing them through
@@ -116,7 +120,7 @@ JDBC would mean inventing `CALL` syntax for operations that have nothing to do w
 dialect spec does plan exactly that (see its *Operations* section), but as procedures, and a
 procedure that wraps one route is not what "covering an API" usually means. Set aside the 15
 unused snapshot routes, the 6 unused cluster ones and the 2 quota routes, and 46 remain, of
-which the driver calls 32 — **70%**.
+which the driver calls 35 — **76%**.
 Neither number is wrong; they answer different questions.
 
 **The numerator hides how much each route carries.** One route is not one feature.
@@ -153,7 +157,7 @@ slightly wrong.
   `batch` and `groups`, `points/discover` and `discover/batch` — is in the 1.15 spec, gone from
   the 1.20 spec, and alive on a 1.20 server: each answers a JSON validation error rather than
   an empty 404. They were superseded by the Query API, not removed. Counting them puts the live
-  surface at 77 routes and the driver at 42%; this document uses the documented 69, because the
+  surface at 77 routes and the driver at 45%; this document uses the documented 69, because the
   spec is what a maintainer can check, and routes Qdrant has stopped documenting are not ones
   the driver should start calling.
 - **`/locks` is really gone.** `GET` and `POST /locks` are in the 1.15 spec and answer an empty
@@ -175,8 +179,8 @@ client.
 
 The ceiling is the lexer, but less of one than it looks. `Lexer.java` recognises
 **31 keywords**, and a word outside that set becomes an identifier, so `HAVING`, `BETWEEN`,
-`JOIN`, `UNION` and `CALL` cannot be lexed as syntax at all. `Parser.java` wires **fifteen
-statement kinds**, and `Plan.java`'s sealed interface permits **nineteen plan kinds** — the best
+`JOIN`, `UNION` and `CALL` cannot be lexed as syntax at all. `Parser.java` wires **eighteen
+statement kinds**, and `Plan.java`'s sealed interface permits **twenty-two plan kinds** — the best
 single index of what can run. No parser class is a stub any more.
 
 A word that means something in one place only need not be a keyword, though: read where it can
@@ -210,7 +214,11 @@ above has stopped predicting how much SQL runs.
 | `SET qdrant.<option>`, `RESET`, `SHOW` | works | Seven request options, kept for the connection; other databases' settings are errors |
 | `CREATE INDEX`, `DROP INDEX` | works | One field; the type defaults to the column's; each type's `WITH` options checked; a second index is `42S11`, a missing one `42S12` |
 | `CREATE [OR REPLACE] VIEW` / `ALTER VIEW … RENAME TO` / `DROP VIEW` | works | A view is `SELECT *` of one collection; a taken name is `42S01`, a missing view `42S02`; `OR REPLACE` is one atomic switch |
-| `ALTER TABLE` | missing | `ALTER` parses, then `Expected VIEW: ALTER TABLE isn't supported yet` |
+| `ALTER TABLE … ADD [COLUMN] [IF NOT EXISTS]` | works | A named vector: `VECTOR(n)`, `MULTIVECTOR(n)` or `SPARSE_VECTOR`, as `CREATE TABLE` declares one; a taken name is `42S21`. A payload column is an error naming `CREATE INDEX` |
+| `ALTER TABLE … DROP [COLUMN] [IF EXISTS]` | works | A named vector, with every point's value for it; a missing one is `42S22`. `_vector` and payload fields are errors naming what to write |
+| `ALTER TABLE … SET (…)` | works | A collection's `params`, `hnsw`, `optimizers`, `strict_mode`, `quantization` and `metadata`; a setting is written `hnsw.m`, `m` where one group has it, or with its group as JSON. An unknown name is an error, since Qdrant would drop it without a word |
+| `ALTER TABLE … ALTER [COLUMN] v SET (…)` | works | One vector's settings: `on_disk`, `hnsw` and `quantization` for a dense one, `modifier` and `index` for a sparse one |
+| `ALTER TABLE … RENAME`, `ALTER COLUMN … TYPE` | missing | Qdrant renames nothing and a vector's dimensions are fixed |
 | `CALL` | missing | Not a keyword; `getProcedures` returns no rows |
 | `JOIN`, `UNION`, subqueries | missing | Rejected on purpose — see below |
 | Trailing `;` | works | One semicolon ends a statement; two statements in one call is an error |
@@ -448,8 +456,8 @@ and delete from it. What remains, most important first:
    gap to close here.
 
 Below that line the remaining gaps are mostly ones a SQL user would not reach for first: hybrid
-search and fusion (one route, many body shapes), `ALTER TABLE` for a collection's settings
-and vectors, `CALL` procedures for snapshots and shard keys, `WHERE` and `ORDER BY` over the
+search and fusion (one route, many body shapes), collection settings at creation (`CREATE TABLE … WITH (…)`,
+which `ALTER TABLE … SET (…)` covers afterwards, all but the shard count), `CALL` procedures for snapshots and shard keys, `WHERE` and `ORDER BY` over the
 `system` tables, and the request options still to come
 (`shard_key`, quantization, a `/*+ … */` hint for one statement).
 

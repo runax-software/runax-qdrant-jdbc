@@ -8,6 +8,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadIndexType;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.VectorField;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.VectorKind;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.AddVectorPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ClearIssuesPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConflictAction;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateCollectionPlan;
@@ -16,10 +19,12 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateViewPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DeletePointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropIndexPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropVectorPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropViewPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.RenameViewPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.InsertPointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.NewPoint;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdateCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdatePointsPlan;
 import com.runaxsoftware.qdrant.jdbc.support.Json;
 
@@ -46,6 +51,7 @@ class WriteExecutorTest {
     private Map<String, PayloadIndexType> indexes = Map.of();
     private List<QdrantAlias> aliases = List.of();
     private List<JsonNode> matchingIds = List.of();
+    private List<VectorField> vectors = List.of();
 
     private final Executor executor = new Executor(
         request -> {
@@ -151,6 +157,27 @@ class WriteExecutorTest {
             public void clearIssues() {
                 calls.add("clear issues");
             }
+
+            @Override
+            public void updateCollection(String collection, JsonNode changes) {
+                calls.add("alter " + collection + " " + changes);
+            }
+
+            @Override
+            public List<VectorField> vectors(String collection) {
+                calls.add("vectors " + collection);
+                return vectors;
+            }
+
+            @Override
+            public void createVector(String collection, String vector, JsonNode config) {
+                calls.add("add vector " + collection + " " + vector + " " + config);
+            }
+
+            @Override
+            public void deleteVector(String collection, String vector) {
+                calls.add("drop vector " + collection + " " + vector);
+            }
         });
 
     @Test
@@ -169,6 +196,70 @@ class WriteExecutorTest {
         assertEquals(0, executor.execute(new DeletePointsPlan("docs", FILTER), statement())
             .updateCount());
         assertEquals(List.of("count docs " + FILTER), calls);
+    }
+
+    @Test
+    void sendsACollectionsChangedSettingsInOneCall() throws SQLException {
+        JsonNode changes = Json.object("hnsw_config", Json.object("m", 16));
+
+        ExecutionResult result = executor.execute(new UpdateCollectionPlan("docs", changes),
+            statement());
+
+        assertFalse(result.hasResultSet());
+        assertEquals(0, result.updateCount());
+        assertEquals(List.of("alter docs " + changes), calls);
+    }
+
+    @Test
+    void addsAVectorTheCollectionDoesntHave() throws SQLException {
+        vectors = List.of(new VectorField("dense", VectorKind.DENSE, 4, "Cosine"));
+        JsonNode config = Json.object("dense", Json.object("size", 8, "distance", "Dot"));
+
+        ExecutionResult result = executor.execute(
+            new AddVectorPlan("docs", "image", config, false), statement());
+
+        assertEquals(0, result.updateCount());
+        assertEquals(List.of("vectors docs", "add vector docs image " + config), calls);
+    }
+
+    @Test
+    void refusesAVectorNameThatsTakenUnlessIfNotExists() throws SQLException {
+        vectors = List.of(new VectorField("image", VectorKind.DENSE, 4, "Cosine"));
+        JsonNode config = Json.object("dense", Json.object("size", 8, "distance", "Dot"));
+
+        SQLException error = assertThrows(SQLException.class, () -> executor.execute(
+            new AddVectorPlan("docs", "image", config, false), statement()));
+        assertEquals("42S21", error.getSQLState());
+        assertTrue(error.getMessage().startsWith("docs already has a vector 'image'"));
+
+        executor.execute(new AddVectorPlan("docs", "image", config, true), statement());
+        assertEquals(List.of("vectors docs", "vectors docs"), calls, "nothing added");
+    }
+
+    @Test
+    void dropsAVectorTheCollectionHas() throws SQLException {
+        vectors = List.of(new VectorField("dense", VectorKind.DENSE, 4, "Cosine"),
+            new VectorField("keywords", VectorKind.SPARSE, 0, null));
+
+        assertEquals(0, executor.execute(new DropVectorPlan("docs", "keywords", false),
+            statement()).updateCount());
+        assertEquals(List.of("vectors docs", "drop vector docs keywords"), calls);
+    }
+
+    @Test
+    void reportsAMissingVectorUnlessIfExists() throws SQLException {
+        vectors = List.of(new VectorField("", VectorKind.DENSE, 4, "Cosine"),
+            new VectorField("image", VectorKind.DENSE, 8, "Dot"));
+
+        SQLException error = assertThrows(SQLException.class, () -> executor.execute(
+            new DropVectorPlan("docs", "lang", false), statement()));
+        assertEquals("42S22", error.getSQLState());
+        assertEquals("docs has no vector 'lang': its named vectors are image. ALTER TABLE drops "
+            + "vectors only: a payload field has no column to drop, so DROP INDEX removes its "
+            + "index and UPDATE ... SET lang = NULL the field itself", error.getMessage());
+
+        executor.execute(new DropVectorPlan("docs", "lang", true), statement());
+        assertEquals(List.of("vectors docs", "vectors docs"), calls, "nothing dropped");
     }
 
     @Test

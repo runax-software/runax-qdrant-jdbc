@@ -598,6 +598,21 @@ class QdrantGatewayTest {
         assertEquals("Qdrant: Service internal error", error.getMessage());
     }
 
+    // Named vectors
+
+    @Test
+    void addsAndDeletesANamedVectorByItsPathAndWaits() throws Exception {
+        try (RecordingServer recording = new RecordingServer(200,
+            "{\"result\":{\"operation_id\":1,\"status\":\"completed\"},\"status\":\"ok\"}")) {
+            recording.gateway().createVector("my docs", "title/en",
+                Json.object("dense", Json.object("size", 4, "distance", "Cosine")));
+            recording.gateway().deleteVector("my docs", "title/en");
+
+            assertEquals(List.of("/collections/my%20docs/vectors/title%2Fen",
+                "/collections/my%20docs/vectors/title%2Fen"), recording.rawPaths());
+        }
+    }
+
     // Health probes
 
     @Test

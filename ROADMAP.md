@@ -58,9 +58,8 @@ measured REST and SQL coverage is in [docs/coverage.md](docs/coverage.md).
   BM25 into sparse vectors; hosted dense models need Qdrant Cloud's inference.
 - [x] **Embedding model per vector** — kept in the collection's metadata for each vector
   (`runax.embed.dense = "openai:text-embedding-3-small"`), not per connection, so
-  `embed('text')` needs no model and a query can't silently use the wrong one. Setting it from
-  SQL (`ALTER TABLE … SET (metadata = …)`) comes later; Qdrant's update-collection API sets it
-  today.
+  `embed('text')` needs no model and a query can't silently use the wrong one. It's set from
+  SQL with `ALTER TABLE docs SET (metadata.runax.embed.dense = 'openai:…')`.
 - [x] **GROUP BY** with `COUNT(*)` through the facet API, on a field indexed as keyword,
   integer, bool, or uuid. A grouped statement needs a limit, since Qdrant counts the most
   common values in one call; `HAVING` and ordering the groups by anything but their count come
@@ -121,7 +120,19 @@ measured REST and SQL coverage is in [docs/coverage.md](docs/coverage.md).
 - [x] **Creating collections** — `CREATE TABLE [IF NOT EXISTS] docs (dense VECTOR(384)
   DISTANCE COSINE, keywords SPARSE_VECTOR MODIFIER IDF, lang KEYWORD INDEX)`: dense,
   multi-, and sparse vectors, a single `_vector` column for the unnamed vector, and payload
-  indexes. Collection settings in `WITH (…)` and `ALTER TABLE` come later.
+  indexes. Collection settings in `WITH (…)` come later.
+- [x] **Adding and dropping vectors** — `ALTER TABLE docs ADD COLUMN image VECTOR(512) DISTANCE
+  COSINE` and `ALTER TABLE docs DROP COLUMN image`, through Qdrant's named-vector API: a dense
+  vector, a multivector, or a sparse one, on a collection that already holds points. A payload
+  column is an error naming `CREATE INDEX` or `DROP INDEX`, since the payload has no schema to
+  alter.
+- [x] **Collection settings** — `ALTER TABLE docs SET (hnsw.m = 16, indexing_threshold = 20000)`
+  through Qdrant's update-collection API: replication and payload storage, HNSW, the
+  optimizers, strict mode, quantization, and metadata, each setting written as `group.name`, by
+  its name alone where one group has it, or with its group as JSON. `ALTER TABLE docs ALTER
+  COLUMN dense SET (on_disk = true)` changes one vector's. Every name is checked first, since
+  Qdrant drops one it doesn't know without a word. The same settings at creation, `CREATE TABLE
+  … WITH (…)`, come later.
 - [ ] **Post-filtering in the driver (to decide)** — conditions Qdrant can't run, such as
   `price > cost`, `LOWER(name) = 'lamp'`, or joins, checked by the driver on the rows Qdrant
   returns. Probably opt-in and capped, since it can read far more points than it returns.

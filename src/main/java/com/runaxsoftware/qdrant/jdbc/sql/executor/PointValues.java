@@ -84,7 +84,9 @@ final class PointValues {
             return null;
         }
 
-        JsonNode vector = name.isEmpty() ? vectors : vectors.get(name);
+        // The unnamed vector is the answer itself, unless the collection has named ones beside
+        // it: then Qdrant answers with an object, and the unnamed one is under the empty name
+        JsonNode vector = name.isEmpty() && !vectors.isObject() ? vectors : vectors.get(name);
 
         return vector == null || vector.isNull() ? null : vector.toString();
     }

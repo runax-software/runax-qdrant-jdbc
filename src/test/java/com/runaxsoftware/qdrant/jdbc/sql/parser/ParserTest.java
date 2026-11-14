@@ -22,6 +22,8 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.SelectItem;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Star;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.TableName;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.VectorLiteral;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AddColumnStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AlterSettingsStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AlterViewStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Assignment;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.ColumnSpec;
@@ -29,6 +31,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateIndexStateme
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateTableStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateViewStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DeleteStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropColumnStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropIndexStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropTableStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropViewStatement;
@@ -43,6 +46,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.sql.SQLSyntaxErrorException;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -568,8 +572,8 @@ class ParserTest {
             + "column 27", "CREATE INDEX ON docs (lang, year)");
         assertError("Expected SELECT * FROM the collection the view shows, found 'docs' at line 1, "
             + "column 18", "CREATE VIEW v AS docs");
-        assertError("Expected VIEW: ALTER TABLE isn't supported yet, found 'TABLE' at line 1, "
-            + "column 7", "ALTER TABLE docs RENAME TO x");
+        assertError("Expected TABLE or VIEW, found 'INDEX' at line 1, column 7",
+            "ALTER INDEX lang_idx RENAME TO x");
         assertError("Expected TABLE, INDEX, VIEW or OR REPLACE VIEW, found 'SEQUENCE' at line 1, "
             + "column 8", "CREATE SEQUENCE s");
     }
@@ -702,6 +706,70 @@ class ParserTest {
     void rejectsAnUpdateWithoutSet() {
         assertError("Expected SET, found 'lang' at line 1, column 15", "UPDATE docs t lang = 1");
         assertError("Expected =, found 'de' at line 1, column 22", "UPDATE docs SET lang 'de'");
+    }
+
+    // ALTER TABLE
+
+    @Test
+    void parsesAlterTableAddColumn() throws SQLSyntaxErrorException {
+        assertEquals(new AddColumnStatement(TableName.of("docs"),
+                new ColumnSpec("image", "VECTOR", 512, "COSINE", null, false), false),
+            Parser.parse("ALTER TABLE docs ADD COLUMN image VECTOR(512) DISTANCE COSINE"));
+        assertEquals(new AddColumnStatement(TableName.of("collections", "docs"),
+                new ColumnSpec("keywords", "SPARSE_VECTOR", null, null, "IDF", false), true),
+            Parser.parse("alter table collections.docs add if not exists keywords "
+                + "sparse_vector modifier idf"));
+    }
+
+    @Test
+    void parsesAlterTableDropColumn() throws SQLSyntaxErrorException {
+        assertEquals(new DropColumnStatement(TableName.of("docs"), "image", false),
+            Parser.parse("ALTER TABLE docs DROP COLUMN image"));
+        assertEquals(new DropColumnStatement(TableName.of("docs"), "image", true),
+            Parser.parse("alter table docs drop if exists image;"));
+        assertEquals(new DropColumnStatement(TableName.of("docs"), "column", false),
+            Parser.parse("ALTER TABLE docs DROP COLUMN \"column\""));
+    }
+
+    @Test
+    void parsesAlterTableSetWithDottedNamesWordsAndConstants() throws SQLSyntaxErrorException {
+        var settings = new LinkedHashMap<String, Expression>();
+        settings.put("hnsw.m", new Literal(16L));
+        settings.put("on_disk_payload", new Literal(true));
+        settings.put("optimizers.max_optimization_threads", new Literal("auto"));
+        settings.put("metadata.runax.embed.Dense", new Literal("openai:text-embedding-3-small"));
+        settings.put("quantization", new Literal("{\"scalar\": {\"type\": \"int8\"}}"));
+
+        assertEquals(new AlterSettingsStatement(TableName.of("docs"), null, settings),
+            Parser.parse("ALTER TABLE docs SET (hnsw.m = 16, on_disk_payload = true, "
+                + "optimizers.max_optimization_threads = auto, "
+                + "metadata.runax.embed.Dense = 'openai:text-embedding-3-small', "
+                + "quantization = '{\"scalar\": {\"type\": \"int8\"}}')"));
+    }
+
+    @Test
+    void parsesAlterColumnSet() throws SQLSyntaxErrorException {
+        assertEquals(new AlterSettingsStatement(TableName.of("collections", "docs"), "dense",
+                Map.of("on_disk", new Literal(true))),
+            Parser.parse("alter table collections.docs alter column dense set (on_disk = true)"));
+        assertEquals(new AlterSettingsStatement(TableName.of("docs"), "_vector",
+                Map.of("hnsw.m", new Literal(8L))),
+            Parser.parse("ALTER TABLE docs ALTER _vector SET (hnsw.m = 8);"));
+    }
+
+    @Test
+    void rejectsTheAlterTableFormsItDoesntHave() {
+        assertError("Expected ADD COLUMN, DROP COLUMN, ALTER COLUMN or SET, found 'RENAME' at "
+            + "line 1, column 18", "ALTER TABLE docs RENAME TO x");
+        assertError("Expected SET (...): a vector's settings are what ALTER COLUMN changes, found "
+            + "'TYPE' at line 1, column 37", "ALTER TABLE docs ALTER COLUMN dense TYPE VECTOR(8)");
+        assertError("Setting 'hnsw.m' is given twice, found ')' at line 1, column 46",
+            "ALTER TABLE docs SET (hnsw.m = 8, hnsw.m = 16)");
+        assertError("Expected a name, found ')' at line 1, column 23", "ALTER TABLE docs SET ()");
+        assertError("Expected a column type, such as VECTOR(384) or KEYWORD INDEX, found the end "
+            + "of the statement at line 1, column 34", "ALTER TABLE docs ADD COLUMN image");
+        assertError("Expected the end of the statement, found ',' at line 1, column 35",
+            "ALTER TABLE docs DROP COLUMN image, other");
     }
 
     // CREATE TABLE
