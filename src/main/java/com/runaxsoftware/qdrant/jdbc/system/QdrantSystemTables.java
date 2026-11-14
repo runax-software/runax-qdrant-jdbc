@@ -31,6 +31,9 @@ public final class QdrantSystemTables implements SystemTableReader {
 
     private static final String MISSING_COLLECTION = "42S02";
 
+    // The lists of optimizations Qdrant answers with, in its order; a row's state is its list
+    private static final List<String> OPTIMIZATION_STATES = List.of("running", "queued", "completed");
+
     // Qdrant's health probes, by name, which is also each one's path
     private static final List<String> HEALTH_PROBES = List.of("healthz", "livez", "readyz");
 
@@ -57,6 +60,7 @@ public final class QdrantSystemTables implements SystemTableReader {
             case METRICS -> metrics();
             case ISSUES -> issues();
             case HEALTH -> health();
+            case OPTIMIZATIONS -> optimizations();
         };
     }
 
@@ -278,7 +282,67 @@ public final class QdrantSystemTables implements SystemTableReader {
         return rows;
     }
 
+    /**
+     * Every collection's optimizations, by collection, and within one in Qdrant's own order:
+     * the running ones, then the queue as Qdrant estimates it, then the completed ones, latest
+     * first. Qdrant keeps only the latest completed ones and sends sixteen unless asked for
+     * more, which is what this reads. The segments that need no optimizing aren't rows: they're
+     * not optimizations.
+     */
+    private List<Object[]> optimizations() throws SQLException {
+        List<Object[]> rows = new ArrayList<>();
+
+        for (String name : collectionNames()) {
+            JsonNode info = perCollection(name, "/optimizations?with=queued,completed");
+            if (info == null) continue;
+
+            for (String state : OPTIMIZATION_STATES) {
+                for (JsonNode optimization : info.path(state)) {
+                    rows.add(optimizationRow(name, state, optimization));
+                }
+            }
+        }
+
+        // Stable, so each collection's rows keep the order Qdrant gave them
+        rows.sort(byText(0));
+
+        return rows;
+    }
+
     // Rows
+
+    private static Object[] optimizationRow(String collection, String state, JsonNode optimization) {
+        JsonNode status = optimization.path("status");
+        JsonNode segments = optimization.path("segments");
+        JsonNode progress = optimization.path("progress");
+
+        long points = 0;
+        for (JsonNode segment : segments) points += segment.path("points_count").asLong();
+
+        // A status is a word, or an object of one field holding why: {"cancelled": "reason"}
+        String statusName = text(status);
+        String statusDetail = null;
+        if (status.isObject() && status.size() == 1) {
+            statusName = status.fieldNames().next();
+            statusDetail = text(status.path(statusName));
+        }
+
+        return new Object[]{
+            collection,
+            state,
+            text(optimization.path("uuid")),
+            text(optimization.path("optimizer")),
+            statusName,
+            statusDetail,
+            (long) segments.size(),
+            points,
+            text(progress.path("started_at")),
+            text(progress.path("finished_at")),
+            decimal(progress.path("duration_sec")),
+            json(segments),
+            json(progress),
+        };
+    }
 
     private static Object[] collectionRow(String name, JsonNode info) {
         JsonNode params = info.path("config").path("params");
@@ -426,6 +490,10 @@ public final class QdrantSystemTables implements SystemTableReader {
 
     private static Boolean flag(JsonNode node) {
         return node.isBoolean() ? node.booleanValue() : null;
+    }
+
+    private static Double decimal(JsonNode node) {
+        return node.isNumber() ? node.doubleValue() : null;
     }
 
     private static String json(JsonNode node) {

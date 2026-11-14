@@ -100,6 +100,17 @@ class SystemTableTest {
     }
 
     @Test
+    void namesTheTableOfOptimizations() {
+        assertEquals("optimizations", SystemTable.OPTIMIZATIONS.tableName());
+        assertEquals(List.of("collection_name", "state", "uuid", "optimizer", "status",
+            "status_detail", "segments_count", "points_count", "started_at", "finished_at",
+            "duration_sec", "segments", "progress"), names(SystemTable.OPTIMIZATIONS));
+        assertEquals(ColumnType.DATETIME, type(SystemTable.OPTIMIZATIONS, "finished_at"));
+        assertEquals(ColumnType.FLOAT, type(SystemTable.OPTIMIZATIONS, "duration_sec"));
+        assertEquals(ColumnType.JSON, type(SystemTable.OPTIMIZATIONS, "progress"));
+    }
+
+    @Test
     void namesTheTableOfHealthProbes() {
         assertEquals("health", SystemTable.HEALTH.tableName());
         assertEquals(List.of("probe", "ok", "status_code", "message"), names(SystemTable.HEALTH));

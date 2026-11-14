@@ -23,6 +23,7 @@ import org.junit.jupiter.api.Test;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -438,6 +439,70 @@ class QdrantSystemTablesTest {
         assertEquals("docs", rows.get(1)[2]);
         assertEquals("2026-11-01T17:10:01.997331971Z", rows.get(1)[3]);
         assertTrue(((String) rows.get(1)[4]).startsWith("{\"immediate\""), rows.get(1)[4] + "");
+    }
+
+    // Optimizations
+
+    @Test
+    void readsEveryOptimizationByCollectionInQdrantsOrder() throws SQLException {
+        server.collection("notes", unnamedVector(2, "Cosine", Map.of()), List.of())
+            .collection("docs", unnamedVector(2, "Cosine", Map.of()), List.of())
+            .optimizations("notes", Json.object("completed", Json.array(Json.object(
+                "uuid", "94b34892-0160-4ec3-97ee-4c0380571208", "optimizer", "indexing",
+                "status", "done",
+                "segments", Json.array(Json.object("uuid", "9080adf9", "points_count", 2000)),
+                "progress", Json.object("name", "Segment Optimizing",
+                    "started_at", "2026-11-14T17:16:44.504784136Z",
+                    "finished_at", "2026-11-14T17:16:44.605268803Z",
+                    "duration_sec", 0.100484458)))))
+            .optimizations("docs", Json.object(
+                "running", Json.array(Json.object(
+                    "uuid", "3a51151e-76ec-4c46-a0a5-4631f0c8ace7", "optimizer", "indexing",
+                    "status", "optimizing",
+                    "segments", Json.array(Json.object("uuid", "ac25d4c2", "points_count", 2000),
+                        Json.object("uuid", "94b34892", "points_count", 500)),
+                    "progress", Json.object("name", "Segment Optimizing",
+                        "started_at", "2026-11-14T17:16:44.621179345Z"))),
+                "queued", Json.array(Json.object("optimizer", "merge",
+                    "segments", Json.array(Json.object("uuid", "07f4905f", "points_count", 7)))),
+                "completed", Json.array(Json.object(
+                    "uuid", "7d91a1bb-f905-42f5-a940-f54e9438c684", "optimizer", "vacuum",
+                    "status", Json.object("cancelled", "the collection was deleted"),
+                    "segments", Json.array(),
+                    "progress", Json.object("name", "Segment Optimizing")))));
+
+        List<Object[]> rows = tables.read(SystemTable.OPTIMIZATIONS);
+
+        assertEquals(4, rows.size());
+        assertArrayEquals(new Object[]{"docs", "running", "3a51151e-76ec-4c46-a0a5-4631f0c8ace7",
+            "indexing", "optimizing", null, 2L, 2500L, "2026-11-14T17:16:44.621179345Z", null,
+            null}, Arrays.copyOf(rows.get(0), 11));
+        assertTrue(((String) rows.get(0)[11]).startsWith("[{\"uuid\":\"ac25d4c2\""));
+        assertTrue(((String) rows.get(0)[12]).startsWith("{\"name\":\"Segment Optimizing\""));
+
+        assertArrayEquals(new Object[]{"docs", "queued", null, "merge", null, null, 1L, 7L, null,
+            null, null}, Arrays.copyOf(rows.get(1), 11));
+
+        assertArrayEquals(new Object[]{"docs", "completed",
+            "7d91a1bb-f905-42f5-a940-f54e9438c684", "vacuum", "cancelled",
+            "the collection was deleted", 0L, 0L, null, null, null},
+            Arrays.copyOf(rows.get(2), 11));
+
+        assertArrayEquals(new Object[]{"notes", "completed",
+            "94b34892-0160-4ec3-97ee-4c0380571208", "indexing", "done", null, 1L, 2000L,
+            "2026-11-14T17:16:44.504784136Z", "2026-11-14T17:16:44.605268803Z", 0.100484458},
+            Arrays.copyOf(rows.get(3), 11));
+    }
+
+    @Test
+    void asksForTheQueuedAndCompletedOptimizationsToo() throws SQLException {
+        server.collection("docs", unnamedVector(2, "Cosine", Map.of()), List.of());
+
+        assertEquals(List.of(), tables.read(SystemTable.OPTIMIZATIONS));
+
+        var request = server.requests().get(server.requests().size() - 1);
+        assertEquals("/collections/docs/optimizations", request.path());
+        assertEquals("with=queued,completed", request.query());
     }
 
     // Health

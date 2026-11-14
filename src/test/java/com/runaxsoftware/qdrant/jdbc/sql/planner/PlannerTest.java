@@ -869,7 +869,8 @@ class PlannerTest {
             () -> plan("SELECT * FROM system.queries", NO_LOOKUPS));
 
         assertEquals("Unknown table 'system.queries': the system schema has aliases, cluster, "
-            + "collections, health, issues, metrics, peers, shard_keys, shards, snapshots, telemetry",
+            + "collections, health, issues, metrics, optimizations, peers, shard_keys, shards, "
+            + "snapshots, telemetry",
             error.getMessage());
         assertEquals("42S02", error.getSQLState());
     }

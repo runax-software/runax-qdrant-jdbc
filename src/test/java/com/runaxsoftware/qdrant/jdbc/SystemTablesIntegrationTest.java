@@ -7,8 +7,10 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.runaxsoftware.qdrant.jdbc.gateway.HttpMethod;
 import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
+import com.runaxsoftware.qdrant.jdbc.support.Json;
 import com.runaxsoftware.qdrant.jdbc.support.SampleCollections;
 import com.runaxsoftware.qdrant.jdbc.support.TestQdrant;
 import com.runaxsoftware.qdrant.jdbc.system.SystemColumn;
@@ -381,6 +383,75 @@ class SystemTablesIntegrationTest {
             assertThrows(SQLException.class,
                 () -> statement.executeUpdate("DELETE FROM system.issues WHERE id = 'x'"));
         }
+    }
+
+    /**
+     * Qdrant optimizes on its own schedule, so which rows there are can't be promised; what can
+     * is that every row is about one of this server's collections and in a state Qdrant has.
+     */
+    @Test
+    void readsTheOptimizationsOfEveryCollection() throws SQLException {
+        List<String> collections = gateway.listCollections();
+
+        try (Statement statement = connection.createStatement();
+             ResultSet rows = statement.executeQuery("SELECT collection_name, state, optimizer, "
+                 + "segments_count, points_count, segments, progress FROM system.optimizations")) {
+            while (rows.next()) {
+                assertTrue(collections.contains(rows.getString("collection_name")));
+                assertTrue(List.of("running", "queued", "completed")
+                    .contains(rows.getString("state")), rows.getString("state"));
+                assertNotNull(rows.getString("optimizer"));
+                assertTrue(rows.getLong("segments_count") >= 0);
+                assertNotNull(rows.getString("segments"));
+            }
+        }
+    }
+
+    /**
+     * A collection told to index every segment, then given enough points to make Qdrant do it,
+     * so there is an optimization to read: Qdrant keeps the ones it finished, so the row is
+     * there whether the read catches it running or done.
+     */
+    @Test
+    void readsAnOptimizationQdrantRan() throws Exception {
+        String collection = PREFIX + "optimized";
+        gateway.createCollection(collection, Json.object(
+            "vectors", Json.object("size", 4, "distance", "Cosine"),
+            "optimizers_config", Json.object("indexing_threshold", 1)));
+
+        List<JsonNode> points = new ArrayList<>();
+        for (int i = 1; i <= 5_000; i++) {
+            points.add(Json.object("id", i,
+                "vector", Json.array(i % 7 + 1, i % 11 + 1, i % 13 + 1, i % 17 + 1)));
+        }
+        gateway.insertPoints(collection, points, true, null);
+
+        try (Statement statement = connection.createStatement()) {
+            for (int attempt = 0; attempt < 100; attempt++) {
+                try (ResultSet rows = statement.executeQuery("SELECT collection_name, state, "
+                    + "uuid, optimizer, status, segments_count, points_count, started_at, "
+                    + "progress FROM system.optimizations")) {
+                    while (rows.next()) {
+                        if (!collection.equals(rows.getString("collection_name"))) continue;
+                        if (rows.getString("uuid") == null) continue;
+
+                        assertTrue(List.of("running", "completed").contains(rows.getString("state")));
+                        assertNotNull(rows.getString("optimizer"));
+                        assertTrue(List.of("optimizing", "done").contains(rows.getString("status")));
+                        assertTrue(rows.getLong("segments_count") > 0);
+                        assertNotNull(rows.getTimestamp("started_at"));
+                        assertTrue(rows.getString("progress").startsWith("{"));
+                        return;
+                    }
+                }
+
+                Thread.sleep(100);
+            }
+        } finally {
+            gateway.deleteCollection(collection);
+        }
+
+        throw new AssertionError("Qdrant reported no optimization of " + collection);
     }
 
     @Test

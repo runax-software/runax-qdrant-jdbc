@@ -228,7 +228,41 @@ public enum SystemTable {
             SystemColumn.of("status_code", ColumnType.INTEGER,
                 "The HTTP status Qdrant answered the probe with, 200 when it passed"),
             SystemColumn.of("message", ColumnType.TEXT,
-                "What Qdrant said, such as 'all shards are ready'")));
+                "What Qdrant said, such as 'all shards are ready'"))),
+
+    /**
+     * Every collection's optimizations: the ones running, the ones Qdrant expects to run next,
+     * and the latest it finished. A collection with nothing to optimize has no rows.
+     */
+    OPTIMIZATIONS("optimizations",
+        "Every collection's running, queued, and latest completed optimizations",
+        List.of(
+            SystemColumn.of("collection_name", ColumnType.TEXT,
+                "The collection being optimized"),
+            SystemColumn.of("state", ColumnType.TEXT,
+                "running, queued, or completed: which of Qdrant's lists the optimization is in"),
+            SystemColumn.of("uuid", ColumnType.TEXT,
+                "The optimization's id, which the segment it builds takes; null while queued"),
+            SystemColumn.of("optimizer", ColumnType.TEXT,
+                "The optimizer doing the work, such as indexing, merge, or vacuum"),
+            SystemColumn.of("status", ColumnType.TEXT,
+                "optimizing, done, cancelled, or error; null while queued"),
+            SystemColumn.of("status_detail", ColumnType.TEXT,
+                "Why an optimization was cancelled, or the error it failed with"),
+            SystemColumn.of("segments_count", ColumnType.INTEGER,
+                "How many segments the optimization takes"),
+            SystemColumn.of("points_count", ColumnType.INTEGER,
+                "The points in those segments"),
+            SystemColumn.of("started_at", ColumnType.DATETIME,
+                "When the optimization started"),
+            SystemColumn.of("finished_at", ColumnType.DATETIME,
+                "When it finished, or null while it runs"),
+            SystemColumn.of("duration_sec", ColumnType.FLOAT,
+                "How long a finished optimization took, in seconds"),
+            SystemColumn.of("segments", ColumnType.JSON,
+                "The segments, each with its id and point count, as Qdrant sends them"),
+            SystemColumn.of("progress", ColumnType.JSON,
+                "The optimization's steps as a tree, each with its times and units done")));
 
     /**
      * The schema every system table is in.
