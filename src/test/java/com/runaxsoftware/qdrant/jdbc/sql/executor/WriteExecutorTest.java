@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.runaxsoftware.qdrant.jdbc.gateway.HttpMethod;
+import com.runaxsoftware.qdrant.jdbc.procedure.Procedure;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadIndexType;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.VectorField;
@@ -24,6 +26,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropViewPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.RenameViewPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.InsertPointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.NewPoint;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ProcedurePlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdateCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdatePointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdateQuotasPlan;
@@ -161,6 +164,11 @@ class WriteExecutorTest {
             }
 
             @Override
+            public void call(HttpMethod method, String path, JsonNode body) {
+                calls.add("call " + method + " " + path + " " + body);
+            }
+
+            @Override
             public JsonNode quotas() {
                 calls.add("quotas");
                 return quotas;
@@ -209,6 +217,18 @@ class WriteExecutorTest {
         assertEquals(0, executor.execute(new DeletePointsPlan("docs", FILTER), statement())
             .updateCount());
         assertEquals(List.of("count docs " + FILTER), calls);
+    }
+
+    @Test
+    void makesTheOneRequestAProcedureIs() throws SQLException {
+        JsonNode body = Json.object("shard_key", "eu");
+
+        ExecutionResult result = executor.execute(new ProcedurePlan(Procedure.CREATE_SHARD_KEY,
+            HttpMethod.PUT, "/collections/docs/shards", body), statement());
+
+        assertFalse(result.hasResultSet());
+        assertEquals(0, result.updateCount());
+        assertEquals(List.of("call PUT /collections/docs/shards " + body), calls);
     }
 
     @Test

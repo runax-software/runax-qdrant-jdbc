@@ -505,6 +505,26 @@ class QdrantSystemTablesTest {
         assertEquals("with=queued,completed", request.query());
     }
 
+    // Cluster telemetry
+
+    @Test
+    void readsNoClusterTelemetryFromAStandaloneServerWithoutAskingForIt() throws SQLException {
+        assertEquals(List.of(), tables.read(SystemTable.CLUSTER_TELEMETRY));
+        assertEquals(0, server.calls(Endpoint.CLUSTER_TELEMETRY));
+    }
+
+    @Test
+    void readsAClustersTelemetryAsOneRowPerValue() throws SQLException {
+        server.cluster(Json.object("status", "enabled", "peer_id", 1,
+            "peers", Json.object("1", Json.object("uri", "http://qp1:6335/"))));
+
+        List<Object[]> rows = tables.read(SystemTable.CLUSTER_TELEMETRY);
+
+        assertEquals(2, rows.size());
+        assertArrayEquals(new Object[]{"cluster.enabled", "true", "boolean"}, rows.get(0));
+        assertArrayEquals(new Object[]{"cluster.number_of_peers", "1", "number"}, rows.get(1));
+    }
+
     // Quotas
 
     @Test

@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `CALL`, for what Qdrant does that isn't about rows, and twelve procedures for a cluster:
+  `create_shard_key` and `delete_shard_key`, `move_shard`, `replicate_shard`,
+  `abort_shard_transfer`, `restart_shard_transfer`, `drop_replica`, `start_resharding`,
+  `abort_resharding`, `replicate_points`, `remove_peer` and `recover_raft`. A call is `CALL
+  qdrant.create_shard_key('docs', 'eu', shards_number => 2)`: arguments by position or as `name
+  => value`, each a constant or a `?`, so a `PreparedStatement` runs one. The driver checks the
+  arguments and Qdrant the rest. `DatabaseMetaData.getProcedures` and `getProcedureColumns` list
+  them, so a tool shows what can be called. Qdrant takes these only when it runs as a cluster.
+  `prepareCall` stays unsupported, as no procedure returns anything to read back. ([#49])
+- `system.cluster_telemetry`, the telemetry of every peer as the connected one gathers it, one
+  row per value like `system.telemetry`; a standalone server has no rows. With it and the
+  procedures every route of Qdrant's distributed area is covered. ([#49])
 - The server's quotas, the limits on memory and disk past which Qdrant refuses writes:
   `system.quotas` shows them in one row beside how much of each resource is used now, and
   `ALTER SYSTEM SET (quotas.enabled = true, quotas.max_disk_usage_percent = 90)` changes them.
@@ -402,3 +414,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#45]: https://github.com/runax-software/runax-qdrant-jdbc/pull/45
 [#46]: https://github.com/runax-software/runax-qdrant-jdbc/pull/46
 [#48]: https://github.com/runax-software/runax-qdrant-jdbc/pull/48
+[#49]: https://github.com/runax-software/runax-qdrant-jdbc/pull/49

@@ -3,6 +3,7 @@ package com.runaxsoftware.qdrant.jdbc.sql.parser;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.*;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Statement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.statement.AlterParser;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.statement.CallParser;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.statement.CreateParser;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.statement.DeleteParser;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.statement.DropParser;
@@ -52,6 +53,9 @@ public final class Parser {
         if (tokenStream.peekKeyword("ALTER")) {
             return new AlterParser(tokenStream).parse();
         }
+        if (tokenStream.peekWord("CALL")) {
+            return new CallParser(tokenStream).parse();
+        }
         if (tokenStream.peekKeyword("INSERT")) {
             return new InsertParser(tokenStream).parse();
         }
@@ -64,6 +68,6 @@ public final class Parser {
         }
 
         throw tokenStream.error("Expected SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE, "
-            + "ALTER, DROP, SET, RESET or SHOW");
+            + "ALTER, DROP, CALL, SET, RESET or SHOW");
     }
 }

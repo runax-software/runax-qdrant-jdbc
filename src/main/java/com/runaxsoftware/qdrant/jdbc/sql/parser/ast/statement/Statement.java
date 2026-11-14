@@ -7,4 +7,5 @@ public sealed interface Statement permits SelectStatement, DeleteStatement, Trun
     DropTableStatement, CreateTableStatement, SetStatement, ResetStatement, ShowStatement,
     UpdateStatement, InsertStatement, CreateIndexStatement, DropIndexStatement,
     CreateViewStatement, AlterViewStatement, DropViewStatement, AddColumnStatement,
-    DropColumnStatement, AlterSettingsStatement, AlterSystemStatement {}
+    DropColumnStatement, AlterSettingsStatement, AlterSystemStatement,
+    CallStatement {}

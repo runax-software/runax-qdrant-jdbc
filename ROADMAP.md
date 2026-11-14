@@ -145,11 +145,16 @@ measured REST and SQL coverage is in [docs/coverage.md](docs/coverage.md).
   `telemetry`, `metrics`, `issues`, `health` (Qdrant's three health probes, a row each), and
   `optimizations` (each collection's running, queued, and latest completed optimizations), and
   `quotas` (the server's limits on memory and disk, which `ALTER SYSTEM SET (quotas.… = …)`
-  changes).
+  changes), and `cluster_telemetry` (the telemetry of every peer, on a server that is a cluster).
   Read-only lists then move from `CALL` procedures to these tables. `TRUNCATE TABLE system.issues` clears the issues Qdrant reports, the one write a
   system table takes. A system table takes `SELECT`, a column list, `LIMIT`, and `OFFSET`; `WHERE`,
   `ORDER BY`, and `COUNT(*)` over one come with the items above. Only the telemetry Qdrant
   answers with by default is exposed, not its deeper `?details_level=` levels.
+- [x] **`CALL` and the cluster procedures** — `CALL qdrant.create_shard_key('docs', 'eu')` and
+  eleven more, for what Qdrant does that isn't about rows: shard keys, moving, replicating and
+  dropping shards, resharding, removing a peer, recovering Raft. Arguments go by position or as
+  `name => value`, constants or `?`, and `DatabaseMetaData` lists the procedures. Qdrant takes
+  them only when it runs as a cluster. Procedures for snapshots come later.
 - [ ] **Buffered writes (later, opt-in)** — not real transactions, since Qdrant has none.
   With a setting on and auto-commit off, the driver holds `INSERT`, `UPDATE`, and `DELETE`
   until `commit()` and drops them on `rollback()`. Documented as "rollback before commit

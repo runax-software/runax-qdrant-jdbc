@@ -31,6 +31,9 @@ public final class QdrantSystemTables implements SystemTableReader {
 
     private static final String MISSING_COLLECTION = "42S02";
 
+    // The status of a server that runs as a cluster; a standalone one is "disabled"
+    private static final String CLUSTER_ENABLED = "enabled";
+
     // The lists of optimizations Qdrant answers with, in its order; a row's state is its list
     private static final List<String> OPTIMIZATION_STATES = List.of("running", "queued", "completed");
 
@@ -57,6 +60,7 @@ public final class QdrantSystemTables implements SystemTableReader {
             case CLUSTER -> cluster();
             case PEERS -> peers();
             case TELEMETRY -> telemetry();
+            case CLUSTER_TELEMETRY -> clusterTelemetry();
             case METRICS -> metrics();
             case ISSUES -> issues();
             case HEALTH -> health();
@@ -225,6 +229,22 @@ public final class QdrantSystemTables implements SystemTableReader {
     private List<Object[]> telemetry() throws SQLException {
         List<Object[]> rows = new ArrayList<>();
         flatten(gateway.request(HttpMethod.GET, "/telemetry", null), "", rows);
+        rows.sort(byText(0));
+
+        return rows;
+    }
+
+    /**
+     * The cluster's telemetry flattened like {@link #telemetry()}. A standalone server answers
+     * the request with an internal error rather than with nothing, so the driver asks first
+     * whether there is a cluster, and a server without one has no rows.
+     */
+    private List<Object[]> clusterTelemetry() throws SQLException {
+        String status = text(gateway.request(HttpMethod.GET, "/cluster", null).path("status"));
+        if (!CLUSTER_ENABLED.equals(status)) return List.of();
+
+        List<Object[]> rows = new ArrayList<>();
+        flatten(gateway.request(HttpMethod.GET, "/cluster/telemetry", null), "", rows);
         rows.sort(byText(0));
 
         return rows;

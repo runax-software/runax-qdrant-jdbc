@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.runaxsoftware.qdrant.jdbc.embedding.Embedders;
 import com.runaxsoftware.qdrant.jdbc.embedding.EmbeddingModel;
 import com.runaxsoftware.qdrant.jdbc.embedding.TextRole;
+import com.runaxsoftware.qdrant.jdbc.gateway.HttpMethod;
 import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetHit;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetRequest;
@@ -39,6 +40,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.InsertPointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.NewPoint;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ProcedurePlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.RenameViewPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
@@ -277,6 +279,11 @@ public final class Executor {
 
         if (plan instanceof UpdateCollectionPlan update) {
             writer.updateCollection(update.collection(), update.changes());
+            return ExecutionResult.updated(0);
+        }
+
+        if (plan instanceof ProcedurePlan call) {
+            writer.call(call.method(), call.path(), call.body());
             return ExecutionResult.updated(0);
         }
 
@@ -911,6 +918,11 @@ public final class Executor {
             @Override
             public void clearIssues() throws SQLException {
                 gateway.clearIssues();
+            }
+
+            @Override
+            public void call(HttpMethod method, String path, JsonNode body) throws SQLException {
+                gateway.request(method, path, body);
             }
 
             @Override

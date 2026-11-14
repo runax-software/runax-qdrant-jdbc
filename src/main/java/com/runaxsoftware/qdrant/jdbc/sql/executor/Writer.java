@@ -1,6 +1,7 @@
 package com.runaxsoftware.qdrant.jdbc.sql.executor;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.runaxsoftware.qdrant.jdbc.gateway.HttpMethod;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadIndexType;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.VectorField;
@@ -107,6 +108,11 @@ interface Writer {
      * Deletes a named vector from the collection.
      */
     void deleteVector(String collection, String vector) throws SQLException;
+
+    /**
+     * Makes the one request a procedure is.
+     */
+    void call(HttpMethod method, String path, JsonNode body) throws SQLException;
 
     /**
      * The server's quota config, as Qdrant has it now.

@@ -3,6 +3,8 @@ package com.runaxsoftware.qdrant.jdbc.metadata;
 import com.runaxsoftware.qdrant.jdbc.DriverInfo;
 import com.runaxsoftware.qdrant.jdbc.connection.QdrantConnection;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
+import com.runaxsoftware.qdrant.jdbc.procedure.Procedure;
+import com.runaxsoftware.qdrant.jdbc.procedure.ProcedureArgument;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnKind;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnType;
@@ -175,6 +177,65 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
         }
 
         return MetadataColumns.TABLES.rows(rows);
+    }
+
+    /**
+     * The procedures a CALL runs, by name. None returns a result, so each is
+     * {@code procedureNoResult}.
+     */
+    @Override
+    public ResultSet getProcedures(String catalog, String schemaPattern,
+                                   String procedureNamePattern) throws SQLException {
+        checkOpen();
+        List<Object[]> rows = new ArrayList<>();
+
+        for (Procedure procedure : procedures(catalog, schemaPattern, procedureNamePattern)) {
+            rows.add(new Object[]{CATALOG, Procedure.SCHEMA, procedure.procedureName(), null,
+                null, null, procedure.remarks(), (short) procedureNoResult,
+                procedure.procedureName()});
+        }
+
+        return MetadataColumns.PROCEDURES.rows(rows);
+    }
+
+    /**
+     * The arguments of the procedures the pattern matches, each procedure's in the order a call
+     * gives them. All are inputs; one a call may leave out is nullable.
+     */
+    @Override
+    public ResultSet getProcedureColumns(String catalog, String schemaPattern,
+                                         String procedureNamePattern, String columnNamePattern)
+        throws SQLException {
+        checkOpen();
+        List<Object[]> rows = new ArrayList<>();
+
+        for (Procedure procedure : procedures(catalog, schemaPattern, procedureNamePattern)) {
+            int position = 0;
+
+            for (ProcedureArgument argument : procedure.arguments()) {
+                position++;
+                if (!LikePattern.matches(columnNamePattern, argument.name())) continue;
+
+                rows.add(new Object[]{CATALOG, Procedure.SCHEMA, procedure.procedureName(),
+                    argument.name(), (short) procedureColumnIn, argument.kind().sqlType(),
+                    argument.kind().typeName(), null, null, null, (short) 10,
+                    (short) (argument.required() ? procedureNoNulls : procedureNullable),
+                    argument.remarks(), null, null, null, null, position,
+                    argument.required() ? "NO" : "YES", procedure.procedureName()});
+            }
+        }
+
+        return MetadataColumns.PROCEDURE_COLUMNS.rows(rows);
+    }
+
+    // The procedures in scope whose names match, by name, as JDBC orders them
+    private static List<Procedure> procedures(String catalog, String schemaPattern,
+                                              String namePattern) {
+        if (!inProcedureScope(catalog, schemaPattern)) return List.of();
+
+        return Arrays.stream(Procedure.values())
+            .filter(procedure -> LikePattern.matches(namePattern, procedure.procedureName()))
+            .sorted(Comparator.comparing(Procedure::procedureName)).toList();
     }
 
     @Override
@@ -353,6 +414,10 @@ public final class QdrantDatabaseMetaData extends AbstractDatabaseMetaData {
     /**
      * Whether the filters take in the one catalog and the system tables' schema.
      */
+    private static boolean inProcedureScope(String catalog, String schemaPattern) {
+        return inScope(catalog, schemaPattern, Procedure.SCHEMA);
+    }
+
     private static boolean inSystemScope(String catalog, String schemaPattern) {
         return inScope(catalog, schemaPattern, SystemTable.SCHEMA);
     }

@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -45,7 +46,8 @@ class QdrantDatabaseMetaDataTest {
     /**
      * Every system table, in the order {@code getTables} lists them, which is by name.
      */
-    private static final List<String> SYSTEM_TABLES = List.of("aliases", "cluster", "collections",
+    private static final List<String> SYSTEM_TABLES = List.of("aliases", "cluster",
+        "cluster_telemetry", "collections",
         "health", "issues", "metrics", "optimizations", "peers", "quotas", "shard_keys", "shards",
         "snapshots", "telemetry");
 
@@ -640,6 +642,8 @@ class QdrantDatabaseMetaDataTest {
             "qdrant.system.aliases SYSTEM TABLE Every alias, with the collection it points at",
             "qdrant.system.cluster SYSTEM TABLE The cluster as the connected peer sees it, in "
                 + "one row",
+            "qdrant.system.cluster_telemetry SYSTEM TABLE The cluster's telemetry, gathered from "
+                + "every peer, as one row per value in it",
             "qdrant.system.collections SYSTEM TABLE Every collection on the server, with its "
                 + "state and parameters",
             "qdrant.system.health SYSTEM TABLE Qdrant's health probes, as one row per probe",
@@ -972,6 +976,47 @@ class QdrantDatabaseMetaDataTest {
     // Things Qdrant doesn't have
 
     @Test
+    void listsTheProceduresACallRunsByName() throws SQLException {
+        List<String> names = new ArrayList<>();
+
+        try (ResultSet procedures = metaData.getProcedures(null, null, "%")) {
+            while (procedures.next()) {
+                assertEquals("qdrant", procedures.getString("PROCEDURE_CAT"));
+                assertEquals("system", procedures.getString("PROCEDURE_SCHEM"));
+                assertEquals(DatabaseMetaData.procedureNoResult,
+                    procedures.getShort("PROCEDURE_TYPE"));
+                assertNotNull(procedures.getString("REMARKS"));
+                names.add(procedures.getString("PROCEDURE_NAME"));
+            }
+        }
+
+        assertEquals(List.of("abort_resharding", "abort_shard_transfer", "create_shard_key",
+            "delete_shard_key", "drop_replica", "move_shard", "recover_raft", "remove_peer",
+            "replicate_points", "replicate_shard", "restart_shard_transfer", "start_resharding"),
+            names);
+        assertTrue(metaData.supportsStoredProcedures());
+    }
+
+    @Test
+    void describesAProceduresArgumentsInTheOrderACallGivesThem() throws SQLException {
+        List<String> arguments = new ArrayList<>();
+
+        try (ResultSet columns = metaData.getProcedureColumns("qdrant", "system",
+            "create_shard_key", "%")) {
+            while (columns.next()) {
+                assertEquals(DatabaseMetaData.procedureColumnIn, columns.getShort("COLUMN_TYPE"));
+                arguments.add(columns.getInt("ORDINAL_POSITION") + " "
+                    + columns.getString("COLUMN_NAME") + " " + columns.getString("TYPE_NAME")
+                    + " " + columns.getString("IS_NULLABLE"));
+            }
+        }
+
+        assertEquals(List.of("1 collection VARCHAR NO", "2 shard_key VARCHAR NO",
+            "3 shards_number BIGINT YES", "4 replication_factor BIGINT YES",
+            "5 placement JSON YES"), arguments);
+    }
+
+    @Test
     void returnsEmptyResultsWithJdbcColumnsForWhatQdrantLacks() throws SQLException {
         List<String> foreignKeys = List.of("PKTABLE_CAT", "PKTABLE_SCHEM", "PKTABLE_NAME",
             "PKCOLUMN_NAME", "FKTABLE_CAT", "FKTABLE_SCHEM", "FKTABLE_NAME", "FKCOLUMN_NAME",
@@ -983,10 +1028,10 @@ class QdrantDatabaseMetaDataTest {
         assertEmpty(() -> metaData.getExportedKeys(null, null, "products"), foreignKeys);
         assertEmpty(() -> metaData.getCrossReference(null, null, "products", null, null,
             "articles"), foreignKeys);
-        assertEmpty(() -> metaData.getProcedures(null, null, "%"), List.of("PROCEDURE_CAT",
+        assertEmpty(() -> metaData.getProcedures(null, "collections", "%"), List.of("PROCEDURE_CAT",
             "PROCEDURE_SCHEM", "PROCEDURE_NAME", "RESERVED1", "RESERVED2", "RESERVED3", "REMARKS",
             "PROCEDURE_TYPE", "SPECIFIC_NAME"));
-        assertEmpty(() -> metaData.getProcedureColumns(null, null, "%", "%"), List.of(
+        assertEmpty(() -> metaData.getProcedureColumns(null, null, "nope%", "%"), List.of(
             "PROCEDURE_CAT", "PROCEDURE_SCHEM", "PROCEDURE_NAME", "COLUMN_NAME", "COLUMN_TYPE",
             "DATA_TYPE", "TYPE_NAME", "PRECISION", "LENGTH", "SCALE", "RADIX", "NULLABLE",
             "REMARKS", "COLUMN_DEF", "SQL_DATA_TYPE", "SQL_DATETIME_SUB", "CHAR_OCTET_LENGTH",
