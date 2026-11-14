@@ -100,6 +100,7 @@ class MetadataIntegrationTest {
         }
 
         assertEquals(List.of("system.aliases SYSTEM TABLE", "system.cluster SYSTEM TABLE",
+            "system.cluster_telemetry SYSTEM TABLE",
             "system.collections SYSTEM TABLE", "system.health SYSTEM TABLE",
             "system.issues SYSTEM TABLE",
             "system.metrics SYSTEM TABLE", "system.optimizations SYSTEM TABLE",

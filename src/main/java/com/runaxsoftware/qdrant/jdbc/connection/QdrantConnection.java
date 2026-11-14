@@ -479,7 +479,9 @@ public class QdrantConnection implements Connection {
     }
 
     private static SQLFeatureNotSupportedException noStoredProcedures() {
-        return new SQLFeatureNotSupportedException("Qdrant has no stored procedures");
+        return new SQLFeatureNotSupportedException("prepareCall isn't supported: the driver's "
+            + "procedures return nothing to read back, so run one with createStatement or "
+            + "prepareStatement, as CALL qdrant.create_shard_key(?, ?)");
     }
 
     private static SQLFeatureNotSupportedException noTransactions() {

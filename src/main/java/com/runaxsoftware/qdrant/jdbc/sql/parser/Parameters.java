@@ -12,6 +12,8 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Or;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.OrderItem;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Parameter;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.SelectItem;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CallArgument;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CallStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Assignment;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DeleteStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.InsertStatement;
@@ -91,6 +93,15 @@ public final class Parameters {
         }
         if (statement instanceof DeleteStatement delete) {
             return new DeleteStatement(delete.table(), delete.alias(), bind(delete.where(), values));
+        }
+
+        if (statement instanceof CallStatement call) {
+            var arguments = new ArrayList<CallArgument>();
+            for (CallArgument argument : call.arguments()) {
+                arguments.add(new CallArgument(argument.name(), bind(argument.value(), values)));
+            }
+
+            return new CallStatement(call.qualifier(), call.procedure(), arguments);
         }
 
         // The other statements take no values

@@ -469,7 +469,7 @@ abstract class AbstractDatabaseMetaData implements DatabaseMetaData {
 
     @Override
     public boolean supportsStoredProcedures() {
-        return false;
+        return true;
     }
 
     @Override

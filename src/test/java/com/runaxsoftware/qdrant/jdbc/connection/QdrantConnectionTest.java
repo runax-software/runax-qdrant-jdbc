@@ -368,7 +368,7 @@ class QdrantConnectionTest {
     }
 
     @Test
-    void preparesStatementsInEveryFormButHasNoStoredProcedures() throws SQLException {
+    void preparesStatementsInEveryFormButNoCallableOnes() throws SQLException {
         List<PreparedStatement> prepared = List.of(
             connection.prepareStatement("SELECT ?"),
             connection.prepareStatement("SELECT ?", ResultSet.TYPE_FORWARD_ONLY,

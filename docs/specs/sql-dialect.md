@@ -694,6 +694,7 @@ their names can't clash with a collection's. `DatabaseMetaData` lists them as
 | `system.health` | `GET /healthz`, `GET /livez`, `GET /readyz` | `probe`, `ok`, `status_code`, `message` |
 | `system.optimizations` | `GET /collections/{name}/optimizations` for each | `collection_name`, `state`, `uuid`, `optimizer`, `status`, `status_detail`, `segments_count`, `points_count`, `started_at`, `finished_at`, `duration_sec`, `segments`, `progress` |
 | `system.quotas` | `GET /quotas` | `enabled`, `max_resident_memory_percent`, `max_disk_usage_percent`, `release_margin_percent`, `resident_memory_percent`, `disk_usage_percent` |
+| `system.cluster_telemetry` | `GET /cluster/telemetry` | `path`, `value`, `value_type` |
 
 ```sql
 SELECT name, status, points_count FROM system.collections;
@@ -788,15 +789,53 @@ across what caused it.
 
 ## Operations
 
+`CALL` runs the things Qdrant does that aren't about rows. A procedure is one request, and its
+name may be written alone or after `qdrant.`, `system.` or `qdrant.system.`:
+
+```sql
+CALL qdrant.create_shard_key('docs', 'eu');
+CALL create_shard_key('docs', 7, shards_number => 2, replication_factor => 1);
+CALL move_shard('docs', 0, 8882707261238555, 1321113523610302, method => 'snapshot');
+CALL remove_peer(1321113523610302, force => true);
+```
+
+Arguments are given by position, in the order below, or by name as `name => value`, and the
+ones in brackets can be left out. An argument is a constant or a `?`, so a `PreparedStatement`
+runs a `CALL` with its values bound; `NULL` is an argument left out. `prepareCall` isn't
+supported, since no procedure returns anything to read back. A `CALL` returns an update count
+of 0, and a read-only connection refuses it.
+
+**What runs today** is the cluster's procedures, which Qdrant takes only when it runs as a
+cluster; a standalone server answers that it is one:
+
+| Procedure | Qdrant |
+| --- | --- |
+| `create_shard_key(collection, shard_key [, shards_number] [, replication_factor] [, placement])` | Create shard key; `placement` is a JSON array of peer ids |
+| `delete_shard_key(collection, shard_key)` | Delete shard key |
+| `move_shard(collection, shard_id, from_peer_id, to_peer_id [, method])` | Move a shard to another peer |
+| `replicate_shard(collection, shard_id, from_peer_id, to_peer_id [, method])` | Copy a shard to another peer |
+| `abort_shard_transfer(collection, shard_id, from_peer_id, to_peer_id)` | Stop a transfer under way |
+| `restart_shard_transfer(collection, shard_id, from_peer_id, to_peer_id, method)` | Start a transfer under way again |
+| `drop_replica(collection, shard_id, peer_id)` | Delete one peer's copy of a shard |
+| `start_resharding(collection, direction [, peer_id] [, shard_key])` | Add a shard (`up`) or remove one (`down`) |
+| `abort_resharding(collection)` | Stop a resharding under way |
+| `replicate_points(collection, from_shard_key, to_shard_key [, filter])` | Copy points between shard keys; `filter` is a Qdrant filter in JSON |
+| `remove_peer(peer_id [, force] [, timeout])` | Remove a peer from the cluster |
+| `recover_raft()` | Recover the connected peer's Raft state |
+
+A shard key is text or a whole number, and a `method` is `stream_records`, `snapshot` or
+`wal_delta`. The driver checks the arguments' count, names and kinds, and Qdrant the rest:
+whether the collection, the shard and the peers are there. What they change is read back from
+`system.shard_keys`, `system.shards`, `system.peers` and `system.cluster`. They are listed by
+`DatabaseMetaData.getProcedures`, with their arguments in `getProcedureColumns`, so a tool shows
+them.
+
+Still to come, as procedures of the same kind:
+
 | SQL | Qdrant |
 | --- | --- |
 | `CALL qdrant.create_snapshot('docs')`, `delete_snapshot` | Collection snapshots (listing them is `system.snapshots`) |
 | `CALL qdrant.create_full_snapshot()`, `delete_full_snapshot` | Full snapshots (listing them is `system.snapshots` too) |
-| `CALL qdrant.create_shard_key('docs', 'eu')`, `delete_shard_key` | Shard keys (listing them is `system.shard_keys`) |
-| `CALL qdrant.move_shard(…)`, `replicate_shard(…)`, `abort_shard_transfer(…)` | Cluster setup changes |
-| `CALL qdrant.collection_info('docs')` | Status, optimizer state, segment and point counts, as rows |
-
-The procedures are listed by `DatabaseMetaData.getProcedures`, so DataGrip shows them.
 
 ## Not supported
 

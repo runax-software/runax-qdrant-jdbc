@@ -10,7 +10,8 @@ statements, the write statements, the vector changes, the text conditions, `ON C
 embedder's model and role (#27, #28, #30, #31, #33, #34, #35, #36 and #39) — with the batched
 embedding of #40, the clearing of `system.issues` (#42), `system.health` (#43),
 `system.optimizations` (#44), `ALTER TABLE … ADD`/`DROP COLUMN` and
-`ALTER TABLE … SET` (#45, #46), and the quotas on top, and Qdrant
+`ALTER TABLE … SET` (#45, #46), the quotas (#48), and `CALL` with the cluster
+procedures on top, and Qdrant
 **1.20.0** (build
 `222b2e44ab1c3f17e8246396ead6558e45041df7`), running locally over REST on port 6333, with the
 three collections `./gradlew seedQdrant` loads. Qdrant 1.20 does not serve `/openapi.json` —
@@ -42,7 +43,7 @@ one of them is indistinguishable from a bug.
 
 ## Qdrant REST coverage
 
-Qdrant 1.20 documents **69 routes**. The driver calls **37** of them, which is **54%**. The
+Qdrant 1.20 documents **69 routes**. The driver calls **43** of them, which is **62%**. The
 counts below are per area, using Qdrant's own OpenAPI tags, so they can be recomputed from the
 spec without judgement calls.
 
@@ -54,20 +55,22 @@ spec without judgement calls.
 | Aliases | **3** | **3** | Views: listing, `system.aliases`, `CREATE [OR REPLACE] VIEW`, `ALTER VIEW`, `DROP VIEW`, and the aliases a dropped collection takes with it |
 | Indexes | **2** | **2** | `CREATE INDEX`, `DROP INDEX`, and the indexes `CREATE TABLE` declares |
 | Snapshots | 2 | 17 | `system.snapshots` only |
-| Distributed | 3 | 9 | `system.cluster`, `system.peers`, `system.shards`, `system.shard_keys` |
+| Distributed | **9** | **9** | `system.cluster`, `system.peers`, `system.shards`, `system.shard_keys`, `system.cluster_telemetry`, and twelve `CALL` procedures: shard keys, moving and replicating shards, resharding, removing a peer |
 | Service | **6** | **6** | Version on connect, `system.telemetry`, `system.metrics`, `system.health` |
 | Beta | **2** | **2** | `system.issues`, and `TRUNCATE TABLE system.issues` |
 | Quotas | **2** | **2** | `system.quotas`, `ALTER SYSTEM SET (quotas.… = …)` |
-| **Total** | **37** | **69** | |
+| **Total** | **43** | **69** | |
 
-Six areas are covered whole: every alias route, every index route, both beta routes, every
-service route, every collection route, and both quota routes.
+Seven areas are covered whole: every alias route, every index route, both beta routes, every
+service route, every collection route, both quota routes, and every distributed route. What is
+left is in three: snapshots, search, and points.
 
 ### The routes the driver calls
 
-Twenty-five come from `QdrantGateway`, which is the only place that speaks HTTP, and twelve more
-from `QdrantSystemTables`: nine endpoints the gateway has no model for because their shape
-depends on the Qdrant version, and the three health probes, which answer in a line of text.
+Twenty-five come from `QdrantGateway`, which is the only place that speaks HTTP, thirteen more
+from `QdrantSystemTables` — ten endpoints the gateway has no model for because their shape
+depends on the Qdrant version, and the three health probes, which answer in a line of text —
+and five from `Procedure`, which declares each `CALL` procedure as the one request it makes.
 
 | Route | Called by | For |
 | --- | --- | --- |
@@ -102,6 +105,12 @@ depends on the Qdrant version, and the three health probes, which answer in a li
 | `GET /collections/{c}/cluster` | `QdrantSystemTables` | `system.shards` |
 | `GET /collections/{c}/optimizations` | `QdrantSystemTables` | `system.optimizations`, asked `?with=queued,completed` |
 | `GET /cluster` | `QdrantSystemTables` | `system.cluster` and `system.peers` |
+| `GET /cluster/telemetry` | `QdrantSystemTables` | `system.cluster_telemetry`; asked only of a server whose `GET /cluster` says it is a cluster, since a standalone one answers it with an internal error |
+| `PUT /collections/{c}/shards` | `Procedure` | `CALL create_shard_key(…)` |
+| `POST /collections/{c}/shards/delete` | `Procedure` | `CALL delete_shard_key(…)` |
+| `POST /collections/{c}/cluster` | `Procedure` | Eight procedures, one per operation the route takes: `move_shard`, `replicate_shard`, `abort_shard_transfer`, `restart_shard_transfer`, `drop_replica`, `start_resharding`, `abort_resharding`, `replicate_points` |
+| `DELETE /cluster/peer/{id}` | `Procedure` | `CALL remove_peer(…)` |
+| `POST /cluster/recover` | `Procedure` | `CALL recover_raft()` |
 | `GET /telemetry` | `QdrantSystemTables` | `system.telemetry` |
 | `GET /metrics` | `QdrantSystemTables` | `system.metrics`; the one route that answers text, not JSON |
 | `GET /issues` | `QdrantSystemTables` | `system.issues` |
@@ -112,18 +121,17 @@ depends on the Qdrant version, and the three health probes, which answer in a li
 The driver also calls `POST /embeddings` on `api.openai.com` or `api.voyageai.com` for
 `embed('text', 'openai:…')`. That is not a Qdrant route and is not counted here.
 
-### Why 54% means less than it looks, in both directions
+### Why 62% means less than it looks, in both directions
 
-**The denominator is padded.** Of the 32 routes the driver does not call, 15 are snapshot
+**The denominator is padded.** Of the 26 routes the driver does not call, 15 are snapshot
 plumbing — creating, downloading, uploading and recovering snapshots of a collection or of one
-shard — and 6 more are cluster surgery: moving a shard, dropping a peer, recovering Raft. No
-SQL client would call those; they belong to an operator with a shell, and exposing them through
-JDBC would mean inventing `CALL` syntax for operations that have nothing to do with rows. The
-dialect spec does plan exactly that (see its *Operations* section), but as procedures, and a
-procedure that wraps one route is not what "covering an API" usually means. Set aside the 15
-unused snapshot routes and the 6 unused cluster ones, and 48 remain, of which the driver calls
-37 — **77%**.
-Neither number is wrong; they answer different questions.
+shard. They belong to an operator with a shell more than to a SQL client, and what the driver
+can offer for them is what it offers for cluster surgery: a `CALL` procedure that wraps one
+route, which is covering an API only in the thinnest sense. Eight of the routes counted as
+covered above are exactly that, the cluster procedures, and they are tested on a cluster of one
+node, where a shard can't actually move. Set aside the 15 unused snapshot routes, and 54 remain,
+of which the driver calls 43 — **80%**. Neither number is wrong; they answer different
+questions.
 
 **The numerator hides how much each route carries.** One route is not one feature.
 `POST /collections/{c}/points/query` is a single row in the table above and is also the whole
@@ -159,7 +167,7 @@ slightly wrong.
   `batch` and `groups`, `points/discover` and `discover/batch` — is in the 1.15 spec, gone from
   the 1.20 spec, and alive on a 1.20 server: each answers a JSON validation error rather than
   an empty 404. They were superseded by the Query API, not removed. Counting them puts the live
-  surface at 77 routes and the driver at 48%; this document uses the documented 69, because the
+  surface at 77 routes and the driver at 56%; this document uses the documented 69, because the
   spec is what a maintainer can check, and routes Qdrant has stopped documenting are not ones
   the driver should start calling.
 - **`/locks` is really gone.** `GET` and `POST /locks` are in the 1.15 spec and answer an empty
@@ -182,8 +190,8 @@ the config before it writes one.
 
 The ceiling is the lexer, but less of one than it looks. `Lexer.java` recognises
 **31 keywords**, and a word outside that set becomes an identifier, so `HAVING`, `BETWEEN`,
-`JOIN`, `UNION` and `CALL` cannot be lexed as syntax at all. `Parser.java` wires **nineteen
-statement kinds**, and `Plan.java`'s sealed interface permits **twenty-three plan kinds** — the best
+`JOIN` and `UNION` cannot be lexed as syntax at all. `Parser.java` wires **twenty
+statement kinds**, and `Plan.java`'s sealed interface permits **twenty-four plan kinds** — the best
 single index of what can run. No parser class is a stub any more.
 
 A word that means something in one place only need not be a keyword, though: read where it can
@@ -202,7 +210,7 @@ above has stopped predicting how much SQL runs.
 | Statement | State | Condition |
 | --- | --- | --- |
 | `SELECT … FROM <collection>` | works | Scrolls by cursor; `*` returns every column but the vectors |
-| `SELECT … FROM system.<table>` | works | Thirteen tables; a column list and `LIMIT` only |
+| `SELECT … FROM system.<table>` | works | Fourteen tables; a column list and `LIMIT` only |
 | `SELECT` without `FROM` | partial | Constants only; a column or `*` is an error |
 | `SELECT COUNT(*)` | works | One exact count call; must be the only select item unless grouped |
 | `DELETE FROM … WHERE` | works | `WHERE` is required; the count returned is a separate count call |
@@ -223,7 +231,7 @@ above has stopped predicting how much SQL runs.
 | `ALTER TABLE … ALTER [COLUMN] v SET (…)` | works | One vector's settings: `on_disk`, `hnsw` and `quantization` for a dense one, `modifier` and `index` for a sparse one |
 | `ALTER TABLE … RENAME`, `ALTER COLUMN … TYPE` | missing | Qdrant renames nothing and a vector's dimensions are fixed |
 | `ALTER SYSTEM SET (…)` | works | The server's quotas: `quotas.enabled` and three percentages, each written as `quotas.name`, the name alone, or `quotas = '{…}'`; `NULL` takes a limit away. Nothing else of the server is a setting yet |
-| `CALL` | missing | Not a keyword; `getProcedures` returns no rows |
+| `CALL [qdrant.]procedure(…)` | works | Twelve procedures, all cluster operations, each one request; arguments by position or as `name => value`, constants or `?`. Qdrant takes them only when it runs as a cluster. Nothing for snapshots yet |
 | `JOIN`, `UNION`, subqueries | missing | Rejected on purpose — see below |
 | Trailing `;` | works | One semicolon ends a statement; two statements in one call is an error |
 
@@ -423,13 +431,14 @@ them — the 19 that a tool needs to draw a tree and a grid, `getSchemas` twice 
 overloads — and `AbstractDatabaseMetaData` supplies harmless defaults for the other 157, so no
 tool ever sees an `AbstractMethodError`. What is implemented is `getTables`, `getColumns`,
 `getSchemas`, `getCatalogs`, `getTableTypes`, `getPrimaryKeys`, `getIndexInfo`, `getTypeInfo`,
-and the product, driver and version strings. `getProcedures` is a default and returns no rows,
-so the `CALL` procedures the dialect spec plans are not announced yet.
+and the product, driver and version strings. `getProcedures` and `getProcedureColumns` list the
+`CALL` procedures and their arguments, in the `system` schema.
 
 Reads are paged by the scroll cursor rather than loaded whole. `setReadOnly(true)` refuses
 every write with SQLState `25006`, and still runs `SET`, which changes only the connection.
 `getGeneratedKeys` returns the IDs the latest `INSERT` added, given or made, as one `_id`
-column. `prepareCall` fails with `Qdrant has no stored procedures`.
+column. `prepareCall` isn't supported, since no procedure returns anything to read back: a `CALL` runs
+on `Statement` and `PreparedStatement`.
 `setAutoCommit(false)` is accepted and means nothing, since Qdrant has no transactions and
 every statement applies on its own; the buffered-write mode that would give it meaning is on the
 roadmap. Note that most `SQLFeatureNotSupportedException`s above carry a null SQLState — the
@@ -461,7 +470,7 @@ and delete from it. What remains, most important first:
 
 Below that line the remaining gaps are mostly ones a SQL user would not reach for first: hybrid
 search and fusion (one route, many body shapes), collection settings at creation (`CREATE TABLE … WITH (…)`,
-which `ALTER TABLE … SET (…)` covers afterwards, all but the shard count), `CALL` procedures for snapshots and shard keys, `WHERE` and `ORDER BY` over the
+which `ALTER TABLE … SET (…)` covers afterwards, all but the shard count), `CALL` procedures for snapshots, `WHERE` and `ORDER BY` over the
 `system` tables, and the request options still to come
 (`shard_key`, quantization, a `/*+ … */` hint for one statement).
 

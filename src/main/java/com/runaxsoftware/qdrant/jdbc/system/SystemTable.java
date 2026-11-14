@@ -183,6 +183,21 @@ public enum SystemTable {
                 "string, number, boolean, or null: how to read the value"))),
 
     /**
+     * The telemetry of the whole cluster, as the connected peer gathers it from the others, one
+     * row per value like {@link #TELEMETRY}. A server that isn't a cluster has none.
+     */
+    CLUSTER_TELEMETRY("cluster_telemetry",
+        "The cluster's telemetry, gathered from every peer, as one row per value in it",
+        List.of(
+            SystemColumn.of("path", ColumnType.TEXT,
+                "Where the value sits in the telemetry, as dotted keys, such as "
+                    + "cluster.number_of_peers"),
+            SystemColumn.of("value", ColumnType.TEXT,
+                "The value as text, whatever JSON type it has"),
+            SystemColumn.of("value_type", ColumnType.TEXT,
+                "string, number, boolean, or null: how to read the value"))),
+
+    /**
      * Qdrant's Prometheus metrics, one row per sample. The only table read from a text answer
      * rather than JSON.
      */

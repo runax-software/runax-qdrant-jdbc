@@ -27,6 +27,8 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AlterSettingsState
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AlterSystemStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AlterViewStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Assignment;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CallArgument;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CallStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.ColumnSpec;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateIndexStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateTableStatement;
@@ -490,15 +492,15 @@ class ParserTest {
 
     @Test
     void rejectsStatementsItDoesntRead() {
-        assertError("Expected SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE, ALTER, DROP, SET, "
-            + "RESET or SHOW, "
+        assertError("Expected SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE, ALTER, DROP, CALL, "
+            + "SET, RESET or SHOW, "
             + "found 'MERGE' at line 1, column 1", "MERGE INTO docs");
     }
 
     @Test
     void rejectsAnEmptyStatement() {
-        assertError("Expected SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE, ALTER, DROP, SET, "
-            + "RESET or SHOW, "
+        assertError("Expected SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE, ALTER, DROP, CALL, "
+            + "SET, RESET or SHOW, "
             + "found the end of the statement at line 1, column 1", "");
     }
 
@@ -709,6 +711,40 @@ class ParserTest {
         assertError("Expected =, found 'de' at line 1, column 22", "UPDATE docs SET lang 'de'");
     }
 
+    // CALL
+
+    @Test
+    void parsesACallWithArgumentsByPositionAndByName() throws SQLSyntaxErrorException {
+        assertEquals(new CallStatement(List.of("qdrant"), "create_shard_key", List.of(
+                new CallArgument(null, new Literal("docs")),
+                new CallArgument(null, new Literal("eu")),
+                new CallArgument("shards_number", new Literal(2L)),
+                new CallArgument("Placement", new Literal("[1, 2]")))),
+            Parser.parse("CALL qdrant.create_shard_key('docs', 'eu', shards_number => 2, "
+                + "Placement => '[1, 2]')"));
+        assertEquals(new CallStatement(List.of(), "recover_raft", List.of()),
+            Parser.parse("call recover_raft();"));
+        assertEquals(new CallStatement(List.of("qdrant", "system"), "move_shard", List.of(
+                new CallArgument(null, new Parameter(1)),
+                new CallArgument("shard_id", new Parameter(2)))),
+            Parser.parse("CALL qdrant.system.move_shard(?, shard_id => ?)"));
+    }
+
+    @Test
+    void keepsCallUsableAsAName() throws SQLSyntaxErrorException {
+        assertEquals(TableName.of("call"),
+            ((SelectStatement) Parser.parse("SELECT call FROM call")).table());
+    }
+
+    @Test
+    void rejectsACallItCantRead() {
+        assertError("Expected (, found the end of the statement at line 1, column 18",
+            "CALL recover_raft");
+        assertError("Expected =>, found ')' at line 1, column 27",
+            "CALL delete_shard_key(docs)");
+        assertError("Expected ), found 'x' at line 1, column 21", "CALL recover_raft(1 x)");
+    }
+
     // ALTER TABLE
 
     @Test
@@ -892,8 +928,8 @@ class ParserTest {
                 + "at line 1, column 11", "SELECT 1; SELECT 2");
         assertError("Expected the end of the statement: run one statement at a time, found ';' at "
                 + "line 1, column 10", "SELECT 1;;");
-        assertError("Expected SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE, ALTER, DROP, SET, "
-            + "RESET or SHOW, "
+        assertError("Expected SELECT, INSERT, UPDATE, DELETE, TRUNCATE, CREATE, ALTER, DROP, CALL, "
+            + "SET, RESET or SHOW, "
                 + "found ';' at line 1, column 1", ";");
     }
 

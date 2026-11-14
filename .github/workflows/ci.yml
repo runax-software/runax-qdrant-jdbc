@@ -72,12 +72,13 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
 
-      # Both servers from compose.yml: qdrant (REST 6333) and qdrant-secured (REST 6335, API key).
-      # /readyz answers without the API key, so the same probe works for both.
+      # The servers from compose.yml: qdrant (REST 6333), qdrant-secured (REST 6335, API key) and
+      # qdrant-cluster (REST 6337, a cluster of one node). /readyz answers without the API key, so
+      # the same probe works for all three.
       - name: Start Qdrant
         run: |
           docker compose up -d
-          for port in 6333 6335; do
+          for port in 6333 6335 6337; do
             ready=
             for _ in $(seq 1 30); do
               if curl -sf "http://localhost:$port/readyz" >/dev/null; then ready=1; break; fi

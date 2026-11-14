@@ -172,6 +172,11 @@ public final class FakeQdrantServer implements AutoCloseable {
         CLEAR_ISSUES,
 
         /**
+         * {@code GET /cluster/telemetry}, which only a cluster answers.
+         */
+        CLUSTER_TELEMETRY,
+
+        /**
          * {@code GET /quotas}.
          */
         QUOTAS,
@@ -722,6 +727,16 @@ public final class FakeQdrantServer implements AutoCloseable {
                 case OPTIMIZATIONS -> optimizations(exchange, segments[2]);
                 case COLLECTION_CLUSTER -> collectionCluster(exchange, segments[2]);
                 case CLUSTER -> ok(exchange, cluster);
+                case CLUSTER_TELEMETRY -> {
+                    if (cluster.path("status").asText().equals("enabled")) {
+                        ok(exchange, Json.object("cluster", Json.object("enabled", true,
+                            "number_of_peers", cluster.path("peers").size())));
+                    } else {
+                        send(exchange, 500, "application/json", Json.object("status",
+                            Json.object("error", "Service internal error: Could not get "
+                                + "telemetry from cluster")).toString());
+                    }
+                }
                 case TELEMETRY -> ok(exchange, telemetry);
                 case ISSUES -> ok(exchange, Json.object("issues", Json.array(issues.toArray())));
                 case QUOTAS -> ok(exchange, Json.object("config", quotas,
@@ -765,6 +780,11 @@ public final class FakeQdrantServer implements AutoCloseable {
                 case "readyz": return Endpoint.READYZ;
                 default: break;
             }
+        }
+
+        if (method.equals("GET") && segments.length == 3 && segments[1].equals("cluster")
+            && segments[2].equals("telemetry")) {
+            return Endpoint.CLUSTER_TELEMETRY;
         }
 
         if (method.equals("PUT") && segments.length == 2 && segments[1].equals("quotas")) {

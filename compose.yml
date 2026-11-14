@@ -23,5 +23,17 @@ services:
     environment:
       QDRANT__SERVICE__API_KEY: integration-test-key
 
+  # A third server running as a cluster of one node, for the statements Qdrant only takes in
+  # distributed mode: shard keys and the other cluster operations. REST on localhost:6337, gRPC
+  # on localhost:6338. It keeps no data between runs.
+  qdrant-cluster:
+    image: qdrant/qdrant:v1.20.0
+    command: ["./qdrant", "--uri", "http://qdrant-cluster:6335"]
+    ports:
+      - "6337:6333"
+      - "6338:6334"
+    environment:
+      QDRANT__CLUSTER__ENABLED: "true"
+
 volumes:
   qdrant-data:

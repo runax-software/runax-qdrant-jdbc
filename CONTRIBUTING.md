@@ -33,12 +33,16 @@ version.
     docker compose up -d
     ./gradlew integrationTest
     ```
-    `compose.yml` starts two servers:
+    `compose.yml` starts three servers:
 
     | Server | REST (what the driver uses) and dashboard | gRPC | API key |
     | --- | --- | --- | --- |
     | `qdrant` | <http://localhost:6333/dashboard> | `localhost:6334` | none |
     | `qdrant-secured` | `localhost:6335` | `localhost:6336` | `integration-test-key` |
+    | `qdrant-cluster` | `localhost:6337` | `localhost:6338` | none |
+
+    `qdrant-cluster` runs as a cluster of one node, which is what Qdrant needs before it takes
+    a shard key or any other cluster operation, so the `CALL` procedures are tested against it.
 
     The gRPC ports are open only so the tests can check the error the driver gives when
     pointed at the wrong port.
@@ -47,7 +51,8 @@ version.
     builds the shaded jar and checks it on its own, in a separate class loader, the way
     DataGrip loads drivers. To test against other servers, set `QDRANT_JDBC_URL` and
     `QDRANT_API_KEY`, and `QDRANT_SECURED_JDBC_URL` and `QDRANT_SECURED_API_KEY` for the
-    authentication tests. `docker compose down -v` stops both servers and deletes the stored
+    authentication tests, and `QDRANT_CLUSTER_JDBC_URL` for the cluster ones. `docker compose
+    down -v` stops the servers and deletes the stored
     collections.
 6. Load sample collections to try the driver by hand, for example in DataGrip
     ```bash
@@ -119,7 +124,7 @@ push to `main`:
 
 - `build-and-test-matrix` runs `./gradlew build` on JDK 17, 21, and 25, and
   `build-and-test` reports their combined result.
-- `integration-tests` starts both Qdrant servers with `docker compose up -d` and runs
+- `integration-tests` starts the three Qdrant servers with `docker compose up -d` and runs
   `./gradlew integrationTest` on JDK 17. When tests fail, the test reports are attached to
   the run.
 
