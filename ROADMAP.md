@@ -18,8 +18,8 @@ below are things a route already reached can do and no statement asks for yet.
   multi-vectors.
 - [x] **SELECT** — `WHERE` mapped to Qdrant filters, `LIMIT`, and result sets that page
   through Qdrant's scroll cursor instead of loading everything. Vectors are fetched only
-  when a query names their column. `WHERE` takes comparisons, `IN`, `IS NULL`, `AND`, `OR`
-  and `NOT`; `BETWEEN` and the geo and nested-array functions in the dialect spec come later.
+  when a query names their column. `WHERE` takes comparisons, `BETWEEN`, `IN`, `IS NULL`,
+  `AND`, `OR` and `NOT`; the geo and nested-array functions in the dialect spec come later.
 - [x] **One point by its ID** — `SELECT … WHERE _id = 7`, when the ID is the whole `WHERE`,
   through Qdrant's get-point API rather than a filtered scroll: what a data grid sends to read a
   row again.

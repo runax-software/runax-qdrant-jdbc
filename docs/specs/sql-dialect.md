@@ -160,11 +160,14 @@ ask for every value and point at `IS NOT NULL`, and a pattern against an `INTEGE
 phrase needs a text index built with `phrase_matching`: without one Qdrant answers a phrase
 match with no points at all rather than an error, so the driver checks the index first and the
 error names `CREATE INDEX … USING text WITH (phrase_matching = true)`, which it also writes.
-`BETWEEN`, `at_least`, the geo and array functions, and `EXISTS` are still the target.
+`price BETWEEN 10 AND 20` runs as one `range` with `gte` and `lte`, on numbers and on
+`TIMESTAMP WITH TIME ZONE` columns, and either bound may be a `?`. `NOT BETWEEN` follows the
+same rule as `NOT IN`: a point without the field matches neither. `at_least`, the geo and array
+functions, and `EXISTS` are still the target.
 
-`LIKE` reads as an operator only after a column, and the text conditions are function names, so
-a collection may still have payload fields called `like`, `text_match` or `phrase_match`: the
-driver takes no name of its own here.
+`LIKE` and `BETWEEN` read as operators only after a column, and the text conditions are function
+names, so a collection may still have payload fields called `like`, `between`, `text_match` or
+`phrase_match`: the driver takes no name of its own here.
 
 | SQL | Qdrant condition |
 | --- | --- |

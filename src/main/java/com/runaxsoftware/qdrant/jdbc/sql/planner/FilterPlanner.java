@@ -10,6 +10,7 @@ import com.runaxsoftware.qdrant.jdbc.schema.ColumnKind;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnType;
 import com.runaxsoftware.qdrant.jdbc.schema.TableSchema;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.And;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Between;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Column;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Comparison;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Expression;
@@ -131,6 +132,9 @@ final class FilterPlanner {
         }
         if (expression instanceof Like like) {
             return like(like, negated != like.negated());
+        }
+        if (expression instanceof Between between) {
+            return between(between, negated != between.negated());
         }
         if (expression instanceof FunctionCall call) {
             return textCondition(call, negated);
@@ -327,6 +331,32 @@ final class FilterPlanner {
         return negated ? notMatching(condition, column) : condition;
     }
 
+    /**
+     * column BETWEEN low AND high: one range holding both bounds, which takes what {@code >=}
+     * and {@code <=} take — numbers, and date-times on a date-time field. A low bound above the
+     * high one matches nothing, as in SQL, and Qdrant's range says the same.
+     *
+     * @param negated whether the condition, with any NOT above it, asks for values outside
+     */
+    private ObjectNode between(Between between, boolean negated) throws SQLException {
+        ColumnDefinition column = column(between.column());
+        Object low = value(between.low(), column);
+        Object high = value(between.high(), column);
+
+        if (column.kind() == ColumnKind.ID) {
+            throw new SQLFeatureNotSupportedException("Point IDs can only be compared with "
+                + "=, <> or IN: Qdrant doesn't order them");
+        }
+
+        payloadField(column, "compared");
+        ObjectNode range = JSON.objectNode();
+        range.set("gte", rangeValue(column, "BETWEEN", low));
+        range.set("lte", rangeValue(column, "BETWEEN", high));
+        ObjectNode condition = field(column).set("range", range);
+
+        return negated ? notMatching(condition, column) : condition;
+    }
+
     // column IN (values), or NOT IN when negated
     private ObjectNode in(InList in, boolean negated) throws SQLException {
         ColumnDefinition column = column(in.column());
@@ -458,7 +488,7 @@ final class FilterPlanner {
 
         throw new SQLFeatureNotSupportedException("'" + column.name() + "' " + operator + " "
             + written(value) + " isn't supported: Qdrant compares numbers and date-times with "
-            + "<, <=, > and >=, and other values only with = and IN");
+            + "<, <=, >, >= and BETWEEN, and other values only with = and IN");
     }
 
     // Whether Qdrant can match the values as one list: keywords, or whole numbers

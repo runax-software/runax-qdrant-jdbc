@@ -51,8 +51,9 @@ class FilterPlannerTest {
                     new ColumnDefinition("title", ColumnKind.PAYLOAD_FIELD, ColumnType.TEXT, 0, "title", ""),
                     new ColumnDefinition("phrased", ColumnKind.PAYLOAD_FIELD, ColumnType.TEXT, 0, "phrased", ""),
                     new ColumnDefinition("tags", ColumnKind.PAYLOAD_FIELD, ColumnType.JSON, 0, "tags", ""),
-                    // A field named like the operator, which stays a usable name
+                    // Fields named like the operators, which stay usable names
                     new ColumnDefinition("like", ColumnKind.PAYLOAD_FIELD, ColumnType.INTEGER, 0, "like", ""),
+                    new ColumnDefinition("between", ColumnKind.PAYLOAD_FIELD, ColumnType.INTEGER, 0, "between", ""),
                     new ColumnDefinition("dense", ColumnKind.VECTOR, ColumnType.VECTOR, 2, "dense", "")));
 
     private static final TableSchema UNNAMED = new TableSchema(
@@ -138,6 +139,83 @@ class FilterPlannerTest {
     @Test
     void comparesNegativeNumbers() throws SQLException {
         assertFilter("{\"must\":[{\"key\":\"price\",\"range\":{\"gt\":-1.5}}]}", "price > -1.5");
+    }
+
+    // BETWEEN
+
+    @Test
+    void comparesNumbersWithOneRangeHoldingBothBounds() throws SQLException {
+        assertFilter("{\"must\":[{\"key\":\"price\",\"range\":{\"gte\":10,\"lte\":20}}]}",
+                "price BETWEEN 10 AND 20");
+        assertFilter("{\"must\":[{\"key\":\"year\",\"range\":{\"gte\":-1.5,\"lte\":2024}}]}",
+                "year BETWEEN -1.5 AND 2024");
+    }
+
+    @Test
+    void comparesDateTimesWithOneRange() throws SQLException {
+        assertFilter("{\"must\":[{\"key\":\"created\",\"range\":"
+                        + "{\"gte\":\"2024-01-01T00:00:00Z\",\"lte\":\"2024-12-31T23:59:59Z\"}}]}",
+                "created BETWEEN '2024-01-01T00:00:00Z' AND '2024-12-31T23:59:59Z'");
+    }
+
+    /**
+     * SQL doesn't swap the bounds, so a low bound above the high one matches nothing; Qdrant's
+     * range of the two says the same, so the driver sends it as written.
+     */
+    @Test
+    void keepsTheBoundsInTheOrderWritten() throws SQLException {
+        assertFilter("{\"must\":[{\"key\":\"price\",\"range\":{\"gte\":20,\"lte\":10}}]}",
+                "price BETWEEN 20 AND 10");
+    }
+
+    @Test
+    void excludesARangeOnlyFromPointsThatHaveTheField() throws SQLException {
+        String filter = "{\"must_not\":[{\"key\":\"price\",\"range\":{\"gte\":10,\"lte\":20}},"
+                + "{\"is_empty\":{\"key\":\"price\"}}]}";
+
+        assertFilter(filter, "price NOT BETWEEN 10 AND 20");
+        assertFilter(filter, "NOT price BETWEEN 10 AND 20");
+        assertFilter(filter, "NOT (price BETWEEN 10 AND 20)");
+        assertFilter("{\"must\":[{\"key\":\"price\",\"range\":{\"gte\":10,\"lte\":20}}]}",
+                "NOT price NOT BETWEEN 10 AND 20");
+    }
+
+    @Test
+    void joinsABetweenToTheConditionsAroundIt() throws SQLException {
+        assertFilter("{\"must\":[{\"key\":\"price\",\"range\":{\"gte\":10,\"lte\":20}},"
+                        + "{\"key\":\"lang\",\"match\":{\"value\":\"en\"}}]}",
+                "price BETWEEN 10 AND 20 AND lang = 'en'");
+        assertFilter("{\"should\":[{\"key\":\"lang\",\"match\":{\"value\":\"en\"}},"
+                        + "{\"must_not\":[{\"key\":\"year\",\"range\":{\"gte\":2000,\"lte\":2010}},"
+                        + "{\"is_empty\":{\"key\":\"year\"}}]}]}",
+                "lang = 'en' OR year NOT BETWEEN 2000 AND 2010");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "lang BETWEEN 'a' AND 'm'",     // text is matched, not ordered
+            "active BETWEEN false AND true",
+            "price BETWEEN 1 AND 'x'",
+            "_id BETWEEN 1 AND 5",          // Qdrant doesn't order point IDs
+            "_id NOT BETWEEN 1 AND 5",
+            "_payload BETWEEN 1 AND 2",
+            "dense BETWEEN 1 AND 2",
+            "price BETWEEN ? AND 20"})      // unbound outside a PreparedStatement
+    void rejectsRangesQdrantCantRun(String condition) {
+        assertThrows(SQLFeatureNotSupportedException.class,
+                () -> scroll("SELECT * FROM docs WHERE " + condition));
+    }
+
+    @Test
+    void rejectsANullBound() {
+        assertEquals("42000", assertThrows(SQLSyntaxErrorException.class,
+                () -> scroll("SELECT * FROM docs WHERE price BETWEEN NULL AND 20")).getSQLState());
+    }
+
+    @Test
+    void keepsBetweenUsableAsAFieldName() throws SQLException {
+        assertFilter("{\"must\":[{\"key\":\"between\",\"range\":{\"gte\":1,\"lte\":2}}]}",
+                "between BETWEEN 1 AND 2");
     }
 
     // IN

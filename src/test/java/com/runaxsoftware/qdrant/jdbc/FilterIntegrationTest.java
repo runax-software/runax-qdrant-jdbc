@@ -73,6 +73,10 @@ class FilterIntegrationTest {
         "price <= 39.9                                      | 1,5",
         "price = 19                                         | 5",
         "NOT (price > 50)                                   | 1,5",
+        "price BETWEEN 19 AND 89.5                          | 1,4,5",
+        "price NOT BETWEEN 19 AND 89.5                      | 2,3",
+        "price BETWEEN 50 AND 500 AND specs.color = 'black' | 4",
+        "created_at BETWEEN '2024-04-01T00:00:00Z' AND '2024-07-02T09:00:00Z' | 2,3,4",
         "in_stock = false                                   | 3",
         "specs.color = 'black'                              | 1,4",
         "\"specs.color\" NOT IN ('black', 'white')          | 2",
@@ -99,6 +103,18 @@ class FilterIntegrationTest {
                 + "WHERE _id = '0b3e9a2c-7a51-4c6e-9d0f-2f4a6c8e1b37'"));
         assertEquals(3, ids("SELECT _id FROM " + PREFIX + "articles WHERE dense IS NOT NULL")
             .size());
+    }
+
+    /**
+     * The sample events: 1 has a count of 3, 2 of 2.5, the largest ID of 1, and the UUID point
+     * has no count at all, so NOT BETWEEN, as SQL says, leaves it out.
+     */
+    @Test
+    void excludesARangeOnlyFromPointsThatHaveTheField() throws SQLException {
+        assertEquals(List.of("1", "2"),
+            ids("SELECT _id FROM " + PREFIX + "events WHERE count BETWEEN 2 AND 3"));
+        assertEquals(List.of(SampleCollections.LARGEST_ID.toString()),
+            ids("SELECT _id FROM " + PREFIX + "events WHERE count NOT BETWEEN 2 AND 3"));
     }
 
     @Test

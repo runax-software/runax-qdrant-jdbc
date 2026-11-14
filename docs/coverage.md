@@ -220,7 +220,7 @@ the config before it writes one.
 ## SQL coverage
 
 The ceiling is the lexer, but less of one than it looks. `Lexer.java` recognises
-**31 keywords**, and a word outside that set becomes an identifier, so `HAVING`, `BETWEEN`,
+**31 keywords**, and a word outside that set becomes an identifier, so `HAVING`,
 `JOIN` and `UNION` cannot be lexed as syntax at all. `Parser.java` wires **twenty-one
 statement kinds**, and `Plan.java`'s sealed interface permits **twenty-seven plan kinds** — the best
 single index of what can run. No parser class is a stub any more.
@@ -230,9 +230,11 @@ appear, an identifier does the job and stays usable as a name. Many are: the typ
 `CREATE TABLE` uses (`VECTOR`, `KEYWORD`, `DISTANCE`, `MODIFIER`); `INDEX`, `ON`, `USING` and
 `WITH` in the index statements; `VIEW`, `REPLACE`, `RENAME` and `TO` in the view statements;
 `RESET`, `SHOW`, `ALL` and `DEFAULT` in the option statements; `ON`, `CONFLICT`, `DO` and
-`NOTHING` in an `INSERT`'s conflict clause; and `LIKE`, read as an operator after a column,
-which is the one place it can go. So `LIKE` runs without the lexer growing a keyword, a payload
-field may still be called `like`, and `ON CONFLICT … DO NOTHING` cost the lexer nothing either.
+`NOTHING` in an `INSERT`'s conflict clause; and `LIKE` and `BETWEEN`, read as operators after a
+column, which is the one place they can go (the `AND` between `BETWEEN`'s bounds is read there
+too, so it is never taken for the boolean one). So `LIKE` and `BETWEEN` run without the lexer
+growing a keyword, a payload field may still be called `like` or `between`, and
+`ON CONFLICT … DO NOTHING` cost the lexer nothing either.
 The full-text conditions need even less — they're function names. This is why the keyword count
 above has stopped predicting how much SQL runs.
 
@@ -360,9 +362,10 @@ can express. The mapping below is what `FilterPlanner` emits.
 | `price = 39.9`, `=` on a `FLOAT` field, `=` on a datetime | `range` with `gte` and `lte` both set to the value |
 | `<`, `<=`, `>`, `>=` on numbers | `range` |
 | `<`, `<=`, `>`, `>=` on a `DATETIME` column | `range` with the value as RFC 3339 text |
+| `price BETWEEN 10 AND 20`, on numbers or a `DATETIME` column | one `range` with `gte` and `lte`; bounds kept in the order written, so `BETWEEN 20 AND 10` matches nothing, as in SQL |
 | `IN (…)` of all-text or all-whole-number values | `match: {any}` |
 | `IN (…)` of mixed values | `should` over one `match` each |
-| `NOT IN`, `<>`, `!=`, `NOT (…)` | `must_not` of the condition **and** `is_empty`, so a missing field does not match |
+| `NOT IN`, `<>`, `!=`, `NOT BETWEEN`, `NOT (…)` | `must_not` of the condition **and** `is_empty`, so a missing field does not match |
 | `name LIKE 'Desk%'` | `match: {prefix}` |
 | `name LIKE '%desk%'` | `match: {substring}` |
 | `name LIKE 'Desk lamp'` | `match: {value}`: a pattern with no wildcard |
@@ -497,8 +500,8 @@ and delete from it. What remains, most important first:
 2. **Text matching reaches the index but not the ranking.** `text_match` filters by a text
    index; Qdrant's `text` *query*, which ranks by full-text relevance and is what a BM25-style
    search needs, has no SQL yet, so `ORDER BY text_rank(title, 'refund policy') DESC` from the
-   dialect spec is still the target. `at_least` (`min_should`), `BETWEEN`, and the geo and
-   nested-array conditions are the rest of the filter surface.
+   dialect spec is still the target. `at_least` (`min_should`) and the geo and nested-array
+   conditions are the rest of the filter surface.
 3. **One `embed()` per statement, not per collection.** A batch now goes to the provider in one
    request, but each statement embeds on its own: loading a collection through a thousand
    `INSERT`s is still a thousand calls, where one `INSERT` of a thousand rows is one. Nothing in

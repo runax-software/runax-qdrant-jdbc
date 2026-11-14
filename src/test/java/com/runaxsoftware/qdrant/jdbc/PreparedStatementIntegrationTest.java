@@ -70,6 +70,29 @@ class PreparedStatementIntegrationTest {
     }
 
     @Test
+    void takesEitherBoundOfABetween() throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+            "SELECT _id FROM " + products + " WHERE price BETWEEN ? AND ? AND in_stock = ?")) {
+            statement.setInt(1, 19);
+            statement.setDouble(2, 89.5);
+            statement.setBoolean(3, true);
+            assertEquals(List.of("1", "4", "5"), ids(statement));
+
+            statement.setInt(1, 100);
+            statement.setInt(2, 500);
+            statement.setBoolean(3, false);
+            assertEquals(List.of("3"), ids(statement));
+        }
+
+        try (PreparedStatement statement = connection.prepareStatement(
+            "SELECT _id FROM " + products + " WHERE created_at NOT BETWEEN ? AND ?")) {
+            statement.setTimestamp(1, Timestamp.from(Instant.parse("2024-04-01T00:00:00Z")));
+            statement.setTimestamp(2, Timestamp.from(Instant.parse("2024-07-02T09:00:00Z")));
+            assertEquals(List.of("1", "5"), ids(statement));
+        }
+    }
+
+    @Test
     void matchesAListIdsAndDateTimes() throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement(
             "SELECT _id FROM " + products + " WHERE name IN (?, ?) OR _id = ?")) {
