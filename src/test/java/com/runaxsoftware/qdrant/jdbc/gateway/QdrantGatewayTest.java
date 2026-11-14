@@ -598,6 +598,32 @@ class QdrantGatewayTest {
         assertEquals("Qdrant: Service internal error", error.getMessage());
     }
 
+    // Grouped searches
+
+    @Test
+    void asksForTheBestPointsOfEachGroupAndReturnsThemGroupAfterGroup() throws SQLException {
+        server.collection("chunks", plainCollection(), List.of(
+            FakeQdrantServer.point(1, Json.object("doc", "a")),
+            FakeQdrantServer.point(2, Json.object("doc", "b")),
+            FakeQdrantServer.point(3, Json.object("doc", "a")),
+            FakeQdrantServer.point(4, Json.object("other", 1)),
+            FakeQdrantServer.point(5, Json.object("doc", "a"))));
+
+        List<ScoredPoint> found = gateway.queryGroups(
+            new QueryRequest("chunks", "", List.of(0.1, 0.2), 5, 7, true, false, null, null),
+            "doc", 2);
+
+        assertEquals(List.of("1", "3", "2"),
+            found.stream().map(scored -> scored.point().id().asText()).toList());
+
+        Request request = server.requests().get(server.requests().size() - 1);
+        assertEquals("/collections/chunks/points/query/groups", request.path());
+        assertEquals("doc", request.body().path("group_by").asText());
+        assertEquals(2, request.body().path("group_size").asInt());
+        assertEquals(5, request.body().path("limit").asInt());
+        assertFalse(request.body().has("offset"), "Qdrant has no offset for groups");
+    }
+
     // Batches of searches
 
     @Test

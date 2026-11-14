@@ -3,6 +3,7 @@ package com.runaxsoftware.qdrant.jdbc.sql.parser.statement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ExpressionParser;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.TokenStream;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.*;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.PerGroup;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Statement;
 
@@ -23,6 +24,16 @@ public final class SelectParser {
 
     public Statement parse() throws SQLSyntaxErrorException {
         this.tokenStream.expectKeyword("SELECT");
+
+        // DISTINCT ON (column) keeps one row of each of the column's values; plain DISTINCT is
+        // refused where the select list is read, with what to write instead
+        Column distinctOn = null;
+        if (this.tokenStream.peekKeyword("DISTINCT") && this.tokenStream.peekWordAfterNext("ON")) {
+            this.tokenStream.advance();
+            this.tokenStream.advance();
+            distinctOn = parseGroupColumn();
+        }
+
         var items = new ArrayList<SelectItem>();
 
         do {
@@ -68,9 +79,36 @@ public final class SelectParser {
         }
 
         Long limit = this.tokenStream.matchKeyword("LIMIT") ? this.tokenStream.expectWholeNumber() : null;
+        PerGroup perGroup = distinctOn == null ? null : new PerGroup(distinctOn, 1);
+
+        // LIMIT n BY column keeps n rows of each of the column's values; the LIMIT that may
+        // follow it is the statement's own
+        if (limit != null && this.tokenStream.matchKeyword("BY")) {
+            if (distinctOn != null) {
+                throw this.tokenStream.error("Expected one of DISTINCT ON and LIMIT ... BY: both "
+                    + "say how many rows of each group to keep");
+            }
+
+            perGroup = new PerGroup(this.expressionParser.parseColumn(), limit);
+            limit = this.tokenStream.matchKeyword("LIMIT") ? this.tokenStream.expectWholeNumber() : null;
+        }
+
         Long offset = this.tokenStream.matchKeyword("OFFSET") ? this.tokenStream.expectWholeNumber() : null;
         return new SelectStatement(items, table, alias, where, groupBy, orderBy, limit,
-            offset);
+            offset, perGroup);
+    }
+
+    // The one column in brackets after DISTINCT ON; Qdrant groups a search by one field
+    private Column parseGroupColumn() throws SQLSyntaxErrorException {
+        this.tokenStream.expectSymbol("(");
+        Column column = this.expressionParser.parseColumn();
+
+        if (this.tokenStream.peekSymbol(",")) {
+            throw this.tokenStream.error("Expected ): Qdrant groups a search by one field");
+        }
+
+        this.tokenStream.expectSymbol(")");
+        return column;
     }
 
     /**

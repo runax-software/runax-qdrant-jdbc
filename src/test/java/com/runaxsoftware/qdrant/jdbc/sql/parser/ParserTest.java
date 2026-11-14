@@ -40,6 +40,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropTableStatement
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DropViewStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.InsertStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.OnConflict;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.PerGroup;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Statement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.TruncateStatement;
@@ -278,6 +279,44 @@ class ParserTest {
         assertEquals("SELECT DISTINCT isn't supported yet: a field's distinct values come from "
                 + "Qdrant's facet API at line 1, column 8", error.getMessage());
         assertEquals("42000", error.getSQLState());
+    }
+
+    @Test
+    void parsesDistinctOnAsOneRowOfEachGroup() throws SQLSyntaxErrorException {
+        SelectStatement select = (SelectStatement) Parser.parse(
+            "SELECT DISTINCT ON (doc_id) _id, doc_id FROM docs LIMIT 10 OFFSET 2");
+
+        assertEquals(new PerGroup(Column.of("doc_id"), 1), select.perGroup());
+        assertEquals(2, select.items().size());
+        assertEquals(10L, select.limit());
+        assertEquals(2L, select.offset());
+        assertEquals(new PerGroup(new Column("t", "doc_id"), 1), ((SelectStatement) Parser.parse(
+            "select distinct on (t.doc_id) * from docs t")).perGroup());
+    }
+
+    @Test
+    void parsesLimitByAsSomeRowsOfEachGroup() throws SQLSyntaxErrorException {
+        SelectStatement select = (SelectStatement) Parser.parse(
+            "SELECT _id FROM docs LIMIT 3 BY doc_id LIMIT 10 OFFSET 5");
+
+        assertEquals(new PerGroup(Column.of("doc_id"), 3), select.perGroup());
+        assertEquals(10L, select.limit());
+        assertEquals(5L, select.offset());
+
+        SelectStatement unbounded = (SelectStatement) Parser.parse(
+            "SELECT _id FROM docs LIMIT 2 BY \"specs.color\"");
+        assertEquals(new PerGroup(Column.of("specs.color"), 2), unbounded.perGroup());
+        assertNull(unbounded.limit());
+        assertNull(((SelectStatement) Parser.parse("SELECT _id FROM docs LIMIT 3")).perGroup());
+    }
+
+    @Test
+    void rejectsGroupsItCantRead() {
+        assertError("Expected ): Qdrant groups a search by one field, found ',' at line 1, "
+            + "column 22", "SELECT DISTINCT ON (a, b) _id FROM docs");
+        assertError("Expected one of DISTINCT ON and LIMIT ... BY: both say how many rows of each "
+            + "group to keep, found 'a' at line 1, column 49",
+            "SELECT DISTINCT ON (a) _id FROM docs LIMIT 2 BY a");
     }
 
     @Test

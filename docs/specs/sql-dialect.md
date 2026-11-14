@@ -262,6 +262,40 @@ one collection, as Qdrant's batch is per collection; a script holding anything e
 before anything runs, since several writes in one string would stop halfway with no way to say
 how far they got. It works on a `Statement`: a `PreparedStatement` is one statement.
 
+### The best of each group
+
+A search can keep only the best points of each group, the groups being the values of one
+payload field: the best chunk of each document, say, rather than five chunks of the same one.
+
+```sql
+-- The best chunk of each document
+SELECT DISTINCT ON (doc_id) _id, doc_id, _score
+FROM chunks ORDER BY similarity(dense, embed('refund policy')) DESC LIMIT 10;
+
+-- The best three chunks of each document, ten rows in all
+SELECT _id, doc_id, _score
+FROM chunks ORDER BY similarity(dense, embed('refund policy')) DESC
+LIMIT 3 BY doc_id LIMIT 10;
+```
+
+**This runs today**, through Qdrant's grouped Query API. `DISTINCT ON (field)` is PostgreSQL's
+way to say one row of each value and `LIMIT n BY field` is ClickHouse's way to say `n`; `DISTINCT
+ON (f)` is `LIMIT 1 BY f`, and a statement gives one of them. Both need the search, `ORDER BY
+similarity(…) DESC`, since only a ranking says which points are best; a `WHERE` filters before
+the grouping, and `_score` is there as in any search.
+
+The rows are what SQL says they are: the best points overall, with no more than `n` from any one
+group, best first, and the `LIMIT` and `OFFSET` that follow count rows. Qdrant counts groups
+instead and has no offset for them, so the driver asks for as many groups as there are rows to
+read — the best rows always come from the best groups — and orders, skips and cuts the points
+itself. The offset is therefore capped at 10,000 rows, as a scroll's is.
+
+The field is a payload field holding text or whole numbers, the two kinds Qdrant groups by, and
+needs no index. Two things differ from SQL's `GROUP BY`, and both are Qdrant's: a point without
+the field is in no group and so in no row, and a point whose field is an array is in a group
+for each of its values, so it can be a row more than once. Grouping by two fields, and Qdrant's
+lookup of each group's own record in another collection, aren't supported yet.
+
 ### Combining searches
 
 A subquery in `FROM` with its own `ORDER BY … LIMIT` is a **prefetch**: Qdrant runs it first

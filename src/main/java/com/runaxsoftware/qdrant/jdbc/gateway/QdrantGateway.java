@@ -233,6 +233,24 @@ public class QdrantGateway implements AutoCloseable {
         return answers;
     }
 
+    /**
+     * The best points of each group, through Qdrant's grouped Query API: the groups are the
+     * values of a payload field, the request's limit says how many groups, and each gives up to
+     * {@code groupSize} of its closest points. The points come back group after group, the group
+     * whose best point is closest first. Qdrant has no offset for groups, so the request's is
+     * not sent.
+     */
+    public List<ScoredPoint> queryGroups(QueryRequest query, String groupBy, long groupSize)
+        throws SQLException {
+        ObjectNode body = queryBody(query);
+        body.remove("offset");
+        body.put("group_by", groupBy).put("group_size", groupSize);
+
+        return RestModels.groupedPoints(request(HttpMethod.POST,
+            "/collections/" + segment(query.collection()) + "/points/query/groups"
+                + readParameters(), body));
+    }
+
     // One search as the Query API takes it, alone or as one of a batch
     private ObjectNode queryBody(QueryRequest query) {
         ObjectNode body = JSON.createObjectNode()

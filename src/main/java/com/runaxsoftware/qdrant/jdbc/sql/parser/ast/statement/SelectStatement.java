@@ -22,6 +22,8 @@ import java.util.List;
  * @param orderBy the ORDER BY columns, in order, empty when absent
  * @param limit   the LIMIT, or {@code null}
  * @param offset  the OFFSET, or {@code null}
+ * @param perGroup the rows to keep of each group, from {@code LIMIT n BY column} or
+ *                {@code DISTINCT ON (column)}, or {@code null}
  */
 public record SelectStatement(
     List<SelectItem> items,
@@ -31,5 +33,17 @@ public record SelectStatement(
     List<Column> groupBy,
     List<OrderItem> orderBy,
     Long limit,
-    Long offset
-) implements Statement {}
+    Long offset,
+    PerGroup perGroup
+) implements Statement {
+
+    /**
+     * A SELECT that keeps every row of every group, which is every SELECT without
+     * {@code LIMIT ... BY} or {@code DISTINCT ON}.
+     */
+    public SelectStatement(List<SelectItem> items, TableName table, String alias,
+                           Expression where, List<Column> groupBy, List<OrderItem> orderBy,
+                           Long limit, Long offset) {
+        this(items, table, alias, where, groupBy, orderBy, limit, offset, null);
+    }
+}

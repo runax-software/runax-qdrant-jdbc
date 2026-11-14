@@ -107,6 +107,11 @@ public final class FakeQdrantServer implements AutoCloseable {
         QUERY,
 
         /**
+         * {@code POST /collections/{name}/points/query/groups}: the best points of each group.
+         */
+        QUERY_GROUPS,
+
+        /**
          * {@code POST /collections/{name}/points/query/batch}: several searches in one call.
          */
         QUERY_BATCH,
@@ -724,6 +729,7 @@ public final class FakeQdrantServer implements AutoCloseable {
                 case SCROLL -> scroll(exchange, segments[2], body);
                 case QUERY -> query(exchange, segments[2], body);
                 case QUERY_BATCH -> queryBatch(exchange, segments[2], body);
+                case QUERY_GROUPS -> queryGroups(exchange, segments[2], body);
                 case COUNT -> count(exchange, segments[2]);
                 case FACET -> facet(exchange, segments[2], body);
                 case ALIASES -> ok(exchange, Json.object("aliases", aliasList()));
@@ -826,6 +832,11 @@ public final class FakeQdrantServer implements AutoCloseable {
         if (method.equals("POST") && segments.length == 6 && segments[3].equals("points")
             && segments[4].equals("query") && segments[5].equals("batch")) {
             return Endpoint.QUERY_BATCH;
+        }
+
+        if (method.equals("POST") && segments.length == 6 && segments[3].equals("points")
+            && segments[4].equals("query") && segments[5].equals("groups")) {
+            return Endpoint.QUERY_GROUPS;
         }
 
         if (method.equals("POST") && segments.length == 5 && segments[3].equals("points")
@@ -1080,6 +1091,46 @@ public final class FakeQdrantServer implements AutoCloseable {
         for (JsonNode search : request.path("searches")) answers.add(queried(name, search));
 
         ok(exchange, Json.array(answers.toArray()));
+    }
+
+    /**
+     * The points grouped by a payload field, scored as {@link #queried} scores them: as many
+     * groups as the request's limit, each with its first {@code group_size} points, and a point
+     * without the field in none, as Qdrant leaves it out.
+     */
+    private void queryGroups(HttpExchange exchange, String name, JsonNode request)
+        throws IOException {
+        if (find(name) == null) {
+            notFound(exchange, name);
+            return;
+        }
+
+        String field = request.path("group_by").asText();
+        int size = request.path("group_size").asInt(3);
+        int limit = request.path("limit").asInt(10);
+        Map<JsonNode, List<JsonNode>> groups = new LinkedHashMap<>();
+        List<ObjectNode> all = points.get(resolve(name));
+
+        for (int i = 0; i < all.size(); i++) {
+            JsonNode key = all.get(i).path("payload").path(field);
+            if (key.isMissingNode() || key.isNull()) continue;
+
+            List<JsonNode> hits = groups.computeIfAbsent(key, x -> new ArrayList<>());
+            if (hits.size() < size && (groups.size() <= limit)) {
+                hits.add(Json.object("id", all.get(i).get("id"), "version", 0,
+                    "score", Math.round((1.0 - i * 0.1) * 100) / 100.0,
+                    "payload", all.get(i).path("payload")));
+            }
+        }
+
+        List<JsonNode> listed = new ArrayList<>();
+        for (Map.Entry<JsonNode, List<JsonNode>> group : groups.entrySet()) {
+            if (listed.size() == limit) break;
+
+            listed.add(Json.object("id", group.getKey(), "hits", Json.array(group.getValue().toArray())));
+        }
+
+        ok(exchange, Json.object("groups", Json.array(listed.toArray())));
     }
 
     private ObjectNode queried(String name, JsonNode request) {

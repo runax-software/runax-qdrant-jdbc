@@ -71,16 +71,31 @@ final class RestModels {
     }
 
     static List<ScoredPoint> scoredPoints(JsonNode result) {
+        return List.copyOf(scored(result.path("points")));
+    }
+
+    /**
+     * The points of a grouped search, one group after another in the order Qdrant ranked the
+     * groups, each group's points best first.
+     */
+    static List<ScoredPoint> groupedPoints(JsonNode result) {
+        List<ScoredPoint> points = new ArrayList<>();
+        for (JsonNode group : result.path("groups")) points.addAll(scored(group.path("hits")));
+
+        return List.copyOf(points);
+    }
+
+    private static List<ScoredPoint> scored(JsonNode scoredPoints) {
         List<ScoredPoint> points = new ArrayList<>();
 
-        for (JsonNode point : result.path("points")) {
+        for (JsonNode point : scoredPoints) {
             points.add(new ScoredPoint(
                 new Point(point.get("id"), present(point.get("payload")),
                     present(point.get("vector"))),
                 point.path("score").asDouble(0)));
         }
 
-        return List.copyOf(points);
+        return points;
     }
 
     static List<FacetHit> facetHits(JsonNode result) {

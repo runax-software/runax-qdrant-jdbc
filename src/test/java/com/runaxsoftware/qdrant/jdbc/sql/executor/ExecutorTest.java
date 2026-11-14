@@ -32,6 +32,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CountPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.EmbedText;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetColumn;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.GroupedQueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
@@ -776,6 +777,41 @@ class ExecutorTest {
     }
 
     @Test
+    void ordersAGroupedSearchsPointsByScoreAndCountsRowsNotGroups() throws SQLException {
+        var asked = new ArrayList<String>();
+
+        // Group a's two points, then group b's: the second of a is worse than the first of b
+        List<ScoredPoint> grouped = List.of(scored(1, 0.9), scored(2, 0.4), scored(3, 0.7),
+            scored(4, 0.1));
+
+        try (ResultSet rows = grouping(asked, grouped).execute(new GroupedQueryPlan(
+            plan(3L, 1), "doc_id", 2, false), STATEMENT).resultSet()) {
+            assertEquals(List.of("3", "2", "4"), ids(rows),
+                "by score, best first, after the one row the OFFSET skips");
+        }
+
+        assertEquals(List.of("doc_id x2, 4 groups, offset 0"), asked,
+            "as many groups as rows to read, since Qdrant counts groups and skips none");
+
+        try (ResultSet rows = grouping(asked, grouped).execute(new GroupedQueryPlan(
+            plan(2L), "doc_id", 2, true), STATEMENT).resultSet()) {
+            assertEquals(List.of("4", "2"), ids(rows), "a distance ranks the lowest score first");
+        }
+    }
+
+    @Test
+    void asksForNoGroupsWhenTheLimitIsNoRows() throws SQLException {
+        var asked = new ArrayList<String>();
+
+        try (ResultSet rows = grouping(asked, List.of()).execute(new GroupedQueryPlan(
+            plan(0L), "doc_id", 2, false), STATEMENT).resultSet()) {
+            assertFalse(rows.next());
+        }
+
+        assertEquals(List.of(), asked);
+    }
+
+    @Test
     void runsSeveralSearchesAndReturnsEachOnesRowsInOrder() throws SQLException {
         var requests = new ArrayList<QueryRequest>();
 
@@ -1306,6 +1342,38 @@ class ExecutorTest {
     private static ScrollPlan ordered(Long limit, long offset) {
         return new ScrollPlan("docs", List.of(ID), false, false, limit, offset, null,
             new Ordering("price", true));
+    }
+
+    private static ScoredPoint scored(int id, double score) {
+        return new ScoredPoint(new Point(JSON.getNodeFactory().numberNode(id), null, null), score);
+    }
+
+    private static List<String> ids(ResultSet rows) throws SQLException {
+        var ids = new ArrayList<String>();
+        while (rows.next()) ids.add(rows.getString(1));
+
+        return ids;
+    }
+
+    // An executor whose grouped search answers with these points and records what it was asked
+    private static Executor grouping(List<String> asked, List<ScoredPoint> points) {
+        return new Executor(request -> {
+            throw new AssertionError("Scrolled " + request.collection());
+        }, new Searcher() {
+            @Override
+            public List<ScoredPoint> search(QueryRequest query) {
+                throw new AssertionError("Searched without groups");
+            }
+
+            @Override
+            public List<ScoredPoint> searchGroups(QueryRequest query, String groupBy,
+                                                  long groupSize) {
+                asked.add(groupBy + " x" + groupSize + ", " + query.limit() + " groups, offset "
+                    + query.offset());
+
+                return points;
+            }
+        }, (collection, filter) -> 0, facet -> List.of(), table -> List.of());
     }
 
     private static QueryPlan plan(Long limit) {

@@ -38,6 +38,10 @@ measured REST and SQL coverage is in [docs/coverage.md](docs/coverage.md).
 - [x] **Batches of searches** — several similarity searches of one collection in one
   `execute`, separated by semicolons, sent as one Query API batch and answered with a result
   set each, through `getMoreResults`.
+- [x] **The best points of each group** — `SELECT DISTINCT ON (doc_id) … ORDER BY
+  similarity(…) DESC LIMIT 10` for the best point of each value of a payload field, and `LIMIT 3
+  BY doc_id` for the best three, through Qdrant's grouped Query API. The statement's own `LIMIT`
+  and `OFFSET` still count rows.
 - [x] **DataGrip compatibility** — harmless defaults for the `Connection` and
   `Statement` methods DataGrip calls on every connection, and support for the SQL it
   generates when opening, filtering, and sorting a table. The defaults and the statement
