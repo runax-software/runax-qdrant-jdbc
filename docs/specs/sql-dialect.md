@@ -668,7 +668,8 @@ embeds the same vector with the same model:
 ALTER TABLE docs SET (metadata = '{"runax.embed.dense": "openai:text-embedding-3-small"}');
 ```
 
-**What runs today:** `embed()` as the query of `similarity(…)`. With a model kept for the
+**What runs today:** `embed()` as the query of `similarity(…)`, and as a vector's value in
+`INSERT` and `UPDATE` (see [Writing points](#writing-points)). With a model kept for the
 vector, `embed('text')` needs none, and naming a different one is an error: the search would
 run, but against vectors made by another model, and find the wrong points. With no model kept,
 `embed('text')` without one is an error that says to name it. The metadata is read with the
@@ -682,10 +683,8 @@ hosted `qdrant:` model with an error that says so.
 
 Still the target, for each `embed()`:
 
-- **the text's role**: a *query* inside `similarity()`, `recommend()`, and the other ranking
-  functions, a *document* inside `INSERT` and `UPDATE` (some models embed the two
-  differently); Voyage AI is already asked for a query;
-- **many texts at once**: an `INSERT` of many rows, or a JDBC batch, is one call;
+- **many statements' texts at once**: a JDBC batch runs its statement once per set of values,
+  so it is still one provider call per set;
 - **more providers**, and sparse and multivector output from the providers the driver calls.
 
 `image()` doesn't use the embedder: Qdrant embeds the input itself.
@@ -747,7 +746,7 @@ connection may change them, since they change nothing in Qdrant.
 | Option | Sent with |
 | --- | --- |
 | `consistency`, `timeout` | Reads: scrolls, searches, counts, facets |
-| `wait`, `ordering`, `timeout` | Writes: deletes, and the writes to come |
+| `wait`, `ordering`, `timeout` | Writes: inserts, updates, and deletes |
 | `hnsw_ef`, `exact`, `indexed_only` | Searches, as the request's `params` |
 
 A name without the `qdrant.` prefix, as tools send for other databases (`SET search_path`),
@@ -1005,10 +1004,8 @@ These are errors, not emulated:
 ## Open questions
 
 - How the driver gets the embedder abstraction (a library dependency, or a plug-in found at
-  runtime), and whether its interface covers everything in [Embeddings](#embeddings):
-  query/document role, batches, and sparse and multivector output.
-- Does `insert_only` skip an existing point or reject it, and what does Qdrant report? That
-  decides whether `INSERT` of an existing ID is an error.
+  runtime). Its interface takes a batch of texts and their role already; sparse and multivector
+  output from [Embeddings](#embeddings) is what it lacks.
 - Which field does a `text` query search, and what scoring options does it take?
 - Do all these forms parse with JSqlParser 5.4: types with arguments and `DISTANCE` in
   `CREATE TABLE`, table functions in `FROM`, `ON CONFLICT … WHERE`, and the PostgreSQL
