@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetHit;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.Point;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.ProbeAnswer;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantCollection;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QueryRequest;
@@ -452,6 +453,19 @@ public class QdrantGateway implements AutoCloseable {
      */
     public String requestText(String path) throws SQLException {
         return checkText(exchange(HttpMethod.GET, path, null, "text/plain"));
+    }
+
+    /**
+     * What a health probe answers: {@code /healthz}, {@code /livez}, or {@code /readyz}. Unlike
+     * every other call, a status that isn't a success is returned rather than thrown, since it's
+     * how a probe says the server isn't ready; only failing to reach Qdrant at all is an error.
+     */
+    public ProbeAnswer probe(String path) throws SQLException {
+        HttpResponse<String> response = exchange(HttpMethod.GET, path, null, "text/plain");
+        String body = response.body();
+
+        return new ProbeAnswer(response.statusCode(),
+            body == null || body.isBlank() ? null : body.strip());
     }
 
     public String baseUrl() {

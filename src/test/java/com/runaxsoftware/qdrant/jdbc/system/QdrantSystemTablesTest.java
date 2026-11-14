@@ -440,6 +440,32 @@ class QdrantSystemTablesTest {
         assertTrue(((String) rows.get(1)[4]).startsWith("{\"immediate\""), rows.get(1)[4] + "");
     }
 
+    // Health
+
+    @Test
+    void readsOneRowPerHealthProbe() throws SQLException {
+        List<Object[]> rows = tables.read(SystemTable.HEALTH);
+
+        assertEquals(3, rows.size());
+        assertArrayEquals(new Object[]{"healthz", true, 200L, "healthz check passed"}, rows.get(0));
+        assertArrayEquals(new Object[]{"livez", true, 200L, "healthz check passed"}, rows.get(1));
+        assertArrayEquals(new Object[]{"readyz", true, 200L, "all shards are ready"}, rows.get(2));
+        assertEquals(1, server.calls(Endpoint.HEALTHZ));
+        assertEquals(1, server.calls(Endpoint.LIVEZ));
+        assertEquals(1, server.calls(Endpoint.READYZ));
+    }
+
+    @Test
+    void reportsAServerThatIsntReadyAsARowNotAnError() throws SQLException {
+        server.failWithBody(Endpoint.READYZ, 503, "text/plain", "some shards are not ready");
+
+        List<Object[]> rows = tables.read(SystemTable.HEALTH);
+
+        assertArrayEquals(new Object[]{"healthz", true, 200L, "healthz check passed"}, rows.get(0));
+        assertArrayEquals(new Object[]{"readyz", false, 503L, "some shards are not ready"},
+            rows.get(2));
+    }
+
     // Helpers
 
     private static Map<Long, String> peers() {

@@ -635,6 +635,7 @@ their names can't clash with a collection's. `DatabaseMetaData` lists them as
 | `system.telemetry` | `GET /telemetry` | `path`, `value`, `value_type` |
 | `system.metrics` | `GET /metrics` | `name`, `labels`, `value`, `type`, `help` |
 | `system.issues` | `GET /issues` | `id`, `description`, `related_collection`, `timestamp`, `solution` |
+| `system.health` | `GET /healthz`, `GET /livez`, `GET /readyz` | `probe`, `ok`, `status_code`, `message` |
 
 ```sql
 SELECT name, status, points_count FROM system.collections;
@@ -682,6 +683,13 @@ Two of these tables aren't tabular at Qdrant's end and are projected rather than
 `system.issues` reports what Qdrant collected about itself, such as an `UNINDEXED_FIELD`
 suggestion; `solution` is the JSON Qdrant sent, which is a variant whose shape is its own
 business. The read-only `CALL` procedures below move to these tables as they land.
+
+`system.health` is Qdrant's three health probes, one row each, always in the order `healthz`,
+`livez`, `readyz`. A probe says "no" with its HTTP status, so a failing one is a row with `ok`
+false, the status in `status_code`, and what Qdrant said in `message`, rather than an error.
+`healthz` and `livez` are the same check, that the process answers at all; only `readyz` looks
+at the shards, and answers 503 while one isn't ready. Qdrant answers all three without
+an API key, and a server the driver can't reach is still an error, as for any statement.
 
 One of these tables takes one write. `TRUNCATE TABLE system.issues` clears the issues, which is
 all Qdrant offers: it forgets every issue at once and can't forget one, so `DELETE FROM

@@ -95,6 +95,14 @@ class SystemTableTest {
         assertEquals(ColumnType.JSON, type(SystemTable.METRICS, "labels"));
         assertEquals(ColumnType.DATETIME, type(SystemTable.ISSUES, "timestamp"));
         assertEquals(ColumnType.JSON, type(SystemTable.ISSUES, "solution"));
+        assertEquals(ColumnType.BOOLEAN, type(SystemTable.HEALTH, "ok"));
+        assertEquals(ColumnType.INTEGER, type(SystemTable.HEALTH, "status_code"));
+    }
+
+    @Test
+    void namesTheTableOfHealthProbes() {
+        assertEquals("health", SystemTable.HEALTH.tableName());
+        assertEquals(List.of("probe", "ok", "status_code", "message"), names(SystemTable.HEALTH));
     }
 
     @ParameterizedTest

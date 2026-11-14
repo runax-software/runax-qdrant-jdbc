@@ -24,6 +24,7 @@ import java.util.Optional;
  * <p>Two of these aren't tabular at Qdrant's end and are projected rather than mapped:
  * {@link #TELEMETRY} is a tree, so each row is one leaf of it named by its path, and
  * {@link #METRICS} comes from Qdrant's Prometheus endpoint, so each row is one sample.
+ * {@link #HEALTH} is three endpoints seen as one table, a row for each.
  */
 public enum SystemTable {
 
@@ -212,7 +213,22 @@ public enum SystemTable {
             SystemColumn.of("timestamp", ColumnType.DATETIME,
                 "When Qdrant raised the issue"),
             SystemColumn.of("solution", ColumnType.JSON,
-                "What Qdrant suggests doing about it, as Qdrant sends it")));
+                "What Qdrant suggests doing about it, as Qdrant sends it"))),
+
+    /**
+     * Qdrant's three health probes, one row each. A probe that fails is a row saying so, not an
+     * error: the table is for asking whether the server is up and ready.
+     */
+    HEALTH("health", "Qdrant's health probes, as one row per probe",
+        List.of(
+            SystemColumn.of("probe", ColumnType.TEXT,
+                "The probe: healthz, livez, or readyz"),
+            SystemColumn.of("ok", ColumnType.BOOLEAN,
+                "Whether the check passed"),
+            SystemColumn.of("status_code", ColumnType.INTEGER,
+                "The HTTP status Qdrant answered the probe with, 200 when it passed"),
+            SystemColumn.of("message", ColumnType.TEXT,
+                "What Qdrant said, such as 'all shards are ready'")));
 
     /**
      * The schema every system table is in.

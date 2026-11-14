@@ -15,6 +15,7 @@ import com.runaxsoftware.qdrant.jdbc.gateway.models.Point;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetHit;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.Ordering;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.ProbeAnswer;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantCollection;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.Document;
@@ -595,6 +596,35 @@ class QdrantGatewayTest {
 
         assertEquals("HY000", error.getSQLState());
         assertEquals("Qdrant: Service internal error", error.getMessage());
+    }
+
+    // Health probes
+
+    @Test
+    void returnsWhatAHealthProbeAnswers() throws SQLException {
+        ProbeAnswer answer = gateway.probe("/readyz");
+
+        assertEquals(new ProbeAnswer(200, "all shards are ready"), answer);
+        assertTrue(answer.passed());
+        assertEquals("GET /readyz", server.requests().get(0).method() + " "
+            + server.requests().get(0).path());
+    }
+
+    @Test
+    void returnsAFailingProbeRatherThanThrowing() throws SQLException {
+        server.failWithBody(Endpoint.READYZ, 503, "text/plain", "some shards are not ready\n");
+
+        ProbeAnswer answer = gateway.probe("/readyz");
+
+        assertEquals(new ProbeAnswer(503, "some shards are not ready"), answer);
+        assertFalse(answer.passed());
+    }
+
+    @Test
+    void readsAProbeThatSaysNothingAsNoMessage() throws SQLException {
+        server.failWithBody(Endpoint.LIVEZ, 503, "text/plain", "");
+
+        assertEquals(new ProbeAnswer(503, null), gateway.probe("/livez"));
     }
 
     // Headers

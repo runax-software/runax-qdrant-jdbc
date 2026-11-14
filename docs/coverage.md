@@ -8,7 +8,7 @@ maintainer can tell a missing feature that blocks real use from one that nobody 
 **Measured against** driver commit `5212b3d` — the whole of `SET`, `OFFSET`, the index and view
 statements, the write statements, the vector changes, the text conditions, `ON CONFLICT` and the
 embedder's model and role (#27, #28, #30, #31, #33, #34, #35, #36 and #39) — with the batched
-embedding of #40 and the clearing of `system.issues` on top, and Qdrant
+embedding of #40, the clearing of `system.issues` (#42) and `system.health` on top, and Qdrant
 **1.20.0** (build
 `222b2e44ab1c3f17e8246396ead6558e45041df7`), running locally over REST on port 6333, with the
 three collections `./gradlew seedQdrant` loads. Qdrant 1.20 does not serve `/openapi.json` —
@@ -40,7 +40,7 @@ one of them is indistinguishable from a bug.
 
 ## Qdrant REST coverage
 
-Qdrant 1.20 documents **69 routes**. The driver calls **28** of them, which is **41%**. The
+Qdrant 1.20 documents **69 routes**. The driver calls **31** of them, which is **45%**. The
 counts below are per area, using Qdrant's own OpenAPI tags, so they can be recomputed from the
 spec without judgement calls.
 
@@ -53,18 +53,19 @@ spec without judgement calls.
 | Indexes | **2** | **2** | `CREATE INDEX`, `DROP INDEX`, and the indexes `CREATE TABLE` declares |
 | Snapshots | 2 | 17 | `system.snapshots` only |
 | Distributed | 3 | 9 | `system.cluster`, `system.peers`, `system.shards`, `system.shard_keys` |
-| Service | 3 | 6 | Version on connect, `system.telemetry`, `system.metrics` |
+| Service | **6** | **6** | Version on connect, `system.telemetry`, `system.metrics`, `system.health` |
 | Beta | **2** | **2** | `system.issues`, and `TRUNCATE TABLE system.issues` |
 | Quotas | 0 | 2 | — |
-| **Total** | **28** | **69** | |
+| **Total** | **31** | **69** | |
 
-Three areas are covered whole: every alias route, every index route, and both beta routes.
+Four areas are covered whole: every alias route, every index route, both beta routes, and
+every service route.
 
 ### The routes the driver calls
 
-Twenty come from `QdrantGateway`, which is the only place that speaks HTTP, and eight more
-from `QdrantSystemTables`, which reads endpoints the gateway has no model for because their
-shape depends on the Qdrant version.
+Twenty come from `QdrantGateway`, which is the only place that speaks HTTP, and eleven more
+from `QdrantSystemTables`: eight endpoints the gateway has no model for because their shape
+depends on the Qdrant version, and the three health probes, which answer in a line of text.
 
 | Route | Called by | For |
 | --- | --- | --- |
@@ -96,21 +97,24 @@ shape depends on the Qdrant version.
 | `GET /telemetry` | `QdrantSystemTables` | `system.telemetry` |
 | `GET /metrics` | `QdrantSystemTables` | `system.metrics`; the one route that answers text, not JSON |
 | `GET /issues` | `QdrantSystemTables` | `system.issues` |
+| `GET /healthz` | `QdrantSystemTables` | `system.health`, the `healthz` row |
+| `GET /livez` | `QdrantSystemTables` | `system.health`, the `livez` row; Qdrant documents it as the same check as `healthz` |
+| `GET /readyz` | `QdrantSystemTables` | `system.health`, the `readyz` row: the one probe that looks at the shards, and answers 503 while one isn't ready |
 
 The driver also calls `POST /embeddings` on `api.openai.com` or `api.voyageai.com` for
 `embed('text', 'openai:…')`. That is not a Qdrant route and is not counted here.
 
-### Why 41% means less than it looks, in both directions
+### Why 45% means less than it looks, in both directions
 
-**The denominator is padded.** Of the 41 routes the driver does not call, 15 are snapshot
+**The denominator is padded.** Of the 38 routes the driver does not call, 15 are snapshot
 plumbing — creating, downloading, uploading and recovering snapshots of a collection or of one
 shard — and 6 more are cluster surgery: moving a shard, dropping a peer, recovering Raft. No
 SQL client would call those; they belong to an operator with a shell, and exposing them through
 JDBC would mean inventing `CALL` syntax for operations that have nothing to do with rows. The
 dialect spec does plan exactly that (see its *Operations* section), but as procedures, and a
 procedure that wraps one route is not what "covering an API" usually means. Set aside the 15
-unused snapshot routes, the 6 unused cluster ones, the 3 health probes (`healthz`, `livez`,
-`readyz`) and the 2 quota routes, and 43 remain, of which the driver calls 28 — **65%**.
+unused snapshot routes, the 6 unused cluster ones and the 2 quota routes, and 46 remain, of
+which the driver calls 31 — **67%**.
 Neither number is wrong; they answer different questions.
 
 **The numerator hides how much each route carries.** One route is not one feature.
@@ -147,7 +151,7 @@ slightly wrong.
   `batch` and `groups`, `points/discover` and `discover/batch` — is in the 1.15 spec, gone from
   the 1.20 spec, and alive on a 1.20 server: each answers a JSON validation error rather than
   an empty 404. They were superseded by the Query API, not removed. Counting them puts the live
-  surface at 77 routes and the driver at 36%; this document uses the documented 69, because the
+  surface at 77 routes and the driver at 40%; this document uses the documented 69, because the
   spec is what a maintainer can check, and routes Qdrant has stopped documenting are not ones
   the driver should start calling.
 - **`/locks` is really gone.** `GET` and `POST /locks` are in the 1.15 spec and answer an empty
@@ -189,7 +193,7 @@ above has stopped predicting how much SQL runs.
 | Statement | State | Condition |
 | --- | --- | --- |
 | `SELECT … FROM <collection>` | works | Scrolls by cursor; `*` returns every column but the vectors |
-| `SELECT … FROM system.<table>` | works | Ten tables; a column list and `LIMIT` only |
+| `SELECT … FROM system.<table>` | works | Eleven tables; a column list and `LIMIT` only |
 | `SELECT` without `FROM` | partial | Constants only; a column or `*` is an error |
 | `SELECT COUNT(*)` | works | One exact count call; must be the only select item unless grouped |
 | `DELETE FROM … WHERE` | works | `WHERE` is required; the count returned is a separate count call |
