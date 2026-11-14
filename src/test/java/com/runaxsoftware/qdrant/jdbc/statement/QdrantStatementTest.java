@@ -583,6 +583,25 @@ class QdrantStatementTest {
         assertNull(statement.getResultSet());
     }
 
+    // One point by its ID
+
+    @Test
+    void readsARowByItsIdThroughTheGetPointRoute() throws SQLException {
+        try (ResultSet rows = statement.executeQuery("SELECT _id, name FROM products WHERE _id = 1")) {
+            assertTrue(rows.next());
+            assertEquals("Lamp", rows.getString("name"));
+            assertFalse(rows.next());
+        }
+
+        try (ResultSet rows = statement.executeQuery("SELECT * FROM products WHERE _id = 404")) {
+            assertFalse(rows.next());
+        }
+
+        assertEquals(2, server.calls(Endpoint.POINT));
+        assertEquals(1, server.calls(Endpoint.SCROLL),
+            "only the sample that found the collection's columns");
+    }
+
     // Several searches in one call
 
     @Test

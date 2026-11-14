@@ -377,6 +377,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `SELECT … WHERE _id = 7` reads the point through Qdrant's get-point API when one ID is the
+  whole `WHERE`, instead of scrolling with a filter: the point or no row, in one call that needs
+  no page. Qdrant answers that call with the point whole, vectors included, whichever columns
+  the statement selects, so on a collection of large vectors it carries more than the scroll
+  did. Several IDs, or an ID beside another condition, scroll as before. ([#NEXT])
+- An `UPDATE` that makes one kind of change — sets fields, replaces or clears the payload,
+  deletes fields, writes vectors, or deletes them — goes to the route Qdrant has for that kind
+  alone rather than to the batch API with a single operation in it. A mixed `UPDATE` is still
+  one batch call. What a statement does is unchanged. With these every route of Qdrant's points
+  area is covered. ([#NEXT])
 - `Connection.isReadOnly()` and `DatabaseMetaData.isReadOnly()` now return `false`, as the
   driver can write. `setReadOnly(true)` is kept, and a read-only connection refuses
   `DELETE`, `TRUNCATE` and `DROP TABLE` with SQLState `25006`, so a tool's read-only
@@ -439,3 +449,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#50]: https://github.com/runax-software/runax-qdrant-jdbc/pull/50
 [#51]: https://github.com/runax-software/runax-qdrant-jdbc/pull/51
 [#53]: https://github.com/runax-software/runax-qdrant-jdbc/pull/53
+[#NEXT]: https://github.com/runax-software/runax-qdrant-jdbc/pull/NEXT

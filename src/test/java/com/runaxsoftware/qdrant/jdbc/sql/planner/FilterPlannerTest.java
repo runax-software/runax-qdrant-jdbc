@@ -15,6 +15,7 @@ import com.runaxsoftware.qdrant.jdbc.schema.ColumnType;
 import com.runaxsoftware.qdrant.jdbc.schema.TableSchema;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.Parser;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.PointPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
 
 import org.junit.jupiter.api.Test;
@@ -167,11 +168,46 @@ class FilterPlannerTest {
 
     @Test
     void matchesPointIdsWithHasId() throws SQLException {
-        assertFilter("{\"must\":[{\"has_id\":[7]}]}", "_id = 7");
+        assertFilter("{\"must\":[{\"has_id\":[7]},{\"key\":\"lang\",\"match\":{\"value\":\"en\"}}]}",
+                "_id = 7 AND lang = 'en'");
         assertFilter("{\"must\":[{\"has_id\":[7,\"5c56c793-69f3-4fbf-87e6-c4bf54c28c26\"]}]}",
                 "_id IN (7, '5c56c793-69f3-4fbf-87e6-c4bf54c28c26')");
         assertFilter("{\"must_not\":[{\"has_id\":[7]}]}", "_id <> 7");
         assertFilter("{\"must_not\":[{\"has_id\":[1,2]}]}", "_id NOT IN (1, 2)");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "SELECT * FROM docs WHERE _id = 7",
+            "SELECT * FROM docs WHERE _id = '7'",
+            "SELECT t.* FROM collections.docs t WHERE t._id IN (7)",
+            "SELECT * FROM docs WHERE _id = 7 LIMIT 5 OFFSET 0"})
+    void readsOnePointByItsIdWithoutAFilter(String sql) throws SQLException {
+        PointPlan plan = (PointPlan) planner.plan(Parser.parse(sql), CATALOG);
+
+        assertEquals("docs", plan.collection());
+        assertEquals("7", plan.id().toString(), "a number, even when a tool sends it as text");
+        assertEquals(0, plan.offset());
+        assertTrue(plan.returnsRows());
+    }
+
+    @Test
+    void readsAPointByAUuidAndKeepsTheLimitAndOffset() throws SQLException {
+        PointPlan plan = (PointPlan) planner.plan(Parser.parse("SELECT _id FROM docs WHERE "
+                + "_id = '5c56c793-69f3-4fbf-87e6-c4bf54c28c26' LIMIT 0 OFFSET 3"), CATALOG);
+
+        assertEquals("\"5c56c793-69f3-4fbf-87e6-c4bf54c28c26\"", plan.id().toString());
+        assertEquals(0L, plan.limit());
+        assertEquals(3, plan.offset());
+        assertEquals(1, plan.columns().size());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "_id IN (7, 8)", "_id <> 7", "_id = 7 OR _id = 8", "_id = 7 AND lang = 'en'",
+            "NOT _id = 7"})
+    void scrollsForAnythingMoreThanOneId(String condition) throws SQLException {
+        scroll("SELECT * FROM docs WHERE " + condition);
     }
 
     @ParameterizedTest

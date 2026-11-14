@@ -38,6 +38,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.GroupedQueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.MatrixColumn;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.MatrixPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.PointPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.SystemTablePlan;
@@ -778,6 +779,45 @@ class ExecutorTest {
 
         assertEquals(List.of(1L, 3L, 3L, 2L),
             requests.stream().map(QueryRequest::limit).toList());
+    }
+
+    @Test
+    void readsOnePointAsOneRowAndAsksForNothingItWontReturn() throws SQLException {
+        var asked = new ArrayList<String>();
+        Executor reading = new Executor(new Scroller() {
+            @Override
+            public ScrollPage scroll(ScrollRequest request) {
+                throw new AssertionError("Scrolled " + request.collection());
+            }
+
+            @Override
+            public Point point(String collection, JsonNode id) {
+                asked.add(collection + " " + id);
+
+                return id.asInt() == 7 ? new Point(id, JSON.createObjectNode().put("name", "Lamp"),
+                    null) : null;
+            }
+        });
+        JsonNode seven = JSON.getNodeFactory().numberNode(7);
+
+        try (ResultSet rows = reading.execute(new PointPlan("docs", seven, List.of(ID), null, 0),
+            STATEMENT).resultSet()) {
+            assertEquals(List.of("7"), ids(rows));
+        }
+
+        try (ResultSet rows = reading.execute(new PointPlan("docs",
+            JSON.getNodeFactory().numberNode(8), List.of(ID), null, 0), STATEMENT).resultSet()) {
+            assertFalse(rows.next(), "no such point is no row");
+        }
+
+        assertEquals(List.of("docs 7", "docs 8"), asked);
+
+        reading.execute(new PointPlan("docs", seven, List.of(ID), 0L, 0), STATEMENT)
+            .resultSet().close();
+        reading.execute(new PointPlan("docs", seven, List.of(ID), 5L, 1), STATEMENT)
+            .resultSet().close();
+
+        assertEquals(2, asked.size(), "a limit of no rows and an offset past the row ask nothing");
     }
 
     @Test

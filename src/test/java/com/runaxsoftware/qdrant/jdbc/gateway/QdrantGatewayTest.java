@@ -17,6 +17,7 @@ import com.runaxsoftware.qdrant.jdbc.gateway.models.FacetRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.Ordering;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.MatrixPair;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.MatrixRequest;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.PointOperation;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ProbeAnswer;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantCollection;
@@ -600,6 +601,65 @@ class QdrantGatewayTest {
         assertEquals("Qdrant: Service internal error", error.getMessage());
     }
 
+    // Changes to points
+
+    @Test
+    void sendsOneKindOfChangeToTheRouteQdrantHasForIt() throws Exception {
+        try (RecordingServer recording = new RecordingServer(200,
+            "{\"result\":{\"operation_id\":1,\"status\":\"completed\"},\"status\":\"ok\"}")) {
+            for (PointOperation operation : PointOperation.values()) {
+                recording.gateway().updatePoints("docs", List.of(
+                    Json.object(operation.operationName(), Json.object("filter", Json.object()))));
+            }
+
+            assertEquals(List.of(
+                "POST /collections/docs/points/payload",
+                "PUT /collections/docs/points/payload",
+                "POST /collections/docs/points/payload/delete",
+                "POST /collections/docs/points/payload/clear",
+                "PUT /collections/docs/points/vectors",
+                "POST /collections/docs/points/vectors/delete"), recording.calls());
+        }
+    }
+
+    @Test
+    void sendsSeveralChangesTogetherAsOneBatch() throws Exception {
+        try (RecordingServer recording = new RecordingServer(200,
+            "{\"result\":[{\"operation_id\":1,\"status\":\"completed\"}],\"status\":\"ok\"}")) {
+            recording.gateway().updatePoints("docs", List.of(
+                Json.object("set_payload", Json.object("payload", Json.object("a", 1))),
+                Json.object("delete_payload", Json.object("keys", Json.array("b")))));
+
+            assertEquals(List.of("POST /collections/docs/points/batch"), recording.calls());
+        }
+    }
+
+    // One point
+
+    @Test
+    void readsOnePointByItsIdWholeOrNoneAtAll() throws SQLException {
+        server.collection("products", plainCollection(), List.of(
+            FakeQdrantServer.point(7, Json.object("name", "Lamp")),
+            FakeQdrantServer.point("5c56c793-69f3-4fbf-87e6-c4bf54c28c26", Json.object())));
+
+        Point found = gateway.point("products", Json.node(7));
+        assertEquals("7", found.id().asText());
+        assertEquals("Lamp", found.payload().path("name").asText());
+        assertEquals("GET /collections/products/points/7",
+            server.requests().get(0).method() + " " + server.requests().get(0).path());
+
+        assertEquals("5c56c793-69f3-4fbf-87e6-c4bf54c28c26", gateway.point("products",
+            Json.node("5c56c793-69f3-4fbf-87e6-c4bf54c28c26")).id().asText());
+        assertNull(gateway.point("products", Json.node(99)), "no such point is no point");
+        assertEquals(0, server.calls(Endpoint.SCROLL));
+    }
+
+    @Test
+    void keepsAMissingCollectionAnErrorWhenReadingAPoint() {
+        assertEquals("42S02", assertThrows(SQLException.class,
+            () -> gateway.point("nope", Json.node(7))).getSQLState());
+    }
+
     // Distance matrix
 
     @Test
@@ -1046,6 +1106,7 @@ class QdrantGatewayTest {
 
         private final HttpServer http;
         private final List<String> rawPaths = new CopyOnWriteArrayList<>();
+        private final List<String> calls = new CopyOnWriteArrayList<>();
         private final List<Headers> headers = new CopyOnWriteArrayList<>();
         private final QdrantGateway gateway;
 
@@ -1053,6 +1114,7 @@ class QdrantGatewayTest {
             http = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
             http.createContext("/", exchange -> {
                 rawPaths.add(exchange.getRequestURI().getRawPath());
+                calls.add(exchange.getRequestMethod() + " " + exchange.getRequestURI().getRawPath());
                 headers.add(exchange.getRequestHeaders());
 
                 try (InputStream in = exchange.getRequestBody()) {
@@ -1077,6 +1139,11 @@ class QdrantGatewayTest {
 
         List<String> rawPaths() {
             return rawPaths;
+        }
+
+        // Each request's method and path, as "PUT /collections/docs/points/payload"
+        List<String> calls() {
+            return calls;
         }
 
         List<Headers> headers() {

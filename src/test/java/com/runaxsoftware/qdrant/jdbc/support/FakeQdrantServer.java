@@ -102,6 +102,11 @@ public final class FakeQdrantServer implements AutoCloseable {
         SCROLL,
 
         /**
+         * {@code GET /collections/{name}/points/{id}}: one point by its ID.
+         */
+        POINT,
+
+        /**
          * {@code POST /collections/{name}/points/query}.
          */
         QUERY,
@@ -737,6 +742,7 @@ public final class FakeQdrantServer implements AutoCloseable {
                 case COLLECTIONS -> ok(exchange, Json.object("collections", names()));
                 case COLLECTION -> collectionInfo(exchange, segments[2]);
                 case SCROLL -> scroll(exchange, segments[2], body);
+                case POINT -> point(exchange, segments[2], segments[4]);
                 case QUERY -> query(exchange, segments[2], body);
                 case QUERY_BATCH -> queryBatch(exchange, segments[2], body);
                 case QUERY_GROUPS -> queryGroups(exchange, segments[2], body);
@@ -829,6 +835,10 @@ public final class FakeQdrantServer implements AutoCloseable {
 
         if (method.equals("GET") && segments.length == 3) {
             return Endpoint.COLLECTION;
+        }
+
+        if (method.equals("GET") && segments.length == 5 && segments[3].equals("points")) {
+            return Endpoint.POINT;
         }
 
         if (method.equals("POST") && segments.length == 5 && segments[3].equals("points")
@@ -1036,6 +1046,25 @@ public final class FakeQdrantServer implements AutoCloseable {
      * Qdrant's is, not a row count, and asking for one together with an {@code order_by} fails
      * the way Qdrant 1.20 fails it.
      */
+    // The point with an ID, whole, or Qdrant's answer for one it doesn't have
+    private void point(HttpExchange exchange, String name, String id) throws IOException {
+        if (find(name) == null) {
+            notFound(exchange, name);
+            return;
+        }
+
+        for (ObjectNode point : points.get(resolve(name))) {
+            if (point.get("id").asText().equals(id)) {
+                ok(exchange, point);
+                return;
+            }
+        }
+
+        send(exchange, 404, "application/json", Json.object("status",
+            Json.object("error", "Not found: Point with id " + id + " does not exists!"),
+            "time", 0.0).toString());
+    }
+
     private void scroll(HttpExchange exchange, String name, JsonNode request) throws IOException {
         if (find(name) == null) {
             notFound(exchange, name);

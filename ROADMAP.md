@@ -17,6 +17,9 @@ measured REST and SQL coverage is in [docs/coverage.md](docs/coverage.md).
   through Qdrant's scroll cursor instead of loading everything. Vectors are fetched only
   when a query names their column. `WHERE` takes comparisons, `IN`, `IS NULL`, `AND`, `OR`
   and `NOT`; `BETWEEN` and the geo and nested-array functions in the dialect spec come later.
+- [x] **One point by its ID** — `SELECT … WHERE _id = 7`, when the ID is the whole `WHERE`,
+  through Qdrant's get-point API rather than a filtered scroll: what a data grid sends to read a
+  row again.
 - [x] **`LIKE` and full-text matching** — `name LIKE 'Desk%'` as Qdrant's `prefix` match and
   `name LIKE '%desk%'` as its `substring` match, both case-sensitive, with `NOT LIKE`
   following SQL's rule that a missing field matches neither; and
@@ -94,7 +97,8 @@ measured REST and SQL coverage is in [docs/coverage.md](docs/coverage.md).
   quantization options, and the `/*+ … */` hint for one statement come later.
 - [x] **Grid edits** — `UPDATE ... WHERE _id = ?` from DataGrip's data editor, mapped to
   Qdrant's set-payload call: fields, fields inside objects, `NULL` to delete one, a new field,
-  or `_payload` for the whole payload, in one batch call.
+  or `_payload` for the whole payload, in one call: a batch for several kinds of change, or the
+  route Qdrant has for the one kind.
 - [x] **Changing vectors** — `UPDATE docs SET dense = '[0.1, ...]' WHERE ...` through Qdrant's
   `update_vectors`, and `SET dense = NULL` through `delete_vectors`, both in the same batch call
   as any payload change beside them. A vector is written out, given as JSON text as a tool sends

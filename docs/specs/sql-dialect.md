@@ -440,7 +440,10 @@ condition says. That is what the clause means in PostgreSQL too, and it makes a 
 refresh one statement. The conflict target is optional and may only be `_id`, since a Qdrant
 point has one key. Generating IDs other than UUIDs is still the target.
 
-`UPDATE docs SET … WHERE …` runs too, as one call to the batch update API: fields are set
+`UPDATE docs SET … WHERE …` runs too, as one call: to the batch update API when it makes
+several kinds of change, and to the route Qdrant has for the one kind when it makes only one
+(setting fields, replacing or clearing the payload, deleting fields, writing or deleting
+vectors). Either way the result is the same. Fields are set
 together, a field inside an object (`"specs.color"`, or `specs.color` without quotes) is set
 under its object's `key`, `NULL` deletes a field, and `_payload` replaces or clears the whole
 payload before the other fields are set. A field the collection doesn't have yet is added. A

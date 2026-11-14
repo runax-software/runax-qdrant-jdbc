@@ -30,6 +30,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetColumn;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.GroupedQueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.PointPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.SystemTablePlan;
@@ -164,11 +165,32 @@ final class SelectPlanner {
                 search.embed());
         }
 
+        JsonNode id = order == null ? onlyId(filter) : null;
+        if (id != null) {
+            return new PointPlan(schema.name(), id, columns, statement.limit(), offset(statement));
+        }
+
         Ordering ordering = order == null
             ? null : ordering(order, schema, statement.alias());
 
         return new ScrollPlan(schema.name(), columns, withPayload, withVector, statement.limit(),
             skip(statement, SCROLL_PAGES_BY_ID), filter, ordering);
+    }
+
+    /**
+     * The ID a filter asks for when one point's ID is all it asks: the WHERE {@code _id = 7},
+     * which a data grid sends to read a row again. {@code null} for any other filter, such as
+     * several IDs or an ID and a condition, which a scroll reads.
+     */
+    private static JsonNode onlyId(JsonNode filter) {
+        if (filter == null || filter.size() != 1) return null;
+
+        JsonNode must = filter.path("must");
+        if (must.size() != 1 || must.get(0).size() != 1) return null;
+
+        JsonNode ids = must.get(0).path("has_id");
+
+        return ids.size() == 1 ? ids.get(0) : null;
     }
 
     /**
