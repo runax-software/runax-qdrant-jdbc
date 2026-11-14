@@ -3,6 +3,7 @@ package com.runaxsoftware.qdrant.jdbc.system;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.runaxsoftware.qdrant.jdbc.gateway.HttpMethod;
 import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.ProbeAnswer;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 
 import java.net.URLEncoder;
@@ -30,6 +31,9 @@ public final class QdrantSystemTables implements SystemTableReader {
 
     private static final String MISSING_COLLECTION = "42S02";
 
+    // Qdrant's health probes, by name, which is also each one's path
+    private static final List<String> HEALTH_PROBES = List.of("healthz", "livez", "readyz");
+
     private final QdrantGateway gateway;
 
     /**
@@ -52,6 +56,7 @@ public final class QdrantSystemTables implements SystemTableReader {
             case TELEMETRY -> telemetry();
             case METRICS -> metrics();
             case ISSUES -> issues();
+            case HEALTH -> health();
         };
     }
 
@@ -253,6 +258,22 @@ public final class QdrantSystemTables implements SystemTableReader {
         }
 
         rows.sort(byText(0));
+
+        return rows;
+    }
+
+    /**
+     * One row per health probe, in the order of {@link #HEALTH_PROBES}. The first two say the
+     * process is up and answering; only {@code readyz} looks at the shards, so it is the one
+     * that can fail on a server the driver can reach.
+     */
+    private List<Object[]> health() throws SQLException {
+        List<Object[]> rows = new ArrayList<>(HEALTH_PROBES.size());
+
+        for (String probe : HEALTH_PROBES) {
+            ProbeAnswer answer = gateway.probe("/" + probe);
+            rows.add(new Object[]{probe, answer.passed(), (long) answer.status(), answer.body()});
+        }
 
         return rows;
     }

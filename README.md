@@ -33,10 +33,11 @@ LIMIT 10
 - **Similarity search** — rank points by similarity to a vector, with the score as a
   `_score` column, and `embed('text')` to search with text, embedded by Qdrant or by a
   provider such as OpenAI.
-- **System tables** — ten read-only tables in a `system` schema describe the server itself
+- **System tables** — eleven tables in a `system` schema describe the server itself
   (`collections`, `aliases`, `snapshots`, `shards`, `shard_keys`, `cluster`, `peers`,
-  `telemetry`, `metrics`, `issues`), so a collection's status, point counts, shards, and
-  aliases are SQL rows rather than REST calls.
+  `telemetry`, `metrics`, `issues`, `health`), so a collection's status, point counts, shards,
+  and aliases are SQL rows rather than REST calls. They are read-only, but for
+  `TRUNCATE TABLE system.issues`.
 - **Honest errors** — SQL that Qdrant can't run (joins, arbitrary aggregates) fails with
   a clear error instead of scanning a whole collection on the client.
 - **One small jar** — talks to Qdrant's REST API with the JDK's own HTTP client, so the

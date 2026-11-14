@@ -383,6 +383,25 @@ class SystemTablesIntegrationTest {
         }
     }
 
+    @Test
+    void readsTheHealthProbesOfARunningServer() throws SQLException {
+        List<String> probes = new ArrayList<>();
+
+        try (Statement statement = connection.createStatement();
+             ResultSet rows = statement.executeQuery(
+                 "SELECT probe, ok, status_code, message FROM system.health")) {
+            while (rows.next()) {
+                probes.add(rows.getString("probe"));
+
+                assertTrue(rows.getBoolean("ok"), rows.getString("probe"));
+                assertEquals(200, rows.getInt("status_code"), rows.getString("probe"));
+                assertNotNull(rows.getString("message"), rows.getString("probe"));
+            }
+        }
+
+        assertEquals(List.of("healthz", "livez", "readyz"), probes);
+    }
+
     /**
      * Every system table reads, and reports the columns and types the driver promises without
      * calling Qdrant, whether the table has rows on this server or not.

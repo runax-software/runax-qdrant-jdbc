@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `system.health`, Qdrant's three health probes as a table: one row each for `healthz`, `livez`
+  and `readyz`, with `ok`, the HTTP `status_code` and the `message` Qdrant sent. A probe that
+  fails is a row saying so rather than an error, since "not ready" is the answer the table is
+  for; `readyz` is the one that looks at the shards and answers 503 while one isn't ready. With
+  it every route of Qdrant's service area is covered. ([#43])
 - `TRUNCATE TABLE system.issues` clears the issues Qdrant reports about itself, so a list that
   has been read and acted on can be emptied from the same console that showed it. It is the one
   write a `system` table takes: Qdrant forgets its issues all at once and can't forget one, so
@@ -353,3 +358,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#39]: https://github.com/runax-software/runax-qdrant-jdbc/pull/39
 [#40]: https://github.com/runax-software/runax-qdrant-jdbc/pull/40
 [#42]: https://github.com/runax-software/runax-qdrant-jdbc/pull/42
+[#43]: https://github.com/runax-software/runax-qdrant-jdbc/pull/43

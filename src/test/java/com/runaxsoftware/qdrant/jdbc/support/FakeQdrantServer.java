@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
@@ -163,7 +164,22 @@ public final class FakeQdrantServer implements AutoCloseable {
         /**
          * {@code DELETE /issues}, which forgets every issue reported so far.
          */
-        CLEAR_ISSUES
+        CLEAR_ISSUES,
+
+        /**
+         * {@code GET /healthz}, which answers in text and needs no API key.
+         */
+        HEALTHZ,
+
+        /**
+         * {@code GET /livez}, the same check as {@code /healthz}.
+         */
+        LIVEZ,
+
+        /**
+         * {@code GET /readyz}, which answers 503 while a shard isn't ready.
+         */
+        READYZ
     }
 
     /**
@@ -179,6 +195,10 @@ public final class FakeQdrantServer implements AutoCloseable {
     public record Request(String method, String path, String apiKey, String userAgent,
                           JsonNode body, String query) {
     }
+
+    // The endpoints Qdrant answers without an API key
+    private static final Set<Endpoint> OPEN = Set.of(Endpoint.VERSION, Endpoint.HEALTHZ,
+        Endpoint.LIVEZ, Endpoint.READYZ);
 
     private record Failure(int status, String contentType, String body) {
     }
@@ -655,7 +675,7 @@ public final class FakeQdrantServer implements AutoCloseable {
             pause(endpoint);
 
             String required = requiredApiKey;
-            if (endpoint != Endpoint.VERSION && required != null && !required.equals(apiKey)) {
+            if (!OPEN.contains(endpoint) && required != null && !required.equals(apiKey)) {
                 send(exchange, 401, "text/plain", apiKey == null
                     ? "Must provide an API key or an Authorization bearer token"
                     : "Invalid API key or JWT");
@@ -691,6 +711,10 @@ public final class FakeQdrantServer implements AutoCloseable {
                     ok(exchange, BooleanNode.TRUE);
                 }
                 case METRICS -> send(exchange, 200, "text/plain; charset=utf-8", metrics);
+                case HEALTHZ, LIVEZ -> send(exchange, 200, "text/plain; charset=utf-8",
+                    "healthz check passed");
+                case READYZ -> send(exchange, 200, "text/plain; charset=utf-8",
+                    "all shards are ready");
             }
         } finally {
             exchange.close();
@@ -711,6 +735,9 @@ public final class FakeQdrantServer implements AutoCloseable {
                 case "telemetry": return Endpoint.TELEMETRY;
                 case "metrics": return Endpoint.METRICS;
                 case "issues": return Endpoint.ISSUES;
+                case "healthz": return Endpoint.HEALTHZ;
+                case "livez": return Endpoint.LIVEZ;
+                case "readyz": return Endpoint.READYZ;
                 default: break;
             }
         }
