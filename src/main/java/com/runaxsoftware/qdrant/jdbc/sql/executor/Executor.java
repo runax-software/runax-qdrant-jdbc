@@ -20,6 +20,7 @@ import com.runaxsoftware.qdrant.jdbc.resultset.ResultColumn;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnType;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.Planner;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ClearIssuesPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConstantPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CountPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateCollectionPlan;
@@ -264,6 +265,12 @@ public final class Executor {
 
         if (plan instanceof DropViewPlan view) {
             dropView(view);
+            return ExecutionResult.updated(0);
+        }
+
+        // Qdrant answers only that it cleared them, not how many there were
+        if (plan instanceof ClearIssuesPlan) {
+            writer.clearIssues();
             return ExecutionResult.updated(0);
         }
 
@@ -808,6 +815,11 @@ public final class Executor {
             @Override
             public void changeAliases(List<JsonNode> actions) throws SQLException {
                 gateway.changeAliases(actions);
+            }
+
+            @Override
+            public void clearIssues() throws SQLException {
+                gateway.clearIssues();
             }
         };
     }

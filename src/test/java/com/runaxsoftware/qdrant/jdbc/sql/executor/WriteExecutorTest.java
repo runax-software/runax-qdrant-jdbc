@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadIndexType;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ClearIssuesPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConflictAction;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateIndexPlan;
@@ -145,6 +146,11 @@ class WriteExecutorTest {
             public void changeAliases(List<JsonNode> actions) {
                 calls.add("change " + actions);
             }
+
+            @Override
+            public void clearIssues() {
+                calls.add("clear issues");
+            }
         });
 
     @Test
@@ -163,6 +169,15 @@ class WriteExecutorTest {
         assertEquals(0, executor.execute(new DeletePointsPlan("docs", FILTER), statement())
             .updateCount());
         assertEquals(List.of("count docs " + FILTER), calls);
+    }
+
+    @Test
+    void clearsTheIssuesInOneCall() throws SQLException {
+        ExecutionResult result = executor.execute(new ClearIssuesPlan(), statement());
+
+        assertFalse(result.hasResultSet());
+        assertEquals(0, result.updateCount());
+        assertEquals(List.of("clear issues"), calls);
     }
 
     @Test

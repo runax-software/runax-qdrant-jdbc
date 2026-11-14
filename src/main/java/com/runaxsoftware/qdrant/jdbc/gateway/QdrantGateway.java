@@ -367,6 +367,14 @@ public class QdrantGateway implements AutoCloseable {
     }
 
     /**
+     * Forgets every issue Qdrant has reported about itself. Qdrant reports one again the next
+     * time it comes across what caused it.
+     */
+    public void clearIssues() throws SQLException {
+        request(HttpMethod.DELETE, "/issues", null);
+    }
+
+    /**
      * How many points hold each value of a payload field, through Qdrant's facet API, the most
      * common value first. The field needs an index Qdrant can facet on; the request's limit
      * says how many values to count, since Qdrant counts the ten most common and returns no

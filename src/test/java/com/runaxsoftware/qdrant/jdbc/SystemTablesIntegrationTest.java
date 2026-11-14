@@ -345,6 +345,45 @@ class SystemTablesIntegrationTest {
     }
 
     /**
+     * Qdrant reports an unindexed field once a filter on it has been slow enough, which a test
+     * can't make happen on demand, so this checks what it can: the statement runs, reports no
+     * count, and leaves the table empty and readable.
+     */
+    @Test
+    void clearsTheIssuesWithTruncate() throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            assertEquals(0, statement.executeUpdate("TRUNCATE TABLE system.issues"));
+
+            try (ResultSet rows = statement.executeQuery("SELECT id FROM system.issues")) {
+                assertFalse(rows.next());
+            }
+        }
+    }
+
+    @Test
+    void keepsTheIssuesOnAReadOnlyConnection() throws SQLException {
+        try (Connection readOnly = DriverManager.getConnection(TestQdrant.jdbcUrl(),
+                 TestQdrant.properties())) {
+            readOnly.setReadOnly(true);
+
+            try (Statement statement = readOnly.createStatement()) {
+                assertEquals("25006", assertThrows(SQLException.class,
+                    () -> statement.executeUpdate("TRUNCATE TABLE system.issues")).getSQLState());
+            }
+        }
+    }
+
+    @Test
+    void keepsEveryOtherSystemTableReadOnly() throws SQLException {
+        try (Statement statement = connection.createStatement()) {
+            assertThrows(SQLException.class,
+                () -> statement.executeUpdate("TRUNCATE TABLE system.aliases"));
+            assertThrows(SQLException.class,
+                () -> statement.executeUpdate("DELETE FROM system.issues WHERE id = 'x'"));
+        }
+    }
+
+    /**
      * Every system table reads, and reports the columns and types the driver promises without
      * calling Qdrant, whether the table has rows on this server or not.
      */

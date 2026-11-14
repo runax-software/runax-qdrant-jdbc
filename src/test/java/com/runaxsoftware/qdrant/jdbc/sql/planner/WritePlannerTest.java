@@ -3,6 +3,7 @@ package com.runaxsoftware.qdrant.jdbc.sql.planner;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantCollection;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
@@ -10,6 +11,7 @@ import com.runaxsoftware.qdrant.jdbc.schema.ColumnKind;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnType;
 import com.runaxsoftware.qdrant.jdbc.schema.TableSchema;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.Parser;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ClearIssuesPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DeletePointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
@@ -97,6 +99,37 @@ class WritePlannerTest {
                 () -> plan("DELETE FROM docs WHERE missing = 1", CATALOG)).getSQLState());
         assertEquals("42S02", assertThrows(SQLException.class,
                 () -> plan("DROP TABLE other.docs", NO_LOOKUPS)).getSQLState());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "TRUNCATE TABLE system.issues",
+            "TRUNCATE system.issues",
+            "TRUNCATE TABLE qdrant.SYSTEM.Issues"})
+    void clearsTheIssuesWithoutReadingAnyColumns(String sql) throws SQLException {
+        Plan plan = plan(sql, NO_LOOKUPS);
+
+        assertEquals(new ClearIssuesPlan(), plan);
+        assertFalse(plan.returnsRows());
+        assertTrue(plan.changesData(), "a read-only connection refuses it");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "DELETE FROM system.issues WHERE id = 'x'",
+            "DROP TABLE system.issues"})
+    void pointsOtherWritesToTheIssuesAtTruncate(String sql) {
+        var error = assertThrows(SQLFeatureNotSupportedException.class,
+                () -> plan(sql, NO_LOOKUPS));
+
+        assertTrue(error.getMessage().endsWith("Qdrant clears its issues all at once, so use "
+                + "TRUNCATE TABLE system.issues"), error.getMessage());
+    }
+
+    @Test
+    void truncatesTheIssuesOfThisCatalogOnly() {
+        assertThrows(SQLException.class,
+                () -> plan("TRUNCATE TABLE other.system.issues", NO_LOOKUPS));
     }
 
     @ParameterizedTest

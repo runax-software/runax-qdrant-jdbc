@@ -1,6 +1,7 @@
 package com.runaxsoftware.qdrant.jdbc.support;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.BooleanNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadPath;
 import com.sun.net.httpserver.HttpExchange;
@@ -157,7 +158,12 @@ public final class FakeQdrantServer implements AutoCloseable {
         /**
          * {@code GET /issues}.
          */
-        ISSUES
+        ISSUES,
+
+        /**
+         * {@code DELETE /issues}, which forgets every issue reported so far.
+         */
+        CLEAR_ISSUES
     }
 
     /**
@@ -680,6 +686,10 @@ public final class FakeQdrantServer implements AutoCloseable {
                 case CLUSTER -> ok(exchange, cluster);
                 case TELEMETRY -> ok(exchange, telemetry);
                 case ISSUES -> ok(exchange, Json.object("issues", Json.array(issues.toArray())));
+                case CLEAR_ISSUES -> {
+                    issues.clear();
+                    ok(exchange, BooleanNode.TRUE);
+                }
                 case METRICS -> send(exchange, 200, "text/plain; charset=utf-8", metrics);
             }
         } finally {
@@ -703,6 +713,10 @@ public final class FakeQdrantServer implements AutoCloseable {
                 case "issues": return Endpoint.ISSUES;
                 default: break;
             }
+        }
+
+        if (method.equals("DELETE") && segments.length == 2 && segments[1].equals("issues")) {
+            return Endpoint.CLEAR_ISSUES;
         }
 
         if (segments.length < 2 || !segments[1].equals("collections")) {
