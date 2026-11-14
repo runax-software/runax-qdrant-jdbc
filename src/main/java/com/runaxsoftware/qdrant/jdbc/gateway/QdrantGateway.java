@@ -368,6 +368,30 @@ public class QdrantGateway implements AutoCloseable {
     }
 
     /**
+     * Adds a named vector to a collection, and waits until Qdrant has. Qdrant answers a vector
+     * already there with the same settings as a success, so a caller checks first.
+     *
+     * @param config the vector under {@code dense} or {@code sparse}, as Qdrant takes it
+     */
+    public void createVector(String collection, String vector, JsonNode config)
+        throws SQLException {
+        request(HttpMethod.PUT, vectorPath(collection, vector), config);
+    }
+
+    /**
+     * Deletes a named vector from a collection, with every point's value for it, and waits
+     * until Qdrant has. Qdrant answers a vector that isn't there as a success too, so a caller
+     * checks first.
+     */
+    public void deleteVector(String collection, String vector) throws SQLException {
+        request(HttpMethod.DELETE, vectorPath(collection, vector), null);
+    }
+
+    private static String vectorPath(String collection, String vector) {
+        return "/collections/" + segment(collection) + "/vectors/" + segment(vector) + "?wait=true";
+    }
+
+    /**
      * Forgets every issue Qdrant has reported about itself. Qdrant reports one again the next
      * time it comes across what caused it.
      */

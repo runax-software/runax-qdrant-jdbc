@@ -15,11 +15,13 @@ import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadIndexType;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QueryRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScoredPoint;
+import com.runaxsoftware.qdrant.jdbc.gateway.models.VectorField;
 import com.runaxsoftware.qdrant.jdbc.resultset.ListResultSet;
 import com.runaxsoftware.qdrant.jdbc.resultset.ResultColumn;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnType;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.Planner;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.AddVectorPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ClearIssuesPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ConstantPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CountPlan;
@@ -29,6 +31,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateViewPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DeletePointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropIndexPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropVectorPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropViewPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.EmbedText;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.FacetColumn;
@@ -71,6 +74,8 @@ public final class Executor {
     static final int MAX_PAGE_SIZE = 1_000;
 
     private static final String UNKNOWN_TABLE = "42S02";
+    private static final String DUPLICATE_COLUMN = "42S21";
+    private static final String UNKNOWN_COLUMN = "42S22";
 
     private static final JsonNodeFactory JSON = JsonNodeFactory.instance;
 
@@ -268,6 +273,16 @@ public final class Executor {
             return ExecutionResult.updated(0);
         }
 
+        if (plan instanceof AddVectorPlan add) {
+            addVector(add);
+            return ExecutionResult.updated(0);
+        }
+
+        if (plan instanceof DropVectorPlan drop) {
+            dropVector(drop);
+            return ExecutionResult.updated(0);
+        }
+
         // Qdrant answers only that it cleared them, not how many there were
         if (plan instanceof ClearIssuesPlan) {
             writer.clearIssues();
@@ -432,12 +447,7 @@ public final class Executor {
         json.set("id", point.id());
         json.set("payload", point.payload());
 
-        if (vectors.containsKey("")) {
-            json.set("vector", vectors.get(""));
-        } else {
-            ObjectNode named = json.putObject("vector");
-            vectors.forEach(named::set);
-        }
+        json.set("vector", vectorValue(vectors));
 
         return json;
     }
@@ -493,13 +503,7 @@ public final class Executor {
             ObjectNode point = JSON.objectNode();
             point.set("id", id);
 
-            // Named vectors go under their names; the unnamed one is the vector itself
-            if (vectors.containsKey("")) {
-                point.set("vector", vectors.get(""));
-            } else {
-                ObjectNode named = point.putObject("vector");
-                vectors.forEach(named::set);
-            }
+            point.set("vector", vectorValue(vectors));
 
             points.add(point);
         }
@@ -734,6 +738,64 @@ public final class Executor {
             JSON.objectNode().put("alias_name", plan.view()))));
     }
 
+    /**
+     * A point's vectors as Qdrant takes them: the unnamed one alone is the vector itself, and
+     * any others go under their names. A collection that was given a named vector after it was
+     * created has both kinds, and then the unnamed one goes under the name Qdrant keeps it by,
+     * the empty one.
+     */
+    private static JsonNode vectorValue(Map<String, JsonNode> vectors) {
+        if (vectors.size() == 1 && vectors.containsKey("")) return vectors.get("");
+
+        ObjectNode named = JSON.objectNode();
+        vectors.forEach(named::set);
+
+        return named;
+    }
+
+    /**
+     * Adds the vector unless the collection has one under the name. Qdrant answers a vector
+     * that's there with the same settings as a success and one with others as a bad request, so
+     * the driver looks first and says the same thing about both: the name is taken.
+     */
+    private void addVector(AddVectorPlan plan) throws SQLException {
+        if (hasVector(plan.collection(), plan.vector())) {
+            if (plan.ifNotExists()) return;
+
+            throw new SQLException(plan.collection() + " already has a vector '" + plan.vector()
+                + "': a vector's dimensions and distance are fixed, so to change them drop the "
+                + "column and add it again, which deletes its values", DUPLICATE_COLUMN);
+        }
+
+        writer.createVector(plan.collection(), plan.vector(), plan.config());
+    }
+
+    /**
+     * Deletes the vector if the collection has it. Qdrant answers a vector that isn't there as
+     * a success, so the driver looks first, and reports a missing one.
+     */
+    private void dropVector(DropVectorPlan plan) throws SQLException {
+        List<VectorField> vectors = writer.vectors(plan.collection());
+
+        if (vectors.stream().noneMatch(vector -> vector.name().equals(plan.vector()))) {
+            if (plan.ifExists()) return;
+
+            List<String> names = vectors.stream().filter(vector -> !vector.isUnnamed())
+                .map(VectorField::name).sorted().toList();
+            throw new SQLException(plan.collection() + " has no vector '" + plan.vector()
+                + "': its named vectors are " + (names.isEmpty() ? "none" : String.join(", ", names))
+                + ". ALTER TABLE drops vectors only: a payload field has no column to drop, so "
+                + "DROP INDEX removes its index and UPDATE ... SET " + plan.vector()
+                + " = NULL the field itself", UNKNOWN_COLUMN);
+        }
+
+        writer.deleteVector(plan.collection(), plan.vector());
+    }
+
+    private boolean hasVector(String collection, String name) throws SQLException {
+        return writer.vectors(collection).stream().anyMatch(vector -> vector.name().equals(name));
+    }
+
     private static QdrantAlias alias(List<QdrantAlias> aliases, String name) {
         return aliases.stream().filter(x -> x.name().equals(name)).findFirst().orElse(null);
     }
@@ -820,6 +882,22 @@ public final class Executor {
             @Override
             public void clearIssues() throws SQLException {
                 gateway.clearIssues();
+            }
+
+            @Override
+            public List<VectorField> vectors(String collection) throws SQLException {
+                return gateway.collection(collection).vectors();
+            }
+
+            @Override
+            public void createVector(String collection, String vector, JsonNode config)
+                throws SQLException {
+                gateway.createVector(collection, vector, config);
+            }
+
+            @Override
+            public void deleteVector(String collection, String vector) throws SQLException {
+                gateway.deleteVector(collection, vector);
             }
         };
     }

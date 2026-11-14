@@ -20,6 +20,8 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateIndexPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.CreateViewPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropIndexPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.AddVectorPlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropVectorPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropViewPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.InsertPointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
@@ -222,6 +224,8 @@ public class QdrantStatement extends AbstractStatement {
         if (plan instanceof DropCollectionPlan drop) return withAliases(drop.collection());
         if (plan instanceof CreateIndexPlan index) return withAliases(index.collection());
         if (plan instanceof DropIndexPlan index) return withAliases(index.collection());
+        if (plan instanceof AddVectorPlan add) return withAliases(add.collection());
+        if (plan instanceof DropVectorPlan drop) return withAliases(drop.collection());
         if (plan instanceof CreateViewPlan view) return Set.of(view.view());
         if (plan instanceof RenameViewPlan view) return Set.of(view.view(), view.newName());
         if (plan instanceof DropViewPlan view) return Set.of(view.view());

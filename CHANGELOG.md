@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `ALTER TABLE … ADD COLUMN` and `DROP COLUMN` for named vectors, so a collection that already
+  holds points can gain a second embedding — `ALTER TABLE docs ADD COLUMN image VECTOR(512)
+  DISTANCE COSINE` — or lose one, without being recreated. The column is written as `CREATE
+  TABLE` writes it: `VECTOR(n)`, `MULTIVECTOR(n)` or `SPARSE_VECTOR [MODIFIER IDF]`. Qdrant
+  answers an add of a vector that's there, and a drop of one that isn't, as done, so the driver
+  looks first: a taken name is `42S21` and a missing vector `42S22`, unless the statement says
+  `IF NOT EXISTS` or `IF EXISTS`. Only vectors are columns Qdrant keeps a declaration of, so a
+  payload column is an error naming `CREATE INDEX`, `DROP INDEX` or `UPDATE … SET … = NULL`,
+  and `_vector` one saying it comes from `CREATE TABLE`. `DatabaseMetaData` now reports
+  `supportsAlterTableWithAddColumn` and `supportsAlterTableWithDropColumn`. ([#45])
 - `system.optimizations`, what Qdrant's optimizers are doing to each collection: a row per
   optimization that is running, queued, or among the latest completed, with its optimizer,
   status, the segments and points it takes, when it started and finished, and its steps as
@@ -283,6 +293,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A collection with both an unnamed vector and named ones now writes and reads all of them.
+  The driver took the unnamed vector to be the only one a collection could have: an `INSERT` or
+  `UPDATE` that set `_vector` beside a named vector stored `_vector` and dropped the other, and
+  `SELECT _vector` returned every vector of the point as one JSON object. Qdrant has always
+  allowed the mix, and `ALTER TABLE … ADD COLUMN` on a collection with an unnamed vector is the
+  way to it from SQL. ([#45])
 - A provider's failure no longer reports a connection SQLState. An unreachable or broken OpenAI
   or Voyage AI answered `08001` or `08S01`, which says *the connection is gone*; connection pools
   close a connection that reports one. The connection to Qdrant is fine when a provider isn't, so
@@ -365,3 +381,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#42]: https://github.com/runax-software/runax-qdrant-jdbc/pull/42
 [#43]: https://github.com/runax-software/runax-qdrant-jdbc/pull/43
 [#44]: https://github.com/runax-software/runax-qdrant-jdbc/pull/44
+[#45]: https://github.com/runax-software/runax-qdrant-jdbc/pull/45

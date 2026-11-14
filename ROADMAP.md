@@ -121,7 +121,12 @@ measured REST and SQL coverage is in [docs/coverage.md](docs/coverage.md).
 - [x] **Creating collections** — `CREATE TABLE [IF NOT EXISTS] docs (dense VECTOR(384)
   DISTANCE COSINE, keywords SPARSE_VECTOR MODIFIER IDF, lang KEYWORD INDEX)`: dense,
   multi-, and sparse vectors, a single `_vector` column for the unnamed vector, and payload
-  indexes. Collection settings in `WITH (…)` and `ALTER TABLE` come later.
+  indexes. Collection settings in `WITH (…)` come later.
+- [x] **Adding and dropping vectors** — `ALTER TABLE docs ADD COLUMN image VECTOR(512) DISTANCE
+  COSINE` and `ALTER TABLE docs DROP COLUMN image`, through Qdrant's named-vector API: a dense
+  vector, a multivector, or a sparse one, on a collection that already holds points. A payload
+  column is an error naming `CREATE INDEX` or `DROP INDEX`, since the payload has no schema to
+  alter. Collection settings, `ALTER TABLE docs SET (…)`, come later.
 - [ ] **Post-filtering in the driver (to decide)** — conditions Qdrant can't run, such as
   `price > cost`, `LOWER(name) = 'lamp'`, or joins, checked by the driver on the rows Qdrant
   returns. Probably opt-in and capped, since it can read far more points than it returns.

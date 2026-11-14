@@ -6,4 +6,5 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 public sealed interface Statement permits SelectStatement, DeleteStatement, TruncateStatement,
     DropTableStatement, CreateTableStatement, SetStatement, ResetStatement, ShowStatement,
     UpdateStatement, InsertStatement, CreateIndexStatement, DropIndexStatement,
-    CreateViewStatement, AlterViewStatement, DropViewStatement {}
+    CreateViewStatement, AlterViewStatement, DropViewStatement, AddColumnStatement,
+    DropColumnStatement {}

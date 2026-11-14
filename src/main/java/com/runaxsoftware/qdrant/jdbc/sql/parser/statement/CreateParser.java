@@ -7,13 +7,11 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Statement;
 
 import java.sql.SQLSyntaxErrorException;
 import java.util.ArrayList;
-import java.util.Locale;
 
 /**
- * Reads {@code CREATE TABLE [IF NOT EXISTS] docs (column type [(size)] [DISTANCE d]
- * [MODIFIER m] [INDEX], ...)}, and hands {@code CREATE INDEX} and {@code CREATE [OR REPLACE]
- * VIEW} to their own parsers. The type and the words after it mean something only here, so
- * they're read as words and stay usable as names everywhere else.
+ * Reads {@code CREATE TABLE [IF NOT EXISTS] docs (column, ...)}, each column through
+ * {@link ColumnParser}, and hands {@code CREATE INDEX} and {@code CREATE [OR REPLACE] VIEW} to
+ * their own parsers.
  */
 public final class CreateParser {
 
@@ -54,49 +52,11 @@ public final class CreateParser {
 
         this.tokenStream.expectSymbol("(");
         do {
-            columns.add(parseColumn());
+            columns.add(new ColumnParser(this.tokenStream).parse());
         } while (this.tokenStream.matchSymbol(","));
         this.tokenStream.expectSymbol(")");
 
         return new CreateTableStatement(table, ifNotExists, columns);
-    }
-
-    private ColumnSpec parseColumn() throws SQLSyntaxErrorException {
-        String name = this.tokenStream.expectIdentifier();
-        String type = word("Expected a column type, such as VECTOR(384) or KEYWORD INDEX");
-
-        Integer size = null;
-        if (this.tokenStream.matchSymbol("(")) {
-            size = Math.toIntExact(this.tokenStream.expectWholeNumber());
-            this.tokenStream.expectSymbol(")");
-        }
-
-        String distance = null;
-        String modifier = null;
-        boolean index = false;
-
-        while (true) {
-            if (matchWord("DISTANCE")) {
-                distance = word("Expected a distance, such as COSINE");
-            } else if (matchWord("MODIFIER")) {
-                modifier = word("Expected a modifier, such as IDF");
-            } else if (matchWord("INDEX")) {
-                index = true;
-            } else {
-                break;
-            }
-        }
-
-        return new ColumnSpec(name, type, size, distance, modifier, index);
-    }
-
-    // The next word, upper case
-    private String word(String expected) throws SQLSyntaxErrorException {
-        if (!this.tokenStream.peekIdentifier()) {
-            throw this.tokenStream.error(expected);
-        }
-
-        return this.tokenStream.advance().text().toUpperCase(Locale.ROOT);
     }
 
     private boolean matchWord(String word) {

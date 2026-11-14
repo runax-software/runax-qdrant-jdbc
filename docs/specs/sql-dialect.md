@@ -427,8 +427,8 @@ becomes a payload index: `KEYWORD`, `INTEGER`, `FLOAT`, `BOOL`, `DATETIME`, `TEX
 `GEO`, or the SQL names `VARCHAR`, `BIGINT`, `DOUBLE`, `BOOLEAN`, `TIMESTAMP`. A payload column
 without `INDEX` is an error, since the payload has no schema to declare it in. Qdrant creates
 the collection and each index in separate calls, so when an index fails the driver deletes the
-new collection again rather than leave half a table. `WITH (…)`, `ALTER TABLE`, and
-`CREATE INDEX` on its own is described below.
+new collection again rather than leave half a table. `WITH (…)` and `ALTER TABLE … SET (…)`
+don't run yet; `CREATE INDEX` on its own and `ALTER TABLE`'s columns are described below.
 
 `CREATE INDEX [IF NOT EXISTS] [name] ON docs (field) [USING type] [WITH (option = value, …)]`
 creates a payload index on one field, and `DROP INDEX [IF EXISTS] name ON docs` or
@@ -455,14 +455,33 @@ EXISTS`). Changing an index's type is a `DROP INDEX` and a `CREATE INDEX`. The c
 driver keeps follow at once, under the collection's name and its aliases', so an `ORDER BY`
 that needed the index runs on the next statement.
 
+`ALTER TABLE docs ADD [COLUMN] [IF NOT EXISTS] image VECTOR(512) DISTANCE COSINE` adds a named
+vector to a collection that exists, and `ALTER TABLE docs DROP [COLUMN] [IF EXISTS] image`
+deletes one, with every point's value for it; both run today. The column is written as `CREATE
+TABLE` writes it, so it can be a `VECTOR(n)`, a `MULTIVECTOR(n)` or a `SPARSE_VECTOR [MODIFIER
+IDF]`, and the points that were already there have no value for it until an `UPDATE` gives them
+one. A vector's dimensions and distance can't be changed afterwards: that's a `DROP COLUMN` and
+an `ADD COLUMN`, which loses the values. Qdrant answers an `ADD` of a vector that's there with
+the same settings as done, and a `DROP` of one that isn't as done too, so the driver looks
+first: a taken name is `42S21` (nothing to do with `IF NOT EXISTS`) and a missing vector `42S22`
+(nothing with `IF EXISTS`).
+
+Only vectors are columns Qdrant keeps a declaration of, so only they can be added and dropped.
+`ADD COLUMN lang KEYWORD` is an error that names `CREATE INDEX`, since a payload field needs no
+adding and the only thing to declare about it is an index; `DROP COLUMN lang` is an error that
+names `DROP INDEX` and `UPDATE … SET lang = NULL`. The unnamed vector, `_vector`, comes from
+`CREATE TABLE` or not at all: Qdrant neither adds nor deletes it. It does let a named vector be
+added beside it, and then the collection has both, `_vector` and the named ones, in every
+statement.
+
 | SQL | Qdrant |
 | --- | --- |
 | `CREATE TABLE` with vector columns | Create collection; a single column named `_vector` makes the unnamed vector |
 | Payload columns with `INDEX` in `CREATE TABLE` | Payload indexes, created after the collection |
 | `WITH (…)` | Collection settings: shards, replication, HNSW, optimizers, quantization, strict mode, sharding method, metadata |
 | `ALTER TABLE docs SET (…)` | Update collection |
-| `ALTER TABLE docs ADD COLUMN image VECTOR(512) DISTANCE COSINE` | Add a named vector |
-| `ALTER TABLE docs DROP COLUMN image` | Delete a named vector |
+| `ALTER TABLE docs ADD COLUMN image VECTOR(512) DISTANCE COSINE` | Add a named vector (runs today) |
+| `ALTER TABLE docs DROP COLUMN image` | Delete a named vector (runs today) |
 | `CREATE INDEX ON docs (lang) [USING keyword] [WITH (is_tenant = true, …)]` | Create payload index; the type defaults from the column type |
 | `DROP INDEX lang_idx ON docs` | Delete payload index |
 | `COMMENT ON TABLE docs IS '…'` | Collection metadata `description` |

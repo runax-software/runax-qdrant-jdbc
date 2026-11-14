@@ -93,7 +93,7 @@ final class CreatePlanner {
     }
 
     // A dense vector or multivector: its size, and a distance that defaults to cosine
-    private static ObjectNode dense(ColumnSpec column, String collection) throws SQLException {
+    static ObjectNode dense(ColumnSpec column, String collection) throws SQLException {
         if (column.size() == null || column.size() <= 0) {
             throw new SQLSyntaxErrorException("Vector '" + column.name() + "' needs its "
                 + "dimensions, as " + column.type() + "(384)", "42000");
@@ -120,7 +120,7 @@ final class CreatePlanner {
     }
 
     // A sparse vector, whose size and distance Qdrant fixes itself
-    private static ObjectNode sparse(ColumnSpec column) throws SQLException {
+    static ObjectNode sparse(ColumnSpec column) throws SQLException {
         if (column.name().equals(UNNAMED)) {
             throw new SQLFeatureNotSupportedException("A sparse vector needs a name of its own: "
                 + UNNAMED + " is the unnamed dense vector");
