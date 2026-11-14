@@ -89,6 +89,11 @@ interface Writer {
     void changeAliases(List<JsonNode> actions) throws SQLException;
 
     /**
+     * Changes the collection's settings, or those of its vectors.
+     */
+    void updateCollection(String collection, JsonNode changes) throws SQLException;
+
+    /**
      * The collection's vectors, as Qdrant has them now.
      */
     List<VectorField> vectors(String collection) throws SQLException;

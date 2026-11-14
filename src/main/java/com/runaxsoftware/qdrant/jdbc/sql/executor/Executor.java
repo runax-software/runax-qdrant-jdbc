@@ -43,6 +43,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.RenameViewPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ScrollPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.SystemTablePlan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdateCollectionPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdatePointsPlan;
 import com.runaxsoftware.qdrant.jdbc.system.QdrantSystemTables;
 import com.runaxsoftware.qdrant.jdbc.system.SystemTableReader;
@@ -270,6 +271,11 @@ public final class Executor {
 
         if (plan instanceof DropViewPlan view) {
             dropView(view);
+            return ExecutionResult.updated(0);
+        }
+
+        if (plan instanceof UpdateCollectionPlan update) {
+            writer.updateCollection(update.collection(), update.changes());
             return ExecutionResult.updated(0);
         }
 
@@ -882,6 +888,12 @@ public final class Executor {
             @Override
             public void clearIssues() throws SQLException {
                 gateway.clearIssues();
+            }
+
+            @Override
+            public void updateCollection(String collection, JsonNode changes)
+                throws SQLException {
+                gateway.updateCollection(collection, changes);
             }
 
             @Override

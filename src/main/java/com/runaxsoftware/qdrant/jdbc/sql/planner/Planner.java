@@ -1,6 +1,7 @@
 package com.runaxsoftware.qdrant.jdbc.sql.planner;
 
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AddColumnStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AlterSettingsStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AlterViewStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateIndexStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.CreateTableStatement;
@@ -48,6 +49,7 @@ public final class Planner {
     private final IndexPlanner indexPlanner = new IndexPlanner();
     private final ViewPlanner viewPlanner = new ViewPlanner();
     private final AlterPlanner alterPlanner = new AlterPlanner();
+    private final SettingsPlanner settingsPlanner = new SettingsPlanner();
 
     public Plan plan(Statement statement, Catalog catalog) throws SQLException {
         if (statement instanceof SelectStatement select) {
@@ -85,6 +87,9 @@ public final class Planner {
         }
         if (statement instanceof DropColumnStatement drop) {
             return alterPlanner.plan(drop);
+        }
+        if (statement instanceof AlterSettingsStatement settings) {
+            return settingsPlanner.plan(settings, catalog);
         }
         if (statement instanceof InsertStatement insert) {
             return insertPlanner.plan(insert, catalog);

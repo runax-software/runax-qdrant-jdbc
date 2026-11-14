@@ -19,7 +19,7 @@ LIMIT 10
 > from the [releases](https://github.com/runax-software/runax-qdrant-jdbc/releases), or build
 > it from source (`./gradlew shadowJar`). It does run SQL: `SELECT` with filters, patterns
 > and full-text matching, vector similarity search, `COUNT(*)` and `GROUP BY`, `INSERT`,
-> `UPDATE`, `DELETE`, and DDL for collections, indexes and views — seventeen statement kinds.
+> `UPDATE`, `DELETE`, and DDL for collections, indexes and views — eighteen statement kinds.
 > Exactly how much of Qdrant and how much SQL that amounts to is measured in
 > [docs/coverage.md](docs/coverage.md), the target dialect is in
 > [docs/specs/sql-dialect.md](docs/specs/sql-dialect.md), and what's next is in
@@ -238,6 +238,7 @@ RESET ALL;
 | `TRUNCATE TABLE docs` | Delete every point | The collection and its indexes stay |
 | `DROP TABLE [IF EXISTS] docs` | Delete the collection | |
 | `ALTER TABLE docs ADD COLUMN image VECTOR(512)`, `ALTER TABLE docs DROP COLUMN image` | Create or delete a named vector | Dense, multi-, or sparse; payload fields have no column to alter |
+| `ALTER TABLE docs SET (hnsw.m = 16)`, `ALTER TABLE docs ALTER COLUMN dense SET (on_disk = true)` | Update collection | HNSW, optimizers, strict mode, quantization, metadata; a setting is `group.name`, its name alone, or its group as JSON |
 | `CREATE INDEX ON docs (lang)`, `DROP INDEX lang_idx ON docs` | Create or delete a payload index | `USING text WITH (tokenizer = word, …)` for a type and its options |
 | `CREATE [OR REPLACE] VIEW current AS SELECT * FROM docs` | Create or switch an alias | Also `ALTER VIEW … RENAME TO`, `DROP VIEW` |
 | `CREATE TABLE docs (dense VECTOR(384) DISTANCE COSINE, lang KEYWORD INDEX)` | Create the collection, then its payload indexes | `_vector VECTOR(n)` makes the unnamed vector |

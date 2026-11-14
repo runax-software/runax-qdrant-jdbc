@@ -427,8 +427,8 @@ becomes a payload index: `KEYWORD`, `INTEGER`, `FLOAT`, `BOOL`, `DATETIME`, `TEX
 `GEO`, or the SQL names `VARCHAR`, `BIGINT`, `DOUBLE`, `BOOLEAN`, `TIMESTAMP`. A payload column
 without `INDEX` is an error, since the payload has no schema to declare it in. Qdrant creates
 the collection and each index in separate calls, so when an index fails the driver deletes the
-new collection again rather than leave half a table. `WITH (…)` and `ALTER TABLE … SET (…)`
-don't run yet; `CREATE INDEX` on its own and `ALTER TABLE`'s columns are described below.
+new collection again rather than leave half a table. `WITH (…)` doesn't run
+yet; `CREATE INDEX` on its own and `ALTER TABLE` are described below.
 
 `CREATE INDEX [IF NOT EXISTS] [name] ON docs (field) [USING type] [WITH (option = value, …)]`
 creates a payload index on one field, and `DROP INDEX [IF EXISTS] name ON docs` or
@@ -474,12 +474,48 @@ names `DROP INDEX` and `UPDATE … SET lang = NULL`. The unnamed vector, `_vecto
 added beside it, and then the collection has both, `_vector` and the named ones, in every
 statement.
 
+`ALTER TABLE docs SET (setting = value, …)` changes a collection's settings in place, and runs
+today. Qdrant changes what the statement names and leaves the rest. The settings come in groups,
+and a setting can be written whichever way reads best; all of these are the same change:
+
+```sql
+ALTER TABLE docs SET (hnsw.m = 16);              -- group.name
+ALTER TABLE docs SET (hnsw_config.m = 16);       -- the group as Qdrant names it
+ALTER TABLE docs SET (m = 16);                   -- the name alone, where one group has it
+ALTER TABLE docs SET (hnsw = '{"m": 16}');       -- the whole group as JSON
+```
+
+| Group | Settings |
+| --- | --- |
+| `params` | `replication_factor`, `write_consistency_factor`, `read_fan_out_factor`, `read_fan_out_delay_ms`, `on_disk_payload` |
+| `hnsw` (`hnsw_config`) | `m`, `ef_construct`, `full_scan_threshold`, `max_indexing_threads`, `payload_m`, `on_disk`, `inline_storage` |
+| `optimizers` (`optimizers_config`, `optimizer_config`) | `deleted_threshold`, `vacuum_min_vector_number`, `default_segment_number`, `max_segment_size`, `memmap_threshold`, `indexing_threshold`, `flush_interval_sec`, `max_optimization_threads` (a number or `auto`), `prevent_unoptimized` |
+| `strict_mode` (`strict_mode_config`) | `enabled`, `max_query_limit`, `max_timeout`, `unindexed_filtering_retrieve`, `unindexed_filtering_update`, `search_max_hnsw_ef`, `search_allow_exact`, `search_max_oversampling`, `upsert_max_batchsize`, `search_max_batchsize`, `max_collection_vector_size_bytes`, `max_collection_payload_size_bytes`, `max_points_count`, `read_rate_limit`, `write_rate_limit`, `filter_max_conditions`, `condition_max_size`, `max_payload_index_count`, `max_resident_memory_percent` |
+| `quantization` (`quantization_config`) | Given whole, as JSON, since it's one of several shapes: `quantization = '{"scalar": {"type": "int8"}}'`; `quantization = disabled` turns it off |
+| `metadata` | Free-form: `metadata = '{"owner": "search"}'`, or one key at a time as `metadata.owner = 'search'`. Qdrant merges it into what's there, and a key set to `NULL` is removed. Everything after `metadata.` is the key, dots and case kept, so `metadata.runax.embed.dense = 'openai:…'` sets a vector's embedding model |
+
+Qdrant accepts a name it doesn't know, drops it, and answers that all went well, so the driver
+checks every name first: an unknown setting or group is an error listing the ones there are, a
+value of the wrong kind is `22023`, and one setting given two ways in a statement is an error
+whichever would have won. A group's JSON form also reaches the few settings that are objects
+themselves (`memory`, a collection's `payload` and `id_tracker`, strict mode's `multivector_config`
+and `sparse_config`); the names inside those are Qdrant's to check. What a collection can't
+change after it's created isn't here: its shard count, its sharding method, and its WAL.
+
+`ALTER TABLE docs ALTER [COLUMN] dense SET (…)` changes one vector's settings, which override
+the collection's for that vector. A dense vector or a multivector has `on_disk`, the `hnsw`
+group and `quantization`; a sparse vector has `modifier` (`idf` or `none`) and an `index` group
+of `on_disk`, `full_scan_threshold` and `datatype`. Here `on_disk` alone is the vector's own
+storage and `hnsw.on_disk` its index's. `_vector` names the unnamed vector. A column that isn't
+a vector is `42S22`: a payload field has no settings.
+
 | SQL | Qdrant |
 | --- | --- |
 | `CREATE TABLE` with vector columns | Create collection; a single column named `_vector` makes the unnamed vector |
 | Payload columns with `INDEX` in `CREATE TABLE` | Payload indexes, created after the collection |
 | `WITH (…)` | Collection settings: shards, replication, HNSW, optimizers, quantization, strict mode, sharding method, metadata |
-| `ALTER TABLE docs SET (…)` | Update collection |
+| `ALTER TABLE docs SET (…)` | Update collection (runs today) |
+| `ALTER TABLE docs ALTER COLUMN dense SET (…)` | Update collection, one vector's settings (runs today) |
 | `ALTER TABLE docs ADD COLUMN image VECTOR(512) DISTANCE COSINE` | Add a named vector (runs today) |
 | `ALTER TABLE docs DROP COLUMN image` | Delete a named vector (runs today) |
 | `CREATE INDEX ON docs (lang) [USING keyword] [WITH (is_tenant = true, …)]` | Create payload index; the type defaults from the column type |
@@ -554,8 +590,9 @@ ALTER TABLE docs SET (metadata = '{"runax.embed.dense": "openai:text-embedding-3
 vector, `embed('text')` needs none, and naming a different one is an error: the search would
 run, but against vectors made by another model, and find the wrong points. With no model kept,
 `embed('text')` without one is an error that says to name it. The metadata is read with the
-collection's columns; setting it from SQL (the `ALTER TABLE` above) isn't supported yet, so
-it's set with Qdrant's update-collection API. Providers the driver calls make dense vectors,
+collection's columns, and the `ALTER TABLE` above sets it, as does the shorter
+`ALTER TABLE docs SET (metadata.runax.embed.dense = 'openai:text-embedding-3-small')`; the
+next statement sees it. Providers the driver calls make dense vectors,
 whose dimensions the driver checks against the vector before it searches; a `qdrant:` model's
 are Qdrant's to check. Provider API keys come from connection settings, never from SQL or
 collection metadata, and are never logged. A Qdrant without an inference service answers a

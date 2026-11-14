@@ -23,6 +23,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Star;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.TableName;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.VectorLiteral;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AddColumnStatement;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AlterSettingsStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.AlterViewStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Assignment;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.ColumnSpec;
@@ -45,6 +46,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.sql.SQLSyntaxErrorException;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -730,9 +732,40 @@ class ParserTest {
     }
 
     @Test
+    void parsesAlterTableSetWithDottedNamesWordsAndConstants() throws SQLSyntaxErrorException {
+        var settings = new LinkedHashMap<String, Expression>();
+        settings.put("hnsw.m", new Literal(16L));
+        settings.put("on_disk_payload", new Literal(true));
+        settings.put("optimizers.max_optimization_threads", new Literal("auto"));
+        settings.put("metadata.runax.embed.Dense", new Literal("openai:text-embedding-3-small"));
+        settings.put("quantization", new Literal("{\"scalar\": {\"type\": \"int8\"}}"));
+
+        assertEquals(new AlterSettingsStatement(TableName.of("docs"), null, settings),
+            Parser.parse("ALTER TABLE docs SET (hnsw.m = 16, on_disk_payload = true, "
+                + "optimizers.max_optimization_threads = auto, "
+                + "metadata.runax.embed.Dense = 'openai:text-embedding-3-small', "
+                + "quantization = '{\"scalar\": {\"type\": \"int8\"}}')"));
+    }
+
+    @Test
+    void parsesAlterColumnSet() throws SQLSyntaxErrorException {
+        assertEquals(new AlterSettingsStatement(TableName.of("collections", "docs"), "dense",
+                Map.of("on_disk", new Literal(true))),
+            Parser.parse("alter table collections.docs alter column dense set (on_disk = true)"));
+        assertEquals(new AlterSettingsStatement(TableName.of("docs"), "_vector",
+                Map.of("hnsw.m", new Literal(8L))),
+            Parser.parse("ALTER TABLE docs ALTER _vector SET (hnsw.m = 8);"));
+    }
+
+    @Test
     void rejectsTheAlterTableFormsItDoesntHave() {
-        assertError("Expected ADD COLUMN or DROP COLUMN: that's what ALTER TABLE changes so far, "
-            + "found 'RENAME' at line 1, column 18", "ALTER TABLE docs RENAME TO x");
+        assertError("Expected ADD COLUMN, DROP COLUMN, ALTER COLUMN or SET, found 'RENAME' at "
+            + "line 1, column 18", "ALTER TABLE docs RENAME TO x");
+        assertError("Expected SET (...): a vector's settings are what ALTER COLUMN changes, found "
+            + "'TYPE' at line 1, column 37", "ALTER TABLE docs ALTER COLUMN dense TYPE VECTOR(8)");
+        assertError("Setting 'hnsw.m' is given twice, found ')' at line 1, column 46",
+            "ALTER TABLE docs SET (hnsw.m = 8, hnsw.m = 16)");
+        assertError("Expected a name, found ')' at line 1, column 23", "ALTER TABLE docs SET ()");
         assertError("Expected a column type, such as VECTOR(384) or KEYWORD INDEX, found the end "
             + "of the statement at line 1, column 34", "ALTER TABLE docs ADD COLUMN image");
         assertError("Expected the end of the statement, found ',' at line 1, column 35",

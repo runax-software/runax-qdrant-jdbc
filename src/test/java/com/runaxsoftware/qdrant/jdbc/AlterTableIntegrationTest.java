@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.runaxsoftware.qdrant.jdbc.gateway.QdrantGateway;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.VectorField;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.VectorKind;
@@ -166,6 +167,96 @@ class AlterTableIntegrationTest {
         }
     }
 
+    // Settings
+
+    @Test
+    void changesACollectionsSettingsAndLeavesTheRest() throws SQLException {
+        assertEquals(0, statement.executeUpdate("ALTER TABLE " + named + " SET (hnsw.m = 24, "
+            + "indexing_threshold = 5000, optimizers.max_optimization_threads = auto, "
+            + "on_disk_payload = false, strict_mode = '{\"enabled\": true, "
+            + "\"max_query_limit\": 500}')"));
+
+        JsonNode config = gateway.collectionInfo(named).path("config");
+        assertEquals(24, config.path("hnsw_config").path("m").asInt());
+        assertEquals(100, config.path("hnsw_config").path("ef_construct").asInt(), "untouched");
+        assertEquals(5000, config.path("optimizer_config").path("indexing_threshold").asInt());
+        assertFalse(config.path("params").path("on_disk_payload").asBoolean(true));
+        assertTrue(config.path("strict_mode_config").path("enabled").asBoolean());
+        assertEquals(500, config.path("strict_mode_config").path("max_query_limit").asInt());
+    }
+
+    @Test
+    void setsAndTurnsOffQuantization() throws SQLException {
+        statement.executeUpdate("ALTER TABLE " + named
+            + " SET (quantization = '{\"scalar\": {\"type\": \"int8\", \"always_ram\": true}}')");
+        assertEquals("int8", gateway.collectionInfo(named).path("config")
+            .path("quantization_config").path("scalar").path("type").asText());
+
+        statement.executeUpdate("ALTER TABLE " + named + " SET (quantization = disabled)");
+        assertTrue(gateway.collectionInfo(named).path("config").path("quantization_config")
+            .isNull());
+    }
+
+    @Test
+    void mergesMetadataAndRemovesAKeySetToNull() throws SQLException {
+        statement.executeUpdate("ALTER TABLE " + named
+            + " SET (metadata = '{\"owner\": \"search\", \"tier\": 2}')");
+        statement.executeUpdate("ALTER TABLE " + named
+            + " SET (metadata.tier = 3, metadata.note = 'kept')");
+        statement.executeUpdate("ALTER TABLE " + named + " SET (metadata.owner = NULL)");
+
+        JsonNode metadata = gateway.collectionInfo(named).path("config").path("metadata");
+        assertEquals(3, metadata.path("tier").asInt());
+        assertEquals("kept", metadata.path("note").asText());
+        assertFalse(metadata.has("owner"));
+    }
+
+    @Test
+    void setsAVectorsEmbeddingModelSoEmbedNeedsNone() throws SQLException {
+        SQLException before = assertThrows(SQLException.class, () -> statement.executeQuery(
+            "SELECT _id FROM " + named + " ORDER BY similarity(dense, embed('dune')) DESC LIMIT 1"));
+
+        statement.executeUpdate("ALTER TABLE " + named
+            + " SET (metadata.runax.embed.dense = 'openai:text-embedding-3-small')");
+
+        // The model is known now, so the statement gets as far as needing the provider's key
+        SQLException after = assertThrows(SQLException.class, () -> statement.executeQuery(
+            "SELECT _id FROM " + named + " ORDER BY similarity(dense, embed('dune')) DESC LIMIT 1"));
+        assertFalse(after.getMessage().equals(before.getMessage()), after.getMessage());
+        assertTrue(after.getMessage().toLowerCase().contains("openai"), after.getMessage());
+    }
+
+    @Test
+    void changesOneVectorsSettings() throws SQLException {
+        statement.executeUpdate("ALTER TABLE " + named
+            + " ADD COLUMN keywords SPARSE_VECTOR");
+        statement.executeUpdate("ALTER TABLE " + named
+            + " ALTER COLUMN dense SET (on_disk = true, hnsw.m = 8)");
+        statement.executeUpdate("ALTER TABLE " + named
+            + " ALTER COLUMN keywords SET (modifier = idf, index.on_disk = true)");
+        statement.executeUpdate("ALTER TABLE " + unnamed
+            + " ALTER COLUMN _vector SET (hnsw.ef_construct = 64)");
+
+        JsonNode params = gateway.collectionInfo(named).path("config").path("params");
+        assertTrue(params.path("vectors").path("dense").path("on_disk").asBoolean());
+        assertEquals(8, params.path("vectors").path("dense").path("hnsw_config").path("m").asInt());
+        assertEquals("idf", params.path("sparse_vectors").path("keywords").path("modifier").asText());
+        assertTrue(params.path("sparse_vectors").path("keywords").path("index").path("on_disk")
+            .asBoolean());
+        assertEquals(64, gateway.collectionInfo(unnamed).path("config").path("params")
+            .path("vectors").path("hnsw_config").path("ef_construct").asInt());
+    }
+
+    @Test
+    void refusesASettingQdrantWouldDropWithoutAWord() throws SQLException {
+        SQLException error = assertThrows(SQLException.class, () -> statement.executeUpdate(
+            "ALTER TABLE " + named + " SET (hnsw.bogus = 1)"));
+        assertTrue(error.getMessage().contains("isn't a hnsw setting"), error.getMessage());
+
+        assertEquals("42S22", assertThrows(SQLException.class, () -> statement.executeUpdate(
+            "ALTER TABLE " + named + " ALTER COLUMN title SET (on_disk = true)")).getSQLState());
+    }
+
     @Test
     void refusesAlterTableOnAReadOnlyConnection() throws SQLException {
         connection.setReadOnly(true);
@@ -174,6 +265,8 @@ class AlterTableIntegrationTest {
             "ALTER TABLE " + named + " ADD COLUMN image VECTOR(3)")).getSQLState());
         assertEquals("25006", assertThrows(SQLException.class, () -> statement.executeUpdate(
             "ALTER TABLE " + named + " DROP COLUMN dense")).getSQLState());
+        assertEquals("25006", assertThrows(SQLException.class, () -> statement.executeUpdate(
+            "ALTER TABLE " + named + " SET (hnsw.m = 8)")).getSQLState());
         assertEquals(null, vector(named, "image"));
     }
 
