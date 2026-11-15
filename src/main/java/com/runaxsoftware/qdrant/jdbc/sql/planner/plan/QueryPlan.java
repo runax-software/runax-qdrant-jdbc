@@ -6,16 +6,17 @@ import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
 import java.util.List;
 
 /**
- * Rank a collection's points by how close they are to a vector, through Qdrant's Query API.
- * One call answers the whole search, so unlike a scroll it reads no cursor; the limit says how
- * many points Qdrant ranks.
+ * Rank a collection's points through Qdrant's Query API: by how close they are to a vector, or
+ * by how well a payload field's text matches a query. One call answers the whole search, so
+ * unlike a scroll it reads no cursor; the limit says how many points Qdrant ranks.
  *
  * @param collection  the collection to search
  * @param columns     the result set's columns, in SELECT order, which may include the score
  * @param vector      the name of the vector to search, empty for a collection's single unnamed
- *                    vector
+ *                    vector; for a search by text, the payload field to rank by, as Qdrant
+ *                    names it
  * @param query       the vector to search with, of that vector's dimensions; empty when the
- *                    search embeds text instead
+ *                    search embeds text or ranks by text instead
  * @param withPayload whether any column needs the payload
  * @param withVector  whether any column needs a vector
  * @param limit       the maximum number of rows, or {@code null} when the statement gave none
@@ -26,6 +27,8 @@ import java.util.List;
  * @param filter      the statement's WHERE as a Qdrant filter, or {@code null} when it has none
  * @param embed       text to embed and search with, or {@code null} when the query vector is
  *                    written out
+ * @param text        the words to rank a payload field's text by, with BM25 over its text
+ *                    index, or {@code null} for a search of a vector
  */
 public record QueryPlan(
     String collection,
@@ -37,12 +40,13 @@ public record QueryPlan(
     Long limit,
     long offset,
     JsonNode filter,
-    EmbedText embed
+    EmbedText embed,
+    String text
 ) implements Plan {
 
     public QueryPlan(String collection, List<ColumnDefinition> columns, String vector,
                      List<Double> query, boolean withPayload, boolean withVector, Long limit,
-                     long offset, JsonNode filter, EmbedText embed) {
+                     long offset, JsonNode filter, EmbedText embed, String text) {
         this.collection = collection;
         this.columns = List.copyOf(columns);
         this.vector = vector;
@@ -53,6 +57,17 @@ public record QueryPlan(
         this.offset = offset;
         this.filter = filter;
         this.embed = embed;
+        this.text = text;
+    }
+
+    /**
+     * A search of a vector, with one written out or with text to embed.
+     */
+    public QueryPlan(String collection, List<ColumnDefinition> columns, String vector,
+                     List<Double> query, boolean withPayload, boolean withVector, Long limit,
+                     long offset, JsonNode filter, EmbedText embed) {
+        this(collection, columns, vector, query, withPayload, withVector, limit, offset, filter,
+            embed, null);
     }
 
     /**

@@ -993,6 +993,30 @@ class ExecutorTest {
     }
 
     @Test
+    void asksForTheWordsToRankAFieldByAndSaysWhatASearchByTextNeeds() throws SQLException {
+        var searches = new ArrayList<QueryRequest>();
+        Executor defaulting = bounded(new ArrayList<>(), searches, new ArrayList<>(), 3);
+
+        ExecutionResult result = defaulting.execute(byText(null), STATEMENT);
+
+        assertEquals("refund policy", searches.get(0).text());
+        assertEquals("title", searches.get(0).vector());
+        assertEquals(List.of(), searches.get(0).query());
+        assertNull(searches.get(0).document());
+        assertEquals("A search by text read at most 3 rows, the connection's defaultLimit, "
+            + "because the statement gave no LIMIT and set no maximum rows", result.warning());
+
+        assertEquals("A search by text needs a LIMIT: Qdrant ranks the points that match best, "
+            + "not the whole collection", assertThrows(SQLException.class,
+            () -> search(new ArrayList<>()).execute(byText(null), STATEMENT)).getMessage());
+    }
+
+    private static QueryPlan byText(Long limit) {
+        return new QueryPlan("docs", List.of(ID, SCORE), "title", List.of(), false, false, limit,
+            0, null, null, "refund policy");
+    }
+
+    @Test
     void reportsWhatSearchingReported() {
         SQLException failure = new SQLException("Qdrant: Not found", "42S02");
         Executor failing = new Executor(request -> {

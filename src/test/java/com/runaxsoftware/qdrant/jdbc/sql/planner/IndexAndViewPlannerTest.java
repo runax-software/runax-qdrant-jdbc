@@ -62,6 +62,12 @@ class IndexAndViewPlannerTest {
     }
 
     @Test
+    void buildsATextIndexThatScores() throws SQLException {
+        assertEquals("{\"type\":\"text\",\"scoring\":true}", ((CreateIndexPlan) plan(
+                "CREATE INDEX ON docs (lang) USING text WITH (scoring = true)")).schema().toString());
+    }
+
+    @Test
     void indexesWithTheTypeAndOptionsGiven() throws SQLException {
         CreateIndexPlan plan = (CreateIndexPlan) plan("CREATE INDEX IF NOT EXISTS lang_idx ON docs (lang) "
                 + "USING text WITH (tokenizer = word, phrase_matching = 'true', min_token_len = 2, "

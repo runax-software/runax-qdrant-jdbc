@@ -182,8 +182,9 @@ below are things a route already reached can do and no statement asks for yet.
   Query API prefetch, and `rrf(…)` and `dbsf(…)` to rank several at once: dense and sparse
   candidates fused, or a hundred cheap candidates reranked with a multivector. The largest part
   of Qdrant's search the driver doesn't reach.
-- [ ] **Full-text ranking** — `ORDER BY text_rank(title, 'refund policy') DESC`, Qdrant's `text`
-  query, which ranks by relevance where `text_match` only filters.
+- [x] **Full-text ranking** — `ORDER BY text_rank(title, 'refund policy') DESC`, Qdrant's `text`
+  query, which ranks by BM25 over a text index where `text_match` only filters. The index is
+  built `WITH (scoring = true)`; BM25's `k` and `b` stay at Qdrant's defaults.
 - [ ] **Searching sparse vectors and multivectors** with a vector written out, as
   `'{"indices": […], "values": […]}'` and `'[[…], […]]'`. A search takes a dense literal or
   `embed()` today.

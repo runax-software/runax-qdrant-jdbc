@@ -105,6 +105,9 @@ public final class Executor {
     // What Qdrant answers when it's asked to embed with a model and has no inference service
     private static final String NO_INFERENCE = "InferenceService URL not configured";
 
+    // What Qdrant answers when a search ranks by a text index that was built without scoring
+    private static final String NO_SCORING = "does not score";
+
     /**
      * How many rows a one-call read returns, and whether the connection's default limit is what
      * said so, which the statement warns about: a read bounded by a number the SQL never
@@ -233,7 +236,7 @@ public final class Executor {
             return ExecutionResult.rows(new ListResultSet(
                 PointValues.resultColumns(query.columns(), query.collection()),
                 limit == 0 ? List.of() : searchRows(query, limit), statement),
-                warning(bounded, "A similarity search"));
+                warning(bounded, searchName(query)));
         }
 
         if (plan instanceof GroupedQueryPlan grouped) {
@@ -244,7 +247,7 @@ public final class Executor {
                 PointValues.resultColumns(grouped.search().columns(),
                     grouped.search().collection()),
                 limit == 0 ? List.of() : groupedRows(grouped, limit), statement),
-                warning(bounded, "A similarity search"));
+                warning(bounded, searchName(grouped.search())));
         }
 
         if (plan instanceof MatrixPlan matrix) {
@@ -389,7 +392,7 @@ public final class Executor {
 
             results.add(ExecutionResult.rows(new ListResultSet(
                 PointValues.resultColumns(plan.columns(), plan.collection()), rows, statement),
-                warning(bounds.get(i), "A similarity search")));
+                warning(bounds.get(i), searchName(plan))));
         }
 
         return results;
@@ -693,8 +696,8 @@ public final class Executor {
     }
 
     /**
-     * The search request: the vector written out, the vector a provider made of the text, or
-     * the text itself for Qdrant to embed.
+     * The search request: the vector written out, the vector a provider made of the text, the
+     * text itself for Qdrant to embed, or the words to rank a payload field's text by.
      */
     private QueryRequest request(QueryPlan plan, long limit) throws SQLException {
         EmbedText embed = plan.embed();
@@ -715,7 +718,7 @@ public final class Executor {
         }
 
         return new QueryRequest(plan.collection(), plan.vector(), query, limit, plan.offset(),
-            plan.withPayload(), plan.withVector(), plan.filter(), document);
+            plan.withPayload(), plan.withVector(), plan.filter(), document, plan.text());
     }
 
     /**
@@ -726,7 +729,7 @@ public final class Executor {
         try {
             return searcher.search(request);
         } catch (SQLException e) {
-            throw noInference(e, List.of(request));
+            throw explained(e, List.of(request));
         }
     }
 
@@ -735,17 +738,23 @@ public final class Executor {
         try {
             return searcher.searchBatch(collection, requests);
         } catch (SQLException e) {
-            throw noInference(e, requests);
+            throw explained(e, requests);
         }
     }
 
-    // The error itself, unless it is Qdrant saying it can't embed a search's text: then one
-    // that says what to do about it
-    private static SQLException noInference(SQLException e, List<QueryRequest> requests) {
+    // The error itself, unless it is Qdrant saying it can't embed a search's text or can't rank
+    // by a text index: then one that says what to do about it
+    private static SQLException explained(SQLException e, List<QueryRequest> requests) {
+        String message = String.valueOf(e.getMessage());
+
+        if (message.contains(NO_SCORING)) {
+            return noScoring(e, requests);
+        }
+
         Document document = requests.stream().map(QueryRequest::document)
             .filter(Objects::nonNull).findFirst().orElse(null);
 
-        if (document == null || !String.valueOf(e.getMessage()).contains(NO_INFERENCE)) {
+        if (document == null || !message.contains(NO_INFERENCE)) {
             return e;
         }
 
@@ -753,6 +762,23 @@ public final class Executor {
             + "': it runs no inference service, which hosted models need (Qdrant Cloud has "
             + "one). Embed with a model the driver calls, as openai:text-embedding-3-small, or "
             + "with qdrant:qdrant/bm25 for a sparse vector", e.getSQLState(), e);
+    }
+
+    // Qdrant saying a text index ranks nothing, with the statements that build one that does
+    private static SQLException noScoring(SQLException e, List<QueryRequest> requests) {
+        // Qdrant names the field in backticks, which says which search of a batch it means
+        QueryRequest search = requests.stream()
+            .filter(request -> request.text() != null)
+            .filter(request -> e.getMessage().contains("`" + request.vector() + "`"))
+            .findFirst().orElse(null);
+
+        if (search == null) return e;
+
+        return new SQLException("The text index on '" + search.vector() + "' of "
+            + search.collection() + " wasn't built to score, so Qdrant can't rank by it. "
+            + "Replace it: DROP INDEX ON " + search.collection() + " (" + search.vector()
+            + "), then CREATE INDEX ON " + search.collection() + " (" + search.vector()
+            + ") USING text WITH (scoring = true)", e.getSQLState(), e);
     }
 
     /**
@@ -1234,14 +1260,14 @@ public final class Executor {
         // The offset is the driver's to pass over, so the request goes without one
         QueryRequest request = new QueryRequest(ranked.collection(), ranked.vector(),
             ranked.query(), ranked.limit(), 0, ranked.withPayload(), ranked.withVector(),
-            ranked.filter(), ranked.document());
+            ranked.filter(), ranked.document(), ranked.text());
         List<ScoredPoint> found;
 
         try {
             found = new ArrayList<>(searcher.searchGroups(request, plan.groupBy(),
                 plan.groupSize()));
         } catch (SQLException e) {
-            throw noInference(e, List.of(request));
+            throw explained(e, List.of(request));
         }
 
         // Stable, so points with the same score stay in Qdrant's order
@@ -1336,8 +1362,16 @@ public final class Executor {
      * error instead of a number the driver picked.
      */
     private Bounded searchLimit(QueryPlan plan, long maxRows) throws SQLException {
-        return bound(limit(plan.limit(), maxRows), "A similarity search needs a LIMIT: Qdrant "
-            + "ranks the points nearest the vector, not the whole collection");
+        return bound(limit(plan.limit(), maxRows), plan.text() == null
+            ? "A similarity search needs a LIMIT: Qdrant ranks the points nearest the vector, "
+                + "not the whole collection"
+            : "A search by text needs a LIMIT: Qdrant ranks the points that match best, not "
+                + "the whole collection");
+    }
+
+    // What a warning calls the search: by a vector, or by a payload field's text
+    private static String searchName(QueryPlan plan) {
+        return plan.text() == null ? "A similarity search" : "A search by text";
     }
 
     /**

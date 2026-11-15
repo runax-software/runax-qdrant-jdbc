@@ -374,6 +374,18 @@ class QdrantGatewayTest {
     }
 
     @Test
+    void sendsTheWordsToRankAPayloadFieldBy() throws SQLException {
+        server.collection("events", plainCollection(), points(3));
+
+        gateway.query(new QueryRequest("events", "title", List.of(), 2, 0, false, false, null,
+            null, "refund policy"));
+
+        assertEquals(Json.object("limit", 2, "with_payload", false, "with_vector", false,
+            "query", Json.object("text", "refund policy"), "using", "title"),
+            server.queryRequests().get(0));
+    }
+
+    @Test
     void sendsTheSearchAsAsked() throws SQLException {
         server.collection("events", plainCollection(), points(3));
 
