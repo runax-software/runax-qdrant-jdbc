@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.runaxsoftware.qdrant.jdbc.gateway.HttpMethod;
 import com.runaxsoftware.qdrant.jdbc.procedure.Procedure;
+import com.runaxsoftware.qdrant.jdbc.procedure.Transfer;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.Parser;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ProcedurePlan;
 
@@ -15,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.nio.file.Path;
 import java.sql.SQLException;
 
 class CallPlannerTest {
@@ -109,9 +111,14 @@ class CallPlannerTest {
 
         assertEquals("42883", error.getSQLState());
         assertEquals("Unknown procedure 'qdrant.compact': there are abort_resharding, "
-            + "abort_shard_transfer, create_shard_key, delete_shard_key, drop_replica, move_shard, "
-            + "recover_raft, remove_peer, replicate_points, replicate_shard, "
-            + "restart_shard_transfer, start_resharding", error.getMessage());
+            + "abort_shard_transfer, create_full_snapshot, create_shard_key, "
+            + "create_shard_snapshot, create_snapshot, delete_full_snapshot, delete_shard_key, "
+            + "delete_shard_snapshot, delete_snapshot, download_full_snapshot, "
+            + "download_shard_snapshot, download_snapshot, drop_replica, move_shard, "
+            + "recover_raft, recover_shard_snapshot, recover_snapshot, remove_peer, "
+            + "replicate_points, replicate_shard, restart_shard_transfer, start_resharding, "
+            + "stream_shard_snapshot, upload_shard_snapshot, upload_snapshot",
+            error.getMessage());
         assertEquals("42883", error("CALL public.create_shard_key('docs', 'eu')").getSQLState());
     }
 
@@ -149,6 +156,116 @@ class CallPlannerTest {
             error("CALL create_shard_key('docs', 'eu', placement => '[1,')").getMessage());
         assertEquals("Argument 'shard_key' of delete_shard_key takes text or a whole number, not "
             + "true", error("CALL delete_shard_key('docs', true)").getMessage());
+    }
+
+    @Test
+    void plansASnapshotOfACollectionAShardAndTheWholeStorage() throws SQLException {
+        ProcedurePlan create = plan("CALL create_snapshot('my docs')");
+        assertEquals(HttpMethod.POST, create.method());
+        assertEquals("/collections/my%20docs/snapshots", create.path());
+        assertNull(create.body());
+        assertNull(create.file());
+        assertNull(create.restores());
+
+        assertEquals("/collections/docs/snapshots?wait=false",
+            plan("CALL create_snapshot('docs', wait => false)").path());
+        assertEquals("/collections/docs/shards/3/snapshots",
+            plan("CALL create_shard_snapshot('docs', 3)").path());
+        assertEquals("/snapshots", plan("CALL create_full_snapshot()").path());
+
+        ProcedurePlan delete = plan("CALL delete_snapshot('docs', 'a b.snapshot')");
+        assertEquals(HttpMethod.DELETE, delete.method());
+        assertEquals("/collections/docs/snapshots/a%20b.snapshot", delete.path());
+        assertEquals("/collections/docs/shards/0/snapshots/s.snapshot?wait=true",
+            plan("CALL delete_shard_snapshot('docs', 0, 's.snapshot', wait => true)").path());
+        assertEquals("/snapshots/full.snapshot",
+            plan("CALL delete_full_snapshot('full.snapshot')").path());
+    }
+
+    @Test
+    void sendsWhereQdrantFindsASnapshotToRecoverFrom() throws SQLException {
+        ProcedurePlan recover = plan("CALL recover_snapshot('docs', "
+            + "'https://other:6333/collections/docs/snapshots/s.snapshot', "
+            + "priority => 'snapshot', checksum => 'abc', api_key => 'k', wait => false)");
+
+        assertEquals(HttpMethod.PUT, recover.method());
+        assertEquals("/collections/docs/snapshots/recover?wait=false", recover.path());
+        assertEquals("{\"location\":\"https://other:6333/collections/docs/snapshots/s.snapshot\","
+            + "\"priority\":\"snapshot\",\"checksum\":\"abc\",\"api_key\":\"k\"}",
+            recover.body().toString());
+        assertEquals("docs", recover.restores(), "the collection's columns may change");
+        assertNull(recover.file());
+
+        ProcedurePlan shard = plan("CALL recover_shard_snapshot('docs', 2, 's.snapshot')");
+        assertEquals("/collections/docs/shards/2/snapshots/recover", shard.path());
+        assertEquals("{\"location\":\"s.snapshot\"}", shard.body().toString());
+        assertEquals("docs", shard.restores());
+    }
+
+    @Test
+    void keepsTheFileOfADownloadOutOfTheRequest() throws SQLException {
+        Path file = Path.of(System.getProperty("java.io.tmpdir"), "docs.snapshot")
+            .toAbsolutePath().normalize();
+
+        ProcedurePlan download = plan("CALL download_snapshot('docs', 's.snapshot', '" + file
+            + "')");
+        assertEquals(Transfer.DOWNLOAD, download.procedure().transfer());
+        assertEquals(HttpMethod.GET, download.method());
+        assertEquals("/collections/docs/snapshots/s.snapshot", download.path());
+        assertNull(download.body());
+        assertEquals(file, download.file());
+        assertNull(download.restores());
+        assertTrue(download.changesData(), "a read-only connection refuses it");
+
+        assertEquals("/collections/docs/shards/1/snapshots/s.snapshot", plan(
+            "CALL download_shard_snapshot('docs', 1, 's.snapshot', path => '" + file + "')")
+            .path());
+        assertEquals("/collections/docs/shards/1/snapshot",
+            plan("CALL stream_shard_snapshot('docs', 1, '" + file + "')").path());
+        assertEquals("/snapshots/full.snapshot",
+            plan("CALL download_full_snapshot('full.snapshot', '" + file + "')").path());
+    }
+
+    @Test
+    void sendsAnUploadsOptionsInTheQueryString() throws SQLException {
+        Path file = Path.of(System.getProperty("java.io.tmpdir"), "docs.snapshot")
+            .toAbsolutePath().normalize();
+
+        ProcedurePlan upload = plan("CALL upload_snapshot('docs', '" + file
+            + "', priority => 'snapshot', checksum => 'abc', wait => false)");
+        assertEquals(Transfer.UPLOAD, upload.procedure().transfer());
+        assertEquals(HttpMethod.POST, upload.method());
+        assertEquals("/collections/docs/snapshots/upload?priority=snapshot&checksum=abc"
+            + "&wait=false", upload.path());
+        assertNull(upload.body());
+        assertEquals(file, upload.file());
+        assertEquals("docs", upload.restores());
+
+        ProcedurePlan shard = plan("CALL upload_shard_snapshot('docs', 4, '" + file + "')");
+        assertEquals("/collections/docs/shards/4/snapshots/upload", shard.path());
+        assertEquals(file, shard.file());
+    }
+
+    @Test
+    void takesOnlyAFilesFullPath() {
+        SQLException error = error("CALL download_snapshot('docs', 's.snapshot', 'docs.snapshot')");
+
+        assertEquals("22023", error.getSQLState());
+        assertEquals("Argument 'path' of download_snapshot takes the file's full path, not "
+            + "'docs.snapshot'", error.getMessage());
+        assertEquals("download_snapshot needs 'path': download_snapshot(collection, snapshot, "
+            + "path)", error("CALL download_snapshot('docs', 's.snapshot')").getMessage());
+    }
+
+    @Test
+    void movesAFileOnlyInTheSixProceduresThatSayTheyDo() {
+        for (Procedure procedure : Procedure.values()) {
+            boolean named = procedure.procedureName().startsWith("download_")
+                || procedure.procedureName().startsWith("upload_")
+                || procedure == Procedure.STREAM_SHARD_SNAPSHOT;
+
+            assertEquals(named, procedure.transfer() != Transfer.NONE, procedure.procedureName());
+        }
     }
 
     private ProcedurePlan plan(String sql) throws SQLException {

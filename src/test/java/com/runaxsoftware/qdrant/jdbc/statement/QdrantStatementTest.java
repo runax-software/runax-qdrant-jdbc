@@ -22,7 +22,10 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
@@ -58,6 +61,24 @@ class QdrantStatementTest {
         statement.close();
         connection.close();
         server.close();
+    }
+
+    @Test
+    void movesNoFileUnlessTheConnectionAllowsIt(@TempDir Path folder) throws Exception {
+        Path file = folder.resolve("products.snapshot");
+        int before = server.requests().size();
+
+        SQLException download = assertThrows(SQLException.class, () -> statement.execute(
+            "CALL download_snapshot('products', 's.snapshot', '" + file + "')"));
+
+        assertEquals("42501", download.getSQLState());
+        assertEquals("download_snapshot reads or writes a file on this machine, which the "
+            + "connection doesn't allow: set localFiles=true in its properties or URL",
+            download.getMessage());
+        assertEquals("42501", assertThrows(SQLException.class, () -> statement.execute(
+            "CALL upload_snapshot('products', '" + file + "')")).getSQLState());
+        assertFalse(Files.exists(file));
+        assertEquals(before, server.requests().size(), "nothing was asked of Qdrant");
     }
 
     @Test

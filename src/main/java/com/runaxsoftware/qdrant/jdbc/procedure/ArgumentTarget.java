@@ -12,5 +12,11 @@ public enum ArgumentTarget {
     BODY,
 
     /** Into the query string, under the argument's name. */
-    QUERY
+    QUERY,
+
+    /**
+     * Nowhere in the request's path or JSON: the value is a file on the machine the driver runs
+     * on, which the request's answer is written to or its body is read from.
+     */
+    FILE
 }

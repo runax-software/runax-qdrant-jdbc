@@ -4,6 +4,9 @@ Planned work, roughly in the order it will land. The SQL each item accepts is sp
 [docs/specs/sql-dialect.md](docs/specs/sql-dialect.md); what the ticks below amount to in
 measured REST and SQL coverage is in [docs/coverage.md](docs/coverage.md).
 
+The driver calls every route Qdrant documents, so what is left is SQL: most of the open items
+below are things a route already reached can do and no statement asks for yet.
+
 - [x] **Connection** — `jdbc:qdrant://host:6333` over Qdrant's REST API, TLS, and the
   Qdrant API key taken from the password field.
 - [x] **Collections as tables** — `DatabaseMetaData` lists collections, in catalog `qdrant`
@@ -155,7 +158,7 @@ measured REST and SQL coverage is in [docs/coverage.md](docs/coverage.md).
   they can't clash with collection names. `system.collections` (status, optimizer, point and
   segment counts, shards, vectors, payload indexes) and `system.aliases` are done, along
   with the schema-qualified names (`system.collections`, `qdrant.system.collections`) that
-  reach them, and so are `snapshots`, `shard_keys`, `shards`, `cluster`, `peers`,
+  reach them, and so are `snapshots`, `shard_snapshots`, `shard_keys`, `shards`, `cluster`, `peers`,
   `telemetry`, `metrics`, `issues`, `health` (Qdrant's three health probes, a row each), and
   `optimizations` (each collection's running, queued, and latest completed optimizations), and
   `quotas` (the server's limits on memory and disk, which `ALTER SYSTEM SET (quotas.… = …)`
@@ -168,7 +171,42 @@ measured REST and SQL coverage is in [docs/coverage.md](docs/coverage.md).
   eleven more, for what Qdrant does that isn't about rows: shard keys, moving, replicating and
   dropping shards, resharding, removing a peer, recovering Raft. Arguments go by position or as
   `name => value`, constants or `?`, and `DatabaseMetaData` lists the procedures. Qdrant takes
-  them only when it runs as a cluster. Procedures for snapshots come later.
+  them only when it runs as a cluster.
+- [x] **Snapshot procedures** — fourteen more `CALL` procedures take, delete, recover, download
+  and upload a snapshot of a collection (`create_snapshot('docs')`), of one shard
+  (`create_shard_snapshot('docs', 0)`), or of the whole storage (`create_full_snapshot()`), and
+  `system.shard_snapshots` lists a shard's beside `system.snapshots`. A download saves the
+  snapshot to a file on the machine the driver runs on and an upload sends one from there, both
+  streamed, so a connection takes them only with `localFiles=true`. With them the driver calls
+  every route Qdrant documents.
+- [ ] **Hybrid search and fusion** — a subquery in `FROM` with its own `ORDER BY … LIMIT` as a
+  Query API prefetch, and `rrf(…)` and `dbsf(…)` to rank several at once: dense and sparse
+  candidates fused, or a hundred cheap candidates reranked with a multivector. The largest part
+  of Qdrant's search the driver doesn't reach.
+- [ ] **Full-text ranking** — `ORDER BY text_rank(title, 'refund policy') DESC`, Qdrant's `text`
+  query, which ranks by relevance where `text_match` only filters.
+- [ ] **Searching sparse vectors and multivectors** with a vector written out, as
+  `'{"indices": […], "values": […]}'` and `'[[…], […]]'`. A search takes a dense literal or
+  `embed()` today.
+- [ ] **Score formulas** — arithmetic over `similarity(…)` and payload columns in `ORDER BY`,
+  `CASE WHEN`, and `geo_distance(…)`, as Qdrant's `formula` query.
+- [ ] **Recommendation, discovery and diverse results** — `recommend(v, positive, negative)`,
+  `discover(v, target, context)` and `mmr(similarity(…), diversity)`, from point IDs or vectors.
+- [ ] **The rest of the filter language** — `at_least(2, …)` for `min_should`,
+  `geo_radius`, `geo_box` and `geo_polygon`, and `EXISTS (…)` over an array's elements for
+  `nested`.
+- [ ] **More of `GROUP BY` and `ORDER BY`** — `HAVING`, ordering groups by something other than
+  their count, and paging an ordered read by value (`order_by.start_from`), which lifts its
+  10,000-row cap.
+- [ ] **`CREATE TABLE … WITH (…)`** — the collection's settings at creation: shards,
+  replication, HNSW, quantization, the sharding method. `ALTER TABLE … SET (…)` sets them
+  afterwards, all but the shard count, the sharding method and the WAL.
+- [ ] **`WHERE`, `ORDER BY` and `COUNT(*)` over system tables**, run by the driver on the rows
+  Qdrant answers with, which are few.
+- [ ] **More request options** — `shard_key`, the quantization options, and a `/*+ … */` hint
+  for one statement.
+- [ ] **More of `embed()`** — other providers, and sparse and multivector output from the
+  providers the driver calls.
 - [ ] **Buffered writes (later, opt-in)** — not real transactions, since Qdrant has none.
   With a setting on and auto-commit off, the driver holds `INSERT`, `UPDATE`, and `DELETE`
   until `commit()` and drops them on `rollback()`. Documented as "rollback before commit

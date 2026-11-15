@@ -217,6 +217,47 @@ class QdrantSystemTablesTest {
         assertEquals(2, server.calls(Endpoint.COLLECTION_SNAPSHOTS));
     }
 
+    @Test
+    void readsTheSnapshotsOfEachShardThePeerHolds() throws SQLException {
+        server.collection("docs", unnamedVector(2, "Cosine", Map.of()), List.of())
+            .collection("notes", unnamedVector(2, "Cosine", Map.of()), List.of())
+            .collectionCluster("docs", FakeQdrantServer.collectionCluster(
+                List.of(FakeQdrantServer.localShard(0, null, 5, "Active"),
+                    FakeQdrantServer.localShard(2, null, 7, "Active")),
+                List.of(FakeQdrantServer.remoteShard(1, null, 22, "Active"))))
+            .shardSnapshot("docs", 2, snapshotDescription("docs-shard-2-b.snapshot",
+                "2026-11-01T17:06:00", 2048, "b2"))
+            .shardSnapshot("docs", 2, snapshotDescription("docs-shard-2-a.snapshot",
+                "2026-11-01T17:05:00", 1024, null))
+            .shardSnapshot("docs", 0, snapshotDescription("docs-shard-0.snapshot",
+                "2026-11-01T17:04:00", 512, "a1"))
+            .shardSnapshot("docs", 1, snapshotDescription("on-another-peer.snapshot",
+                "2026-11-01T17:04:00", 512, "c3"));
+
+        List<Object[]> rows = tables.read(SystemTable.SHARD_SNAPSHOTS);
+
+        assertEquals(3, rows.size());
+        assertArrayEquals(new Object[]{"docs", 0L, "docs-shard-0.snapshot",
+            "2026-11-01T17:04:00", 512L, "a1"}, rows.get(0));
+        assertArrayEquals(new Object[]{"docs", 2L, "docs-shard-2-a.snapshot",
+            "2026-11-01T17:05:00", 1024L, null}, rows.get(1));
+        assertEquals("docs-shard-2-b.snapshot", rows.get(2)[2]);
+
+        // The two shards docs holds here, and the one a collection has when nothing says more
+        assertEquals(3, server.calls(Endpoint.SHARD_SNAPSHOTS));
+        assertEquals(2, server.calls(Endpoint.COLLECTION_CLUSTER));
+    }
+
+    @Test
+    void leavesOutTheShardSnapshotsOfACollectionDeletedSinceTheListing() throws SQLException {
+        server.collection("docs", unnamedVector(2, "Cosine", Map.of()), List.of())
+            .shardSnapshot("docs", 0, snapshotDescription("docs-shard-0.snapshot",
+                "2026-11-01T17:05:00", 8, "a"))
+            .listedButMissing("ghost");
+
+        assertEquals(List.of("docs"), names(SystemTable.SHARD_SNAPSHOTS));
+    }
+
     // Shard keys
 
     @Test

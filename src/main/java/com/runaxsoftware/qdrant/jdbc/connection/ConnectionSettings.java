@@ -18,6 +18,8 @@ import java.util.Properties;
  * @param sampleSize  how many points to read when working out a collection's columns
  * @param schemaCache how long to keep a collection's columns before reading them again;
  *                    zero reads them every time
+ * @param localFiles  whether a statement may read and write files on this machine, as the
+ *                    procedures that move snapshots do
  * @param logFile     the file to log JDBC calls to, or {@code null} for no log
  * @param embedding   the embedding providers' keys and URLs, for {@code embed()}
  */
@@ -30,6 +32,7 @@ public record ConnectionSettings(
     int sampleSize,
     Duration schemaCache,
     int defaultLimit,
+    boolean localFiles,
     Path logFile,
     Embedding embedding
 ) {
@@ -64,6 +67,7 @@ public record ConnectionSettings(
             values.wholeNumber(Setting.SAMPLE_SIZE, 0, 10_000),
             Duration.ofSeconds(values.wholeNumber(Setting.SCHEMA_CACHE, 0, Integer.MAX_VALUE)),
             values.wholeNumber(Setting.DEFAULT_LIMIT, 0, Integer.MAX_VALUE),
+            values.bool(Setting.LOCAL_FILES),
             values.path(Setting.LOG_FILE),
             new Embedding(values.secret(Setting.OPENAI_API_KEY), values.uri(Setting.OPENAI_URL),
                 values.secret(Setting.VOYAGE_API_KEY), values.uri(Setting.VOYAGE_URL))
@@ -78,7 +82,7 @@ public record ConnectionSettings(
         return "ConnectionSettings[host=" + host + ", port=" + port + ", tls=" + tls
             + ", apiKey=" + (apiKey == null ? "none" : "set") + ", timeout=" + timeout.toSeconds() + "s"
             + ", sampleSize=" + sampleSize + ", schemaCache=" + schemaCache.toSeconds() + "s"
-            + ", defaultLimit=" + defaultLimit
+            + ", defaultLimit=" + defaultLimit + ", localFiles=" + localFiles
             + ", logFile=" + logFile + ", " + embedding + "]";
     }
 }

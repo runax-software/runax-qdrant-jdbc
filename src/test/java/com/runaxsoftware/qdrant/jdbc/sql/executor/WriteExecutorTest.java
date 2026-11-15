@@ -33,8 +33,11 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdateQuotasPlan;
 import com.runaxsoftware.qdrant.jdbc.support.Json;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.lang.reflect.Proxy;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.Statement;
@@ -169,6 +172,17 @@ class WriteExecutorTest {
             }
 
             @Override
+            public long download(String path, Path file) {
+                calls.add("download " + path + " to " + file.getFileName());
+                return 0;
+            }
+
+            @Override
+            public void upload(String path, Path file) {
+                calls.add("upload " + file.getFileName() + " to " + path);
+            }
+
+            @Override
             public JsonNode quotas() {
                 calls.add("quotas");
                 return quotas;
@@ -229,6 +243,62 @@ class WriteExecutorTest {
         assertFalse(result.hasResultSet());
         assertEquals(0, result.updateCount());
         assertEquals(List.of("call PUT /collections/docs/shards " + body), calls);
+    }
+
+    @Test
+    void savesWhatADownloadAnswersToANewFile(@TempDir Path folder) throws SQLException {
+        Path file = folder.resolve("docs.snapshot");
+
+        ExecutionResult result = executor.execute(download(file), statement());
+
+        assertEquals(0, result.updateCount());
+        assertEquals(List.of("download /collections/docs/snapshots/s to docs.snapshot"), calls);
+    }
+
+    @Test
+    void asksQdrantForNothingWhenADownloadHasNowhereToGo(@TempDir Path folder)
+        throws Exception {
+        Path taken = Files.writeString(folder.resolve("taken.snapshot"), "mine");
+
+        SQLException exists = assertThrows(SQLException.class,
+            () -> executor.execute(download(taken), statement()));
+        assertEquals("58030", exists.getSQLState());
+        assertEquals("Can't save to " + taken + ": the file is already there, and the driver "
+            + "doesn't overwrite one", exists.getMessage());
+        assertEquals("mine", Files.readString(taken));
+
+        Path nowhere = folder.resolve("missing").resolve("docs.snapshot");
+        SQLException missing = assertThrows(SQLException.class,
+            () -> executor.execute(download(nowhere), statement()));
+        assertEquals("Can't save to " + nowhere + ": its folder doesn't exist",
+            missing.getMessage());
+
+        assertEquals(List.of(), calls);
+    }
+
+    @Test
+    void sendsAFileThatIsThere(@TempDir Path folder) throws Exception {
+        Path file = Files.writeString(folder.resolve("docs.snapshot"), "snapshot");
+        Path missing = folder.resolve("nope.snapshot");
+
+        executor.execute(upload(file), statement());
+        assertEquals(List.of("upload docs.snapshot to /collections/docs/snapshots/upload"), calls);
+
+        SQLException error = assertThrows(SQLException.class,
+            () -> executor.execute(upload(missing), statement()));
+        assertEquals("58030", error.getSQLState());
+        assertEquals("Can't read " + missing + ": there is no such file", error.getMessage());
+        assertEquals(1, calls.size());
+    }
+
+    private static ProcedurePlan download(Path file) {
+        return new ProcedurePlan(Procedure.DOWNLOAD_SNAPSHOT, HttpMethod.GET,
+            "/collections/docs/snapshots/s", null, file, null);
+    }
+
+    private static ProcedurePlan upload(Path file) {
+        return new ProcedurePlan(Procedure.UPLOAD_SNAPSHOT, HttpMethod.POST,
+            "/collections/docs/snapshots/upload", null, file, "docs");
     }
 
     @Test

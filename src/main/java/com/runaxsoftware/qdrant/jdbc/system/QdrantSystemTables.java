@@ -19,7 +19,8 @@ import java.util.Map;
  * changes without the driver, so nothing here is kept between statements.
  *
  * <p>{@link SystemTable#COLLECTIONS}, {@link SystemTable#SNAPSHOTS},
- * {@link SystemTable#SHARD_KEYS}, and {@link SystemTable#SHARDS} list the collections and then
+ * {@link SystemTable#SHARD_SNAPSHOTS}, {@link SystemTable#SHARD_KEYS}, and
+ * {@link SystemTable#SHARDS} list the collections and then
  * read each one, because Qdrant describes a collection only one at a time. That is one call per
  * collection, so those tables cost more than the others; a collection deleted between the
  * listing and its read is left out rather than failing the statement.
@@ -55,6 +56,7 @@ public final class QdrantSystemTables implements SystemTableReader {
             case COLLECTIONS -> collections();
             case ALIASES -> aliases();
             case SNAPSHOTS -> snapshots();
+            case SHARD_SNAPSHOTS -> shardSnapshots();
             case SHARD_KEYS -> shardKeys();
             case SHARDS -> shards();
             case CLUSTER -> cluster();
@@ -112,6 +114,38 @@ public final class QdrantSystemTables implements SystemTableReader {
         }
 
         rows.sort(byText(0).thenComparing(byText(1)));
+
+        return rows;
+    }
+
+    /**
+     * The snapshots of each shard the connected peer holds. Qdrant lists them for one shard at
+     * a time, and only a peer's own shards have any it can list, so the shards come from the
+     * collection's {@code local_shards}. A shard that is gone since that listing is left out.
+     */
+    private List<Object[]> shardSnapshots() throws SQLException {
+        List<Object[]> rows = new ArrayList<>();
+
+        for (String name : collectionNames()) {
+            JsonNode info = perCollection(name, "/cluster");
+            if (info == null) continue;
+
+            for (JsonNode shard : info.path("local_shards")) {
+                Long id = number(shard.path("shard_id"));
+                if (id == null) continue;
+
+                JsonNode snapshots = perCollection(name, "/shards/" + id + "/snapshots");
+                if (snapshots == null) continue;
+
+                for (JsonNode snapshot : snapshots) {
+                    rows.add(new Object[]{name, id, text(snapshot.path("name")),
+                        text(snapshot.path("creation_time")), number(snapshot.path("size")),
+                        text(snapshot.path("checksum"))});
+                }
+            }
+        }
+
+        rows.sort(byText(0).thenComparing(byNumber(1)).thenComparing(byText(2)));
 
         return rows;
     }

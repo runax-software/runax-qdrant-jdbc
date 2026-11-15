@@ -24,6 +24,10 @@ public record ProcedureArgument(String name, ArgumentKind kind, boolean required
         return new ProcedureArgument(name, kind, false, ArgumentTarget.BODY, remarks);
     }
 
+    static ProcedureArgument file(String name, String remarks) {
+        return new ProcedureArgument(name, ArgumentKind.TEXT, true, ArgumentTarget.FILE, remarks);
+    }
+
     static ProcedureArgument query(String name, ArgumentKind kind, String remarks) {
         return new ProcedureArgument(name, kind, false, ArgumentTarget.QUERY, remarks);
     }

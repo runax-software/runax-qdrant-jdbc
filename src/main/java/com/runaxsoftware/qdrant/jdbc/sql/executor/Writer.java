@@ -6,6 +6,7 @@ import com.runaxsoftware.qdrant.jdbc.gateway.models.PayloadIndexType;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.QdrantAlias;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.VectorField;
 
+import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
@@ -113,6 +114,18 @@ interface Writer {
      * Makes the one request a procedure is.
      */
     void call(HttpMethod method, String path, JsonNode body) throws SQLException;
+
+    /**
+     * Saves the file a procedure's request answers with to a new file on this machine.
+     *
+     * @return the bytes saved
+     */
+    long download(String path, Path file) throws SQLException;
+
+    /**
+     * Makes a procedure's request with a file on this machine as its body.
+     */
+    void upload(String path, Path file) throws SQLException;
 
     /**
      * The server's quota config, as Qdrant has it now.

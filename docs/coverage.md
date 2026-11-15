@@ -12,7 +12,7 @@ embedding of #40, the clearing of `system.issues` (#42), `system.health` (#43),
 `system.optimizations` (#44), `ALTER TABLE … ADD`/`DROP COLUMN` and
 `ALTER TABLE … SET` (#45, #46), the quotas (#48), `CALL` with the cluster
 procedures (#49), batches of searches (#50), grouped searches (#51), the distance
-matrix (#53), and the rest of the point routes on top, and Qdrant
+matrix (#53), the rest of the point routes (#54), and the snapshot procedures on top, and Qdrant
 **1.20.0** (build
 `222b2e44ab1c3f17e8246396ead6558e45041df7`), running locally over REST on port 6333, with the
 three collections `./gradlew seedQdrant` loads. Qdrant 1.20 does not serve `/openapi.json` —
@@ -44,7 +44,7 @@ one of them is indistinguishable from a bug.
 
 ## Qdrant REST coverage
 
-Qdrant 1.20 documents **69 routes**. The driver calls **54** of them, which is **78%**. The
+Qdrant 1.20 documents **69 routes**. The driver calls all **69** of them. The
 counts below are per area, using Qdrant's own OpenAPI tags, so they can be recomputed from the
 spec without judgement calls.
 
@@ -55,28 +55,27 @@ spec without judgement calls.
 | Search | **5** | **5** | `ORDER BY similarity(...) DESC`, including `embed()`, several such searches in one call, the best points of each group with `DISTINCT ON` and `LIMIT … BY`, and `distance_matrix(…)` |
 | Aliases | **3** | **3** | Views: listing, `system.aliases`, `CREATE [OR REPLACE] VIEW`, `ALTER VIEW`, `DROP VIEW`, and the aliases a dropped collection takes with it |
 | Indexes | **2** | **2** | `CREATE INDEX`, `DROP INDEX`, and the indexes `CREATE TABLE` declares |
-| Snapshots | 2 | 17 | `system.snapshots` only |
+| Snapshots | **17** | **17** | `system.snapshots`, `system.shard_snapshots`, and fourteen `CALL` procedures: taking, deleting, downloading, uploading and recovering a snapshot of a collection, of one shard, or of the whole storage |
 | Distributed | **9** | **9** | `system.cluster`, `system.peers`, `system.shards`, `system.shard_keys`, `system.cluster_telemetry`, and twelve `CALL` procedures: shard keys, moving and replicating shards, resharding, removing a peer |
 | Service | **6** | **6** | Version on connect, `system.telemetry`, `system.metrics`, `system.health` |
 | Beta | **2** | **2** | `system.issues`, and `TRUNCATE TABLE system.issues` |
 | Quotas | **2** | **2** | `system.quotas`, `ALTER SYSTEM SET (quotas.… = …)` |
-| **Total** | **54** | **69** | |
+| **Total** | **69** | **69** | |
 
-Nine areas are covered whole: every alias route, every index route, both beta routes, every
-service route, every collection route, both quota routes, every distributed route, every search
-route, and every point route. What is left is in one: snapshots.
+All ten areas are covered whole. That is a count of routes reached, not of what each route can
+do; [what the number means](#why-100-means-less-than-it-looks) is below.
 
 ### The routes the driver calls
 
-Thirty-six come from `QdrantGateway`, which is the only place that speaks HTTP, thirteen more
-from `QdrantSystemTables` — ten endpoints the gateway has no model for because their shape
+Thirty-six come from `QdrantGateway`, which is the only place that speaks HTTP, fourteen more
+from `QdrantSystemTables` — eleven endpoints the gateway has no model for because their shape
 depends on the Qdrant version, and the three health probes, which answer in a line of text —
-and five from `Procedure`, which declares each `CALL` procedure as the one request it makes.
+and nineteen from `Procedure`, which declares each `CALL` procedure as the one request it makes.
 
 | Route | Called by | For |
 | --- | --- | --- |
 | `GET /` | `serverVersion` | The product version on connect; the only call that needs no API key |
-| `GET /collections` | `listCollections` | `getTables`, and the first call of four system tables |
+| `GET /collections` | `listCollections` | `getTables`, and the first call of five system tables |
 | `GET /collections/{c}` | `collectionInfo` | Columns, vector sizes, payload indexes, embedding metadata |
 | `GET /collections/{c}/exists` | `collectionExists` | `CREATE TABLE IF NOT EXISTS` |
 | `PUT /collections/{c}` | `createCollection` | `CREATE TABLE` |
@@ -113,6 +112,7 @@ and five from `Procedure`, which declares each `CALL` procedure as the one reque
 | `PUT /quotas` | `setQuotas` | `ALTER SYSTEM SET (quotas.… = …)`; Qdrant replaces the whole config, so the driver reads it first |
 | `GET /snapshots` | `QdrantSystemTables` | `system.snapshots`, the whole-storage rows |
 | `GET /collections/{c}/snapshots` | `QdrantSystemTables` | `system.snapshots`, the per-collection rows |
+| `GET /collections/{c}/shards/{id}/snapshots` | `QdrantSystemTables` | `system.shard_snapshots`, asked once for each shard the connected peer holds |
 | `GET /collections/{c}/shards` | `QdrantSystemTables` | `system.shard_keys` |
 | `GET /collections/{c}/cluster` | `QdrantSystemTables` | `system.shards` |
 | `GET /collections/{c}/optimizations` | `QdrantSystemTables` | `system.optimizations`, asked `?with=queued,completed` |
@@ -123,6 +123,20 @@ and five from `Procedure`, which declares each `CALL` procedure as the one reque
 | `POST /collections/{c}/cluster` | `Procedure` | Eight procedures, one per operation the route takes: `move_shard`, `replicate_shard`, `abort_shard_transfer`, `restart_shard_transfer`, `drop_replica`, `start_resharding`, `abort_resharding`, `replicate_points` |
 | `DELETE /cluster/peer/{id}` | `Procedure` | `CALL remove_peer(…)` |
 | `POST /cluster/recover` | `Procedure` | `CALL recover_raft()` |
+| `POST /collections/{c}/snapshots` | `Procedure` | `CALL create_snapshot(…)` |
+| `DELETE /collections/{c}/snapshots/{s}` | `Procedure` | `CALL delete_snapshot(…)` |
+| `PUT /collections/{c}/snapshots/recover` | `Procedure` | `CALL recover_snapshot(…)`: Qdrant fetches the snapshot itself, from a URL |
+| `GET /collections/{c}/snapshots/{s}` | `Procedure` | `CALL download_snapshot(…)`: the answer is saved to a file on the driver's machine |
+| `POST /collections/{c}/snapshots/upload` | `Procedure` | `CALL upload_snapshot(…)`: a file on the driver's machine, sent as a form upload |
+| `POST /collections/{c}/shards/{id}/snapshots` | `Procedure` | `CALL create_shard_snapshot(…)` |
+| `DELETE /collections/{c}/shards/{id}/snapshots/{s}` | `Procedure` | `CALL delete_shard_snapshot(…)` |
+| `PUT /collections/{c}/shards/{id}/snapshots/recover` | `Procedure` | `CALL recover_shard_snapshot(…)` |
+| `GET /collections/{c}/shards/{id}/snapshots/{s}` | `Procedure` | `CALL download_shard_snapshot(…)` |
+| `GET /collections/{c}/shards/{id}/snapshot` | `Procedure` | `CALL stream_shard_snapshot(…)`: a snapshot taken and saved in one request, with none kept on the server |
+| `POST /collections/{c}/shards/{id}/snapshots/upload` | `Procedure` | `CALL upload_shard_snapshot(…)` |
+| `POST /snapshots` | `Procedure` | `CALL create_full_snapshot()` |
+| `DELETE /snapshots/{s}` | `Procedure` | `CALL delete_full_snapshot(…)` |
+| `GET /snapshots/{s}` | `Procedure` | `CALL download_full_snapshot(…)` |
 | `GET /telemetry` | `QdrantSystemTables` | `system.telemetry` |
 | `GET /metrics` | `QdrantSystemTables` | `system.metrics`; the one route that answers text, not JSON |
 | `GET /issues` | `QdrantSystemTables` | `system.issues` |
@@ -133,16 +147,21 @@ and five from `Procedure`, which declares each `CALL` procedure as the one reque
 The driver also calls `POST /embeddings` on `api.openai.com` or `api.voyageai.com` for
 `embed('text', 'openai:…')`. That is not a Qdrant route and is not counted here.
 
-### Why 78% means less than it looks, in both directions
+### Why 100% means less than it looks
 
-**The denominator is padded.** The 15 routes the driver does not call are all snapshot
-plumbing — creating, downloading, uploading and recovering snapshots of a collection or of one
-shard. They belong to an operator with a shell more than to a SQL client, and what the driver
-can offer for them is what it offers for cluster surgery: a `CALL` procedure that wraps one
-route, which is covering an API only in the thinnest sense. Eight of the routes counted as
-covered above are exactly that, the cluster procedures, and they are tested on a cluster of one
-node, where a shard can't actually move. Set the snapshot routes aside and the driver calls
-every one of the 54 that remain. Neither number is wrong; they answer different questions.
+**A quarter of it is thin.** Nineteen of the 69 routes are reached by a `CALL` procedure that
+wraps one request: five for cluster surgery and fourteen for snapshots. Those belong to an
+operator with a shell more than to a SQL client, and a procedure per route is covering an API
+only in the thinnest sense. The cluster procedures are tested on a cluster of one node, where a
+shard can't actually move. The snapshot procedures are tested for real, on a standalone server:
+a snapshot is taken, downloaded, uploaded as another collection and read back. What is not
+tested is recovery with replicas, where `priority` decides which copy wins.
+
+**Six of them touch the driver's own disk.** The download and upload procedures read or write
+a file on the machine the driver runs on, which no other statement does. A connection refuses
+them unless it is opened with `localFiles=true`, so SQL that reaches the driver from somewhere
+else can't read or write files there by default. A download never overwrites a file, and takes
+only a full path.
 
 **The numerator hides how much each route carries.** One route is not one feature.
 `POST /collections/{c}/points/query` is a single row in the table above and is also the whole
@@ -222,7 +241,7 @@ above has stopped predicting how much SQL runs.
 | Statement | State | Condition |
 | --- | --- | --- |
 | `SELECT … FROM <collection>` | works | Scrolls by cursor; `*` returns every column but the vectors |
-| `SELECT … FROM system.<table>` | works | Fourteen tables; a column list and `LIMIT` only |
+| `SELECT … FROM system.<table>` | works | Fifteen tables; a column list and `LIMIT` only |
 | `SELECT … FROM distance_matrix(collection, vector [, sample [, neighbours]])` | works | The one table function. Its columns are `_a`, `_b`, `_score`, `_row`, `_col`; a `WHERE` over the collection's columns says which points to sample from; `LIMIT` and `OFFSET` are taken in the driver. No `ORDER BY`, and a sparse vector is an error |
 | `SELECT` without `FROM` | partial | Constants only; a column or `*` is an error |
 | `SELECT COUNT(*)` | works | One exact count call; must be the only select item unless grouped |
@@ -244,7 +263,7 @@ above has stopped predicting how much SQL runs.
 | `ALTER TABLE … ALTER [COLUMN] v SET (…)` | works | One vector's settings: `on_disk`, `hnsw` and `quantization` for a dense one, `modifier` and `index` for a sparse one |
 | `ALTER TABLE … RENAME`, `ALTER COLUMN … TYPE` | missing | Qdrant renames nothing and a vector's dimensions are fixed |
 | `ALTER SYSTEM SET (…)` | works | The server's quotas: `quotas.enabled` and three percentages, each written as `quotas.name`, the name alone, or `quotas = '{…}'`; `NULL` takes a limit away. Nothing else of the server is a setting yet |
-| `CALL [qdrant.]procedure(…)` | works | Twelve procedures, all cluster operations, each one request; arguments by position or as `name => value`, constants or `?`. Qdrant takes them only when it runs as a cluster. Nothing for snapshots yet |
+| `CALL [qdrant.]procedure(…)` | works | Twenty-six procedures, each one request; arguments by position or as `name => value`, constants or `?`. Twelve are cluster operations, which Qdrant takes only when it runs as a cluster. Fourteen are for snapshots, and the six of those that download or upload a file need `localFiles=true` on the connection |
 | `JOIN`, `UNION`, subqueries | missing | Rejected on purpose — see below |
 | Trailing `;` | works | One semicolon ends a statement |
 | Several statements in one call | partial | Similarity searches of one collection, separated by `;`: one batch call, a result set each, read with `getMoreResults`. On `Statement` only, and anything else in the script is an error |
@@ -486,7 +505,7 @@ and delete from it. What remains, most important first:
 
 Below that line the remaining gaps are mostly ones a SQL user would not reach for first: hybrid
 search and fusion (one route, many body shapes), collection settings at creation (`CREATE TABLE … WITH (…)`,
-which `ALTER TABLE … SET (…)` covers afterwards, all but the shard count), `CALL` procedures for snapshots, `WHERE` and `ORDER BY` over the
+which `ALTER TABLE … SET (…)` covers afterwards, all but the shard count), `WHERE` and `ORDER BY` over the
 `system` tables, and the request options still to come
 (`shard_key`, quantization, a `/*+ … */` hint for one statement).
 

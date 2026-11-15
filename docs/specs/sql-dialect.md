@@ -766,6 +766,7 @@ their names can't clash with a collection's. `DatabaseMetaData` lists them as
 | `system.collections` | `GET /collections`, then `GET /collections/{name}` for each | `name`, `status`, `optimizer_status`, `points_count`, `indexed_vectors_count`, `segments_count`, `shard_number`, `replication_factor`, `write_consistency_factor`, `on_disk_payload`, `vectors`, `sparse_vectors`, `payload_indexes` |
 | `system.aliases` | `GET /aliases` | `alias_name`, `collection_name` |
 | `system.snapshots` | `GET /snapshots`, then `GET /collections/{name}/snapshots` for each | `collection_name` (null for a whole-storage snapshot), `name`, `creation_time`, `size`, `checksum` |
+| `system.shard_snapshots` | `GET /collections/{name}/cluster` for each, then `GET /collections/{name}/shards/{id}/snapshots` for each shard the connected peer holds | `collection_name`, `shard_id`, `name`, `creation_time`, `size`, `checksum` |
 | `system.shard_keys` | `GET /collections/{name}/shards` for each | `collection_name`, `shard_key` |
 | `system.shards` | `GET /collections/{name}/cluster` for each | `collection_name`, `shard_id`, `shard_key`, `placement` (`local`/`remote`), `peer_id`, `state`, `points_count` |
 | `system.cluster` | `GET /cluster` | `status`, `peer_id`, `peer_count`, `raft_term`, `raft_commit`, `raft_pending_operations`, `raft_leader`, `raft_role`, `raft_is_voter`, `consensus_thread_status`, `consensus_thread_updated`, `consensus_thread_error`, `message_send_failures` |
@@ -793,11 +794,13 @@ rather than a column per field. A collection name is matched exactly, as Qdrant 
 but the driver's own names — the catalog, the two schemas, and the system tables and their
 columns — are matched whatever the case.
 
-`system.collections`, `system.snapshots`, `system.shard_keys`, `system.shards`, and
-`system.optimizations` read one
+`system.collections`, `system.snapshots`, `system.shard_snapshots`, `system.shard_keys`,
+`system.shards`, and `system.optimizations` read one
 collection at a time, because Qdrant describes a collection only one at a time: each costs
 one call per collection, and a collection deleted between the listing and its read is left
-out rather than failing the statement. Nothing read here is cached; every statement sees the
+out rather than failing the statement. `system.shard_snapshots` costs one call more for each
+shard, since Qdrant lists a shard's snapshots only for that shard, and it shows the shards of
+the peer the connection reached, which are the ones that peer keeps snapshots of. Nothing read here is cached; every statement sees the
 server as it is now. Rows are sorted by the driver, by name or id, so what a statement
 returns doesn't depend on the order Qdrant answers in.
 
@@ -824,7 +827,7 @@ Two of these tables aren't tabular at Qdrant's end and are projected rather than
 
 `system.issues` reports what Qdrant collected about itself, such as an `UNINDEXED_FIELD`
 suggestion; `solution` is the JSON Qdrant sent, which is a variant whose shape is its own
-business. The read-only `CALL` procedures below move to these tables as they land.
+business.
 
 `system.optimizations` is what Qdrant's optimizers are doing to each collection's segments: a
 row per optimization, whose `state` says which of Qdrant's lists it's in. `running` ones are
@@ -887,7 +890,7 @@ runs a `CALL` with its values bound; `NULL` is an argument left out. `prepareCal
 supported, since no procedure returns anything to read back. A `CALL` returns an update count
 of 0, and a read-only connection refuses it.
 
-**What runs today** is the cluster's procedures, which Qdrant takes only when it runs as a
+**The cluster's procedures**, which Qdrant takes only when it runs as a
 cluster; a standalone server answers that it is one:
 
 | Procedure | Qdrant |
@@ -912,12 +915,66 @@ whether the collection, the shard and the peers are there. What they change is r
 `DatabaseMetaData.getProcedures`, with their arguments in `getProcedureColumns`, so a tool shows
 them.
 
-Still to come, as procedures of the same kind:
+**The snapshot procedures** work on any server, and cover a collection, one shard of it, and
+the whole storage:
 
-| SQL | Qdrant |
+```sql
+CALL create_snapshot('docs');
+SELECT collection_name, name, size FROM system.snapshots;
+CALL download_snapshot('docs', 'docs-2026-11-15.snapshot', '/backups/docs.snapshot');
+CALL upload_snapshot('docs_copy', '/backups/docs.snapshot', priority => 'snapshot');
+CALL recover_snapshot('docs', 'https://other:6333/collections/docs/snapshots/docs.snapshot');
+CALL delete_snapshot('docs', 'docs-2026-11-15.snapshot');
+```
+
+| Procedure | Qdrant |
 | --- | --- |
-| `CALL qdrant.create_snapshot('docs')`, `delete_snapshot` | Collection snapshots (listing them is `system.snapshots`) |
-| `CALL qdrant.create_full_snapshot()`, `delete_full_snapshot` | Full snapshots (listing them is `system.snapshots` too) |
+| `create_snapshot(collection [, wait])` | Take a snapshot of a collection |
+| `delete_snapshot(collection, snapshot [, wait])` | Delete one |
+| `recover_snapshot(collection, location [, priority] [, checksum] [, api_key] [, wait])` | Replace the collection with a snapshot Qdrant fetches from `location`, creating the collection when there is none |
+| `download_snapshot(collection, snapshot, path)` | Save a snapshot to the file `path` |
+| `upload_snapshot(collection, path [, priority] [, checksum] [, wait])` | Replace the collection with the snapshot file `path`, creating the collection when there is none |
+| `create_shard_snapshot(collection, shard_id [, wait])` | Take a snapshot of one shard |
+| `delete_shard_snapshot(collection, shard_id, snapshot [, wait])` | Delete one |
+| `recover_shard_snapshot(collection, shard_id, location [, priority] [, checksum] [, api_key] [, wait])` | Replace the shard with a snapshot Qdrant fetches from `location` |
+| `download_shard_snapshot(collection, shard_id, snapshot, path)` | Save a shard's snapshot to the file `path` |
+| `stream_shard_snapshot(collection, shard_id, path)` | Take a snapshot of a shard and save it to `path` in one request, keeping none on the server |
+| `upload_shard_snapshot(collection, shard_id, path [, priority] [, checksum] [, wait])` | Replace the shard with the snapshot file `path` |
+| `create_full_snapshot([wait])` | Take a snapshot of the whole storage |
+| `delete_full_snapshot(snapshot [, wait])` | Delete one |
+| `download_full_snapshot(snapshot, path)` | Save a whole-storage snapshot to the file `path` |
+
+A snapshot's name is what `system.snapshots` lists for a collection or the whole storage, and
+`system.shard_snapshots` for a shard. No procedure returns the name of the snapshot it took, so
+read it from those tables.
+
+- **`location`** is where Qdrant itself finds the snapshot: an `http://` or `https://` URL, or a
+  `file://` URL of a file on the server. For a shard it may also be the name of one of the
+  shard's own snapshots. `api_key` is the key Qdrant sends when it fetches from a URL; it is
+  written in the statement, so the JDBC call log records it when `logFile` is set.
+- **`priority`** says which data wins when other replicas hold the collection: `replica`,
+  `snapshot`, or `no_sync`. `checksum` is the snapshot's
+  SHA-256, which Qdrant checks before it recovers.
+- **`wait => false`** returns at once and lets Qdrant finish in the background; the statement
+  succeeding then means only that Qdrant accepted the work.
+- **Recovering replaces data.** `recover_…` and `upload_…` overwrite the collection or the shard
+  with the snapshot, and the driver reads the collection's columns afresh afterwards.
+
+**The six that move a file** — the three `download_…`, `stream_shard_snapshot`, and the two
+`upload_…` — read or write `path` on the machine the driver runs on, not on the server:
+
+- **The connection must allow it.** They run only on a connection opened with
+  `localFiles=true`; any other answers SQLState `42501` and asks Qdrant for nothing. No other
+  statement touches the driver's disk, so the setting is off unless asked for: leave it off for
+  a connection that runs SQL you didn't write.
+- **`path` is a full path**, since a relative one would mean wherever the tool happened to
+  start. A download writes a new file and never overwrites one: a file already there, or a
+  folder that isn't, is an error (SQLState `58030`) before Qdrant is asked for anything.
+- **Files are streamed**, not held in memory, so a snapshot may be larger than the heap. The
+  connection's `timeout` bounds the wait for Qdrant to start answering a download, not the
+  transfer; an upload has no timeout, since it lasts as long as the file takes to send and
+  Qdrant to recover from it.
+- **A download that fails part-way** leaves no file behind.
 
 ## Not supported
 

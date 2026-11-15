@@ -138,7 +138,8 @@ class QdrantDriverTest {
 
         List<String> names = Arrays.stream(properties).map(property -> property.name).toList();
         assertEquals(List.of("password", "tls", "timeout", "sampleSize", "schemaCache",
-            "defaultLimit", "logFile", "openaiApiKey", "openaiUrl", "voyageApiKey", "voyageUrl"),
+            "defaultLimit", "logFile", "openaiApiKey", "openaiUrl", "voyageApiKey", "voyageUrl",
+            "localFiles"),
             names);
         assertNull(properties[0].value);
         assertEquals("false", properties[1].value);

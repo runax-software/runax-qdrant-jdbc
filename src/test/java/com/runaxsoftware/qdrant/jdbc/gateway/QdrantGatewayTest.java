@@ -39,6 +39,7 @@ import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
@@ -51,6 +52,8 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.sql.SQLException;
 import java.sql.SQLInvalidAuthorizationSpecException;
 import java.sql.SQLNonTransientConnectionException;
@@ -601,6 +604,106 @@ class QdrantGatewayTest {
         assertEquals("Qdrant: Service internal error", error.getMessage());
     }
 
+    // Procedures and the files they move
+
+    @Test
+    void takesBeingAcceptedAsAnAnswerWhenItAsksForNothingBack() throws Exception {
+        try (RecordingServer recording = new RecordingServer(202, "{\"status\":\"accepted\"}")) {
+            recording.gateway().run(HttpMethod.POST, "/collections/docs/snapshots?wait=false",
+                null);
+
+            assertEquals(List.of("POST /collections/docs/snapshots"), recording.calls());
+        }
+    }
+
+    @Test
+    void savesWhatAnEndpointAnswersToANewFile(@TempDir Path folder) throws Exception {
+        Path file = folder.resolve("docs.snapshot");
+
+        try (RecordingServer recording = new RecordingServer(200, "snapshot bytes")) {
+            long saved = recording.gateway().download("/collections/docs/snapshots/s", file);
+
+            assertEquals(14, saved);
+            assertEquals("snapshot bytes", Files.readString(file));
+            assertEquals(List.of("GET /collections/docs/snapshots/s"), recording.calls());
+            assertEquals("application/octet-stream",
+                recording.headers().get(0).getFirst("Accept"));
+        }
+    }
+
+    @Test
+    void neverOverwritesAFileWithADownload(@TempDir Path folder) throws Exception {
+        Path file = Files.writeString(folder.resolve("docs.snapshot"), "mine");
+
+        try (RecordingServer recording = new RecordingServer(200, "snapshot bytes")) {
+            SQLException error = assertThrows(SQLException.class,
+                () -> recording.gateway().download("/snapshots/s", file));
+
+            assertEquals("58030", error.getSQLState());
+            assertEquals("Can't save to " + file + ": the file is already there",
+                error.getMessage());
+            assertEquals("mine", Files.readString(file));
+        }
+    }
+
+    @Test
+    void savesNothingWhenQdrantHasNoSuchSnapshot(@TempDir Path folder) throws Exception {
+        Path file = folder.resolve("docs.snapshot");
+
+        try (RecordingServer recording = new RecordingServer(404,
+            "Not found: Snapshot s not found")) {
+            SQLException error = assertThrows(SQLException.class,
+                () -> recording.gateway().download("/snapshots/s", file));
+
+            assertEquals("42S02", error.getSQLState());
+            assertEquals("Qdrant: Not found: Snapshot s not found", error.getMessage());
+            assertFalse(Files.exists(file));
+        }
+    }
+
+    @Test
+    void sendsAFileAsTheFormFieldQdrantReads(@TempDir Path folder) throws Exception {
+        Path file = Files.writeString(folder.resolve("docs.snapshot"), "snapshot bytes");
+
+        try (RecordingServer recording = new RecordingServer(200,
+            "{\"result\":true,\"status\":\"ok\"}")) {
+            recording.gateway().upload("/collections/docs/snapshots/upload?priority=snapshot",
+                "snapshot", file);
+
+            assertEquals(List.of("POST /collections/docs/snapshots/upload"), recording.calls());
+
+            String type = recording.headers().get(0).getFirst("Content-Type");
+            assertTrue(type.startsWith("multipart/form-data; boundary="), type);
+
+            String boundary = type.substring(type.indexOf('=') + 1);
+            assertEquals("--" + boundary + "\r\n"
+                + "Content-Disposition: form-data; name=\"snapshot\"; filename=\"snapshot\"\r\n"
+                + "Content-Type: application/octet-stream\r\n\r\n"
+                + "snapshot bytes\r\n--" + boundary + "--\r\n",
+                new String(recording.bodies().get(0), StandardCharsets.UTF_8));
+        }
+    }
+
+    @Test
+    void reportsWhatQdrantSaysAboutAnUploadItRefuses(@TempDir Path folder) throws Exception {
+        Path file = Files.writeString(folder.resolve("docs.snapshot"), "not a snapshot");
+
+        try (RecordingServer recording = new RecordingServer(400,
+            "{\"status\":{\"error\":\"Bad request: not a snapshot\"}}")) {
+            SQLException error = assertThrows(SQLException.class,
+                () -> recording.gateway().upload("/collections/docs/snapshots/upload",
+                    "snapshot", file));
+
+            assertEquals("42000", error.getSQLState());
+            assertEquals("Qdrant: Bad request: not a snapshot", error.getMessage());
+        }
+
+        SQLException missing = assertThrows(SQLException.class,
+            () -> gateway.upload("/collections/docs/snapshots/upload", "snapshot",
+                folder.resolve("nope.snapshot")));
+        assertEquals("58030", missing.getSQLState());
+    }
+
     // Changes to points
 
     @Test
@@ -1108,6 +1211,7 @@ class QdrantGatewayTest {
         private final List<String> rawPaths = new CopyOnWriteArrayList<>();
         private final List<String> calls = new CopyOnWriteArrayList<>();
         private final List<Headers> headers = new CopyOnWriteArrayList<>();
+        private final List<byte[]> bodies = new CopyOnWriteArrayList<>();
         private final QdrantGateway gateway;
 
         RecordingServer(int status, String body) throws IOException {
@@ -1118,7 +1222,7 @@ class QdrantGatewayTest {
                 headers.add(exchange.getRequestHeaders());
 
                 try (InputStream in = exchange.getRequestBody()) {
-                    in.readAllBytes();
+                    bodies.add(in.readAllBytes());
                 }
 
                 byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
@@ -1148,6 +1252,11 @@ class QdrantGatewayTest {
 
         List<Headers> headers() {
             return headers;
+        }
+
+        // Each request's body, as it was sent
+        List<byte[]> bodies() {
+            return bodies;
         }
 
         @Override

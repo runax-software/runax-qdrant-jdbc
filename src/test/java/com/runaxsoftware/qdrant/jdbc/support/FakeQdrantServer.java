@@ -157,6 +157,11 @@ public final class FakeQdrantServer implements AutoCloseable {
         COLLECTION_SNAPSHOTS,
 
         /**
+         * {@code GET /collections/{name}/shards/{id}/snapshots}: one shard's snapshots.
+         */
+        SHARD_SNAPSHOTS,
+
+        /**
          * {@code GET /collections/{name}/shards}: the collection's shard keys.
          */
         SHARD_KEYS,
@@ -253,6 +258,7 @@ public final class FakeQdrantServer implements AutoCloseable {
     private final Map<String, List<ObjectNode>> points = new ConcurrentHashMap<>();
     private final List<ObjectNode> storageSnapshots = new CopyOnWriteArrayList<>();
     private final Map<String, List<ObjectNode>> collectionSnapshots = new ConcurrentHashMap<>();
+    private final Map<String, List<ObjectNode>> shardSnapshots = new ConcurrentHashMap<>();
     private final Map<String, List<JsonNode>> shardKeys = new ConcurrentHashMap<>();
     private final Map<String, ObjectNode> optimizations = new ConcurrentHashMap<>();
     private volatile JsonNode quotas = Json.object("enabled", false);
@@ -349,6 +355,18 @@ public final class FakeQdrantServer implements AutoCloseable {
     public FakeQdrantServer snapshot(String collection, ObjectNode description) {
         if (collection == null) storageSnapshots.add(description);
         else collectionSnapshots.computeIfAbsent(collection,
+            name -> new CopyOnWriteArrayList<>()).add(description);
+
+        return this;
+    }
+
+    /**
+     * Adds a snapshot of one shard, listed in the order added.
+     *
+     * @param description the snapshot as Qdrant describes it; see {@link #snapshotDescription}
+     */
+    public FakeQdrantServer shardSnapshot(String collection, long shard, ObjectNode description) {
+        shardSnapshots.computeIfAbsent(collection + "/" + shard,
             name -> new CopyOnWriteArrayList<>()).add(description);
 
         return this;
@@ -753,6 +771,7 @@ public final class FakeQdrantServer implements AutoCloseable {
                 case ALIASES -> ok(exchange, Json.object("aliases", aliasList()));
                 case SNAPSHOTS -> ok(exchange, Json.array(storageSnapshots.toArray()));
                 case COLLECTION_SNAPSHOTS -> collectionSnapshots(exchange, segments[2]);
+                case SHARD_SNAPSHOTS -> shardSnapshots(exchange, segments[2], segments[4]);
                 case SHARD_KEYS -> shardKeys(exchange, segments[2]);
                 case OPTIMIZATIONS -> optimizations(exchange, segments[2]);
                 case COLLECTION_CLUSTER -> collectionCluster(exchange, segments[2]);
@@ -879,6 +898,11 @@ public final class FakeQdrantServer implements AutoCloseable {
             return Endpoint.FACET;
         }
 
+        if (method.equals("GET") && segments.length == 6 && segments[3].equals("shards")
+            && segments[5].equals("snapshots")) {
+            return Endpoint.SHARD_SNAPSHOTS;
+        }
+
         if (method.equals("GET") && segments.length == 4) {
             switch (segments[3]) {
                 case "snapshots": return Endpoint.COLLECTION_SNAPSHOTS;
@@ -934,6 +958,17 @@ public final class FakeQdrantServer implements AutoCloseable {
         }
 
         ok(exchange, info);
+    }
+
+    private void shardSnapshots(HttpExchange exchange, String name, String shard)
+        throws IOException {
+        if (find(name) == null) {
+            notFound(exchange, name);
+            return;
+        }
+
+        ok(exchange, Json.array(
+            shardSnapshots.getOrDefault(resolve(name) + "/" + shard, List.of()).toArray()));
     }
 
     private void collectionSnapshots(HttpExchange exchange, String name) throws IOException {
