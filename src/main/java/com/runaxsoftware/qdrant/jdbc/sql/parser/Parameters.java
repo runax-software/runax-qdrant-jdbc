@@ -1,6 +1,7 @@
 package com.runaxsoftware.qdrant.jdbc.sql.parser;
 
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.And;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Between;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Comparison;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Expression;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.FunctionCall;
@@ -171,6 +172,10 @@ public final class Parameters {
         if (expression instanceof Like like) {
             return new Like(bind(like.column(), values), bind(like.pattern(), values),
                 like.negated());
+        }
+        if (expression instanceof Between between) {
+            return new Between(bind(between.column(), values), bind(between.low(), values),
+                bind(between.high(), values), between.negated());
         }
         if (expression instanceof FunctionCall call) {
             return new FunctionCall(call.name(), bind(call.arguments(), values));

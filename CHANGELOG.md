@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `BETWEEN` and `NOT BETWEEN` in `WHERE`: `price BETWEEN 10 AND 20` is one Qdrant `range` with
+  both bounds included, on numbers and on `TIMESTAMP WITH TIME ZONE` columns, and either bound
+  may be a `?`. `NOT BETWEEN` follows SQL's rule that a point without the field matches
+  neither, as `NOT IN` and `<>` do. Text, booleans and `_id` are an error, as they are for `<`.
+  `BETWEEN` is read as an operator only after a column, so a payload field may still be called
+  `between`. ([#56])
 - `LIMIT ?` and `OFFSET ?` in a prepared statement, and `LIMIT ? BY field`, so a data grid or an
   application pages with one prepared statement instead of new SQL for every page. The values
   are bound before the statement is planned, so each kind of read uses them as it uses the
@@ -469,5 +475,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#51]: https://github.com/runax-software/runax-qdrant-jdbc/pull/51
 [#53]: https://github.com/runax-software/runax-qdrant-jdbc/pull/53
 [#54]: https://github.com/runax-software/runax-qdrant-jdbc/pull/54
+[#56]: https://github.com/runax-software/runax-qdrant-jdbc/pull/56
 [#57]: https://github.com/runax-software/runax-qdrant-jdbc/pull/57
 [#58]: https://github.com/runax-software/runax-qdrant-jdbc/pull/58

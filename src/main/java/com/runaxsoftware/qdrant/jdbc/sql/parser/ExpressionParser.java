@@ -89,8 +89,17 @@ public final class ExpressionParser {
                 + "stored, with no case-insensitive match, so write the case the points hold",
                 "0A000");
         }
+        // BETWEEN too, as LIKE is. Each bound is one value, so the AND between them is read
+        // here and never taken for the boolean AND that may follow: a BETWEEN 1 AND 2 AND b = 3
+        if (this.tokenStream.matchWord("BETWEEN")) {
+            Expression low = parseValue();
+
+            this.tokenStream.expectKeyword("AND");
+
+            return new Between(column, low, parseValue(), negated);
+        }
         if (negated) {
-            throw this.tokenStream.error("Expected IN or LIKE after NOT");
+            throw this.tokenStream.error("Expected IN, LIKE or BETWEEN after NOT");
         }
 
         Token operator = this.tokenStream.peek();

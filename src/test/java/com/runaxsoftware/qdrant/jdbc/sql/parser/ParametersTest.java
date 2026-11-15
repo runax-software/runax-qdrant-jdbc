@@ -43,6 +43,7 @@ class ParametersTest {
             "SELECT * FROM docs                                               | 0",
             "SELECT ?, ? AS b                                                 | 2",
             "SELECT * FROM docs WHERE lang = ? AND (year > ? OR NOT x IN (?, ?)) | 4",
+            "SELECT * FROM docs WHERE price NOT BETWEEN ? AND ? AND lang = ?  | 3",
             "SELECT _id FROM docs ORDER BY similarity(dense, ?) DESC LIMIT 5  | 1",
             "DELETE FROM docs WHERE _id = ?                                   | 1",
             "DROP TABLE docs                                                  | 0",
@@ -96,6 +97,13 @@ class ParametersTest {
         assertEquals(Parser.parse("SELECT lang, COUNT(*) FROM docs WHERE year > 2020 GROUP BY lang LIMIT 5"),
                 Parameters.bind(Parser.parse("SELECT lang, COUNT(*) FROM docs WHERE year > ? GROUP BY lang LIMIT 5"),
                         index -> new Literal(2020L)));
+    }
+
+    @Test
+    void bindsBothBoundsOfABetween() throws SQLSyntaxErrorException {
+        assertEquals(Parser.parse("SELECT * FROM docs WHERE price NOT BETWEEN 1 AND 2 AND lang = 3"),
+                Parameters.bind(Parser.parse("SELECT * FROM docs WHERE price NOT BETWEEN ? AND ? AND lang = ?"),
+                        index -> new Literal((long) index)));
     }
 
     @Test

@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.And;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Between;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Column;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Comparison;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Expression;
@@ -437,6 +438,62 @@ class ParserTest {
     void readsLikeAsANameWhereAnOperatorCantGo() throws SQLSyntaxErrorException {
         assertEquals(eq("like", 1L), where("like = 1"));
         assertEquals(new Like(Column.of("like"), new Literal("a%"), false), where("like LIKE 'a%'"));
+    }
+
+    @Test
+    void parsesBetweenAndNotBetween() throws SQLSyntaxErrorException {
+        assertEquals(new Between(Column.of("price"), new Literal(10L), new Literal(20.5), false),
+                where("price BETWEEN 10 AND 20.5"));
+        assertEquals(new Between(Column.of("price"), new Literal(10L), new Literal(20L), true),
+                where("price NOT BETWEEN 10 AND 20"));
+        assertEquals(new Not(new Between(Column.of("price"), new Literal(10L), new Literal(20L), false)),
+                where("NOT price between 10 and 20"));
+    }
+
+    /**
+     * The AND between the bounds belongs to BETWEEN, so an AND after it joins another
+     * condition, and BETWEEN binds tighter than both AND and OR.
+     */
+    @Test
+    void readsTheAndOfBetweenApartFromTheBooleanOne() throws SQLSyntaxErrorException {
+        Between between = new Between(Column.of("a"), new Literal(1L), new Literal(2L), false);
+
+        assertEquals(new And(between, eq("b", 3L)), where("a BETWEEN 1 AND 2 AND b = 3"));
+        assertEquals(new And(eq("b", 3L), between), where("b = 3 AND a BETWEEN 1 AND 2"));
+        assertEquals(new Or(between, eq("b", 3L)), where("a BETWEEN 1 AND 2 OR b = 3"));
+        assertEquals(new And(new Between(Column.of("a"), new Literal(1L), new Literal(2L), true),
+                        new Between(Column.of("c"), new Literal(3L), new Literal(4L), false)),
+                where("a NOT BETWEEN 1 AND 2 AND c BETWEEN 3 AND 4"));
+    }
+
+    @Test
+    void parsesBoundsGivenAsPlaceholders() throws SQLSyntaxErrorException {
+        assertEquals(new And(new Between(Column.of("price"), new Parameter(1), new Parameter(2), false),
+                        new Comparison(Column.of("lang"), "=", new Parameter(3))),
+                where("price BETWEEN ? AND ? AND lang = ?"));
+    }
+
+    /**
+     * BETWEEN, like LIKE, is an operator only after a column, so a payload field may still be
+     * called {@code between}.
+     */
+    @Test
+    void readsBetweenAsANameWhereAnOperatorCantGo() throws SQLSyntaxErrorException {
+        assertEquals(eq("between", 1L), where("between = 1"));
+        assertEquals(new Between(Column.of("between"), new Literal(1L), new Literal(2L), false),
+                where("between BETWEEN 1 AND 2"));
+    }
+
+    @Test
+    void rejectsABetweenWithoutBothBounds() {
+        assertError("Expected AND, found the end of the statement at line 1, column 42",
+                "SELECT * FROM docs WHERE price BETWEEN 10");
+        assertError("Expected AND, found 'OR' at line 1, column 43",
+                "SELECT * FROM docs WHERE price BETWEEN 10 OR 20");
+        assertError("Expected a value, found the end of the statement at line 1, column 46",
+                "SELECT * FROM docs WHERE price BETWEEN 10 AND");
+        assertError("Expected a value, found 'low' at line 1, column 40",
+                "SELECT * FROM docs WHERE price BETWEEN low AND 20");
     }
 
     @Test
@@ -1015,8 +1072,8 @@ class ParserTest {
     }
 
     @Test
-    void rejectsNotWithoutInOrLike() {
-        assertError("Expected IN or LIKE after NOT, found '=' at line 1, column 32",
+    void rejectsNotWithoutInLikeOrBetween() {
+        assertError("Expected IN, LIKE or BETWEEN after NOT, found '=' at line 1, column 32",
                 "SELECT * FROM docs WHERE a NOT = 1");
     }
 
