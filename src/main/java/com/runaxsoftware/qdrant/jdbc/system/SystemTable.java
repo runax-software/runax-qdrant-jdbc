@@ -101,6 +101,25 @@ public enum SystemTable {
                 "The key, as text; Qdrant takes a string or a whole number"))),
 
     /**
+     * Every snapshot of one shard that the connected peer holds. Qdrant lists them a shard at a
+     * time, so the table costs a call per collection and one more per shard.
+     */
+    SHARD_SNAPSHOTS("shard_snapshots", "Every snapshot of a single shard, on the connected peer",
+        List.of(
+            SystemColumn.of("collection_name", ColumnType.TEXT,
+                "The collection the shard belongs to"),
+            SystemColumn.of("shard_id", ColumnType.INTEGER,
+                "The shard the snapshot is of"),
+            SystemColumn.of("name", ColumnType.TEXT,
+                "The snapshot file name, which names it in the snapshot API"),
+            SystemColumn.of("creation_time", ColumnType.DATETIME,
+                "When Qdrant took the snapshot, in UTC"),
+            SystemColumn.of("size", ColumnType.INTEGER,
+                "The snapshot file's size in bytes"),
+            SystemColumn.of("checksum", ColumnType.TEXT,
+                "The snapshot file's SHA-256 checksum"))),
+
+    /**
      * Every shard of every collection, each copy of it its own row: where it is, which peer
      * holds it, and what state that copy is in.
      */

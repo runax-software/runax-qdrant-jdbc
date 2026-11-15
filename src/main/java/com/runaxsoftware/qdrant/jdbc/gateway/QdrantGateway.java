@@ -22,12 +22,21 @@ import com.runaxsoftware.qdrant.jdbc.gateway.models.ScrollPage;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ScrollRequest;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.ServerVersion;
 
+import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.ConnectException;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.*;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AccessDeniedException;
+import java.nio.file.FileAlreadyExistsException;
+import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.sql.SQLException;
 import java.sql.SQLInvalidAuthorizationSpecException;
 import java.sql.SQLNonTransientConnectionException;
@@ -35,6 +44,7 @@ import java.sql.SQLTimeoutException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 public class QdrantGateway implements AutoCloseable {
     /**
@@ -48,6 +58,11 @@ public class QdrantGateway implements AutoCloseable {
     private static final String NOT_FOUND = "42S02";
     private static final String NO_SUCH_POINT = "Point with id";
     private static final int MAX_ERROR_LENGTH = 500;
+
+    // How much of a failed download's body is read for its message
+    private static final int MAX_ERROR_BYTES = 4096;
+    private static final String BINARY = "application/octet-stream";
+    private static final String FILE_ERROR = "58030";
 
     /**
      * Points per request when reading the IDs a filter matches. They carry no payload and no
@@ -616,6 +631,96 @@ public class QdrantGateway implements AutoCloseable {
     }
 
     /**
+     * Any endpoint that is asked to do something rather than to answer: the request succeeding
+     * is the whole answer. Qdrant sends no {@code "result"} at all when it accepts work to
+     * finish in the background, as it does with {@code wait=false}.
+     */
+    public void run(HttpMethod method, String path, JsonNode body) throws SQLException {
+        send(method, path, body);
+    }
+
+    /**
+     * Saves what an endpoint answers to a new file, without holding it in memory: a snapshot
+     * can be larger than the heap. The connection's timeout bounds the wait for Qdrant to
+     * start answering, not the transfer, whose length is the file's.
+     *
+     * @param path the endpoint, which answers with a file
+     * @param file where to save it; a file already there is an error, not overwritten
+     * @return the bytes saved
+     */
+    public long download(String path, Path file) throws SQLException {
+        HttpRequest request = request(path, BINARY).timeout(timeout).GET().build();
+        HttpResponse<InputStream> response = transmit(request,
+            HttpResponse.BodyHandlers.ofInputStream());
+        boolean created = false;
+
+        try (InputStream body = response.body()) {
+            if (!succeeded(response.statusCode())) {
+                throw failure(response.statusCode(),
+                    new String(body.readNBytes(MAX_ERROR_BYTES), StandardCharsets.UTF_8));
+            }
+
+            try (OutputStream out = Files.newOutputStream(file, StandardOpenOption.CREATE_NEW,
+                StandardOpenOption.WRITE)) {
+                created = true;
+                return body.transferTo(out);
+            }
+        } catch (FileAlreadyExistsException e) {
+            throw new SQLException("Can't save to " + file + ": the file is already there",
+                FILE_ERROR, e);
+        } catch (NoSuchFileException e) {
+            throw new SQLException("Can't save to " + file + ": its folder doesn't exist",
+                FILE_ERROR, e);
+        } catch (AccessDeniedException e) {
+            throw new SQLException("Can't save to " + file + ": no permission to write there",
+                FILE_ERROR, e);
+        } catch (IOException e) {
+            // What was written is part of a snapshot, which is worse than none
+            if (created) discard(file);
+
+            throw new SQLException("Saving to " + file + " failed: " + describe(e), FILE_ERROR, e);
+        }
+    }
+
+    /**
+     * Sends a file to an endpoint as a form upload, read from disk as it goes. No timeout
+     * bounds the request: it lasts as long as the file takes to send and Qdrant to recover
+     * from it.
+     *
+     * @param path  the endpoint, with its query string
+     * @param field the form field Qdrant reads the file from
+     * @param file  the file to send
+     */
+    public void upload(String path, String field, Path file) throws SQLException {
+        String boundary = "qdrant-jdbc-" + UUID.randomUUID();
+        String head = "--" + boundary + "\r\nContent-Disposition: form-data; name=\"" + field
+            + "\"; filename=\"" + field + "\"\r\nContent-Type: " + BINARY + "\r\n\r\n";
+        String tail = "\r\n--" + boundary + "--\r\n";
+
+        HttpRequest.BodyPublisher body;
+        try {
+            body = HttpRequest.BodyPublishers.concat(HttpRequest.BodyPublishers.ofString(head),
+                HttpRequest.BodyPublishers.ofFile(file), HttpRequest.BodyPublishers.ofString(tail));
+        } catch (FileNotFoundException e) {
+            throw new SQLException("Can't read " + file + ": there is no such file", FILE_ERROR, e);
+        }
+
+        HttpRequest request = request(path, "application/json")
+            .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+            .POST(body).build();
+
+        check(transmit(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)));
+    }
+
+    private static void discard(Path file) {
+        try {
+            Files.deleteIfExists(file);
+        } catch (IOException e) {
+            // The failure that led here is the one to report
+        }
+    }
+
+    /**
      * An endpoint's body as it was sent, for {@code GET /metrics}: Qdrant answers that one in
      * Prometheus' text format, which has no JSON {@code "result"} for {@link #request} to
      * unwrap. Failures are reported the same way as a JSON endpoint's.
@@ -659,10 +764,7 @@ public class QdrantGateway implements AutoCloseable {
      */
     private HttpResponse<String> exchange(HttpMethod method, String path, JsonNode body,
                                           String accept) throws SQLException {
-        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(baseUrl + path))
-            .timeout(timeout).header("Accept", accept).header("User-Agent", userAgent);
-
-        if (apiKey != null) request.header("api-key", apiKey);
+        HttpRequest.Builder request = request(path, accept).timeout(timeout);
 
         if (body == null) request.method(method.method(), HttpRequest.BodyPublishers.noBody());
         else {
@@ -670,9 +772,25 @@ public class QdrantGateway implements AutoCloseable {
                 .method(method.method(), HttpRequest.BodyPublishers.ofString(body.toString()));
         }
 
-        HttpResponse<String> response;
+        return transmit(request.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+    }
+
+    // A request to Qdrant with what every one carries: the key and the user agent
+    private HttpRequest.Builder request(String path, String accept) {
+        HttpRequest.Builder request = HttpRequest.newBuilder(URI.create(baseUrl + path))
+            .header("Accept", accept).header("User-Agent", userAgent);
+
+        if (apiKey != null) request.header("api-key", apiKey);
+
+        return request;
+    }
+
+    // Sends a request, failing with the SQL state the transport error deserves
+    private <T> HttpResponse<T> transmit(HttpRequest request, HttpResponse.BodyHandler<T> handler)
+        throws SQLException {
+        HttpResponse<T> response;
         try {
-            response = http.send(request.build(), HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            response = http.send(request, handler);
         } catch (HttpConnectTimeoutException | ConnectException e) {
             throw new SQLNonTransientConnectionException("Can't reach Qdrant at " + baseUrl + ": "
                 + describe(e) + ". Check the host and that the port is Qdrant's REST port ("
@@ -710,13 +828,19 @@ public class QdrantGateway implements AutoCloseable {
     }
 
     private static boolean succeeded(HttpResponse<String> response) {
-        int status = response.statusCode();
+        return succeeded(response.statusCode());
+    }
+
+    private static boolean succeeded(int status) {
         return status >= 200 && status < 300;
     }
 
     private static SQLException failure(HttpResponse<String> response) {
-        int status = response.statusCode();
-        String error = errorMessage(response.body(), status);
+        return failure(response.statusCode(), response.body());
+    }
+
+    private static SQLException failure(int status, String body) {
+        String error = errorMessage(body, status);
 
         if (status == 401 || status == 403) {
             return new SQLInvalidAuthorizationSpecException(

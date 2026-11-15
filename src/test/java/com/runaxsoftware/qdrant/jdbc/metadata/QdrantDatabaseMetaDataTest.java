@@ -48,8 +48,8 @@ class QdrantDatabaseMetaDataTest {
      */
     private static final List<String> SYSTEM_TABLES = List.of("aliases", "cluster",
         "cluster_telemetry", "collections",
-        "health", "issues", "metrics", "optimizations", "peers", "quotas", "shard_keys", "shards",
-        "snapshots", "telemetry");
+        "health", "issues", "metrics", "optimizations", "peers", "quotas", "shard_keys",
+        "shard_snapshots", "shards", "snapshots", "telemetry");
 
     private FakeQdrantServer server;
     private Connection connection;
@@ -658,6 +658,8 @@ class QdrantDatabaseMetaDataTest {
                 + "much is used, in one row",
             "qdrant.system.shard_keys SYSTEM TABLE Every collection's shard keys, for custom "
                 + "sharding",
+            "qdrant.system.shard_snapshots SYSTEM TABLE Every snapshot of a single shard, on "
+                + "the connected peer",
             "qdrant.system.shards SYSTEM TABLE Every shard of every collection, and the peer "
                 + "holding each copy",
             "qdrant.system.snapshots SYSTEM TABLE Every snapshot, of a collection or of the "
@@ -807,7 +809,8 @@ class QdrantDatabaseMetaDataTest {
 
         assertEquals(SYSTEM_TABLES, systemTables("%", null));
         assertEquals(List.of("collections"), systemTables("coll%", null));
-        assertEquals(List.of("shard_keys", "shards"), systemTables("shard%", null));
+        assertEquals(List.of("shard_keys", "shard_snapshots", "shards"),
+            systemTables("shard%", null));
         assertEquals(List.of(), systemTables("products", null));
         assertEquals(List.of(), systemTables("%", new String[] {"TABLE", "VIEW"}));
 
@@ -990,9 +993,14 @@ class QdrantDatabaseMetaDataTest {
             }
         }
 
-        assertEquals(List.of("abort_resharding", "abort_shard_transfer", "create_shard_key",
-            "delete_shard_key", "drop_replica", "move_shard", "recover_raft", "remove_peer",
-            "replicate_points", "replicate_shard", "restart_shard_transfer", "start_resharding"),
+        assertEquals(List.of("abort_resharding", "abort_shard_transfer", "create_full_snapshot",
+            "create_shard_key", "create_shard_snapshot", "create_snapshot",
+            "delete_full_snapshot", "delete_shard_key", "delete_shard_snapshot",
+            "delete_snapshot", "download_full_snapshot", "download_shard_snapshot",
+            "download_snapshot", "drop_replica", "move_shard", "recover_raft",
+            "recover_shard_snapshot", "recover_snapshot", "remove_peer", "replicate_points",
+            "replicate_shard", "restart_shard_transfer", "start_resharding",
+            "stream_shard_snapshot", "upload_shard_snapshot", "upload_snapshot"),
             names);
         assertTrue(metaData.supportsStoredProcedures());
     }

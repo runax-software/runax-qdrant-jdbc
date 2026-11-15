@@ -24,6 +24,7 @@ public class QdrantConnection implements Connection {
     private final SchemaReader schemaReader;
     private final Embedders embedders;
     private final int defaultLimit;
+    private final boolean localFiles;
     private final Properties clientInfo = new Properties();
     private volatile boolean closed;
     private SQLWarning warnings;
@@ -39,6 +40,7 @@ public class QdrantConnection implements Connection {
         this.schemaReader = new SchemaReader(gateway, settings.sampleSize(), settings.schemaCache());
         this.embedders = new ConnectionEmbedders(settings.embedding(), settings.timeout());
         this.defaultLimit = settings.defaultLimit();
+        this.localFiles = settings.localFiles();
     }
 
     public static QdrantConnection open(String url, ConnectionSettings settings) throws SQLException {
@@ -118,6 +120,14 @@ public class QdrantConnection implements Connection {
      */
     public int defaultLimit() {
         return defaultLimit;
+    }
+
+    /**
+     * Whether a statement may read and write files on this machine, which the procedures that
+     * download and upload snapshots do.
+     */
+    public boolean localFiles() {
+        return localFiles;
     }
 
     public void checkOpen() throws SQLException {

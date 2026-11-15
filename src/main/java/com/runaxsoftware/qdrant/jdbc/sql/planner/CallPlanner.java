@@ -18,6 +18,8 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ProcedurePlan;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
 import java.sql.SQLException;
 import java.sql.SQLSyntaxErrorException;
 import java.util.Arrays;
@@ -52,21 +54,50 @@ final class CallPlanner {
         String path = procedure.path();
         var query = new StringBuilder();
         ObjectNode fields = JSON.objectNode();
+        Path file = null;
+        String restores = null;
 
         for (Map.Entry<ProcedureArgument, JsonNode> entry : values.entrySet()) {
             ProcedureArgument argument = entry.getKey();
             JsonNode value = entry.getValue();
+
+            if (procedure.restores() && argument.name().equals(Procedure.COLLECTION)) {
+                restores = value.asText();
+            }
 
             switch (argument.target()) {
                 case PATH -> path = path.replace("{" + argument.name() + "}", encode(value.asText()));
                 case QUERY -> query.append(query.length() == 0 ? '?' : '&').append(argument.name())
                     .append('=').append(encode(value.asText()));
                 case BODY -> fields.set(argument.name(), value);
+                case FILE -> file = file(procedure, argument, value.asText());
             }
         }
 
         return new ProcedurePlan(procedure, procedure.method(), path + query,
-            body(procedure, fields));
+            body(procedure, fields), file, restores);
+    }
+
+    // The file a call names, as an absolute path, so what it means doesn't depend on the folder
+    // the tool happened to start in
+    private static Path file(Procedure procedure, ProcedureArgument argument, String text)
+        throws SQLException {
+        Path path;
+        try {
+            path = Path.of(text);
+        } catch (InvalidPathException e) {
+            throw new SQLSyntaxErrorException("Argument '" + argument.name() + "' of "
+                + procedure.procedureName() + " isn't a file path: '" + text + "'",
+                INVALID_VALUE, e);
+        }
+
+        if (!path.isAbsolute()) {
+            throw new SQLSyntaxErrorException("Argument '" + argument.name() + "' of "
+                + procedure.procedureName() + " takes the file's full path, not '" + text + "'",
+                INVALID_VALUE);
+        }
+
+        return path.normalize();
     }
 
     private static Procedure procedure(CallStatement statement) throws SQLException {

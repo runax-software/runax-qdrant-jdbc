@@ -22,7 +22,10 @@ public enum Setting {
     OPENAI_URL("openaiUrl", "https://api.openai.com/v1", "OpenAI's API URL, or one that answers like it, "
         + "such as an Azure OpenAI deployment."),
     VOYAGE_API_KEY("voyageApiKey", null, "Voyage AI API key, for embed('text', 'voyage:...'). Never logged."),
-    VOYAGE_URL("voyageUrl", "https://api.voyageai.com/v1", "Voyage AI's API URL.");
+    VOYAGE_URL("voyageUrl", "https://api.voyageai.com/v1", "Voyage AI's API URL."),
+    LOCAL_FILES("localFiles", "false", "Let SQL read and write files on this machine: true or "
+        + "false. The procedures that download and upload snapshots need it. Leave it off for a "
+        + "connection that runs SQL you didn't write.", "false", "true");
 
     private final String key;
     private final String defaultValue;

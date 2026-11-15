@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fourteen `CALL` procedures for snapshots, of a collection, of one shard, and of the whole
+  storage: `create_snapshot('docs')`, `delete_snapshot`, `recover_snapshot` from a URL Qdrant
+  fetches itself, and `download_snapshot` and `upload_snapshot`, which save a snapshot to a file
+  on the machine the driver runs on and send one from there. The shard and whole-storage ones
+  are named the same way (`create_shard_snapshot`, `download_full_snapshot`), and
+  `stream_shard_snapshot` takes a shard's snapshot and saves it in one request. Files are
+  streamed, so a snapshot may be larger than the heap, and a download never overwrites a file.
+  The six procedures that touch the driver's disk run only on a connection opened with the new
+  `localFiles=true` setting, which is off by default. `system.shard_snapshots` lists each
+  shard's snapshots, beside `system.snapshots`. With them the driver calls every one of the 69
+  routes Qdrant documents. ([#58])
 - `distance_matrix(collection, vector [, sample [, neighbours]])`, a table in `FROM`: Qdrant
   samples points and finds each one's nearest neighbours among the sample, and each row is one
   pair — `_a`, `_b` and `_score`. It is what clustering or a 2-D map of a collection starts
@@ -450,3 +461,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#51]: https://github.com/runax-software/runax-qdrant-jdbc/pull/51
 [#53]: https://github.com/runax-software/runax-qdrant-jdbc/pull/53
 [#54]: https://github.com/runax-software/runax-qdrant-jdbc/pull/54
+[#58]: https://github.com/runax-software/runax-qdrant-jdbc/pull/58

@@ -870,7 +870,7 @@ class PlannerTest {
 
         assertEquals("Unknown table 'system.queries': the system schema has aliases, cluster, "
             + "cluster_telemetry, collections, health, issues, metrics, optimizations, peers, quotas, shard_keys, "
-            + "shards, snapshots, telemetry",
+            + "shard_snapshots, shards, snapshots, telemetry",
             error.getMessage());
         assertEquals("42S02", error.getSQLState());
     }

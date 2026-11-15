@@ -155,7 +155,7 @@ measured REST and SQL coverage is in [docs/coverage.md](docs/coverage.md).
   they can't clash with collection names. `system.collections` (status, optimizer, point and
   segment counts, shards, vectors, payload indexes) and `system.aliases` are done, along
   with the schema-qualified names (`system.collections`, `qdrant.system.collections`) that
-  reach them, and so are `snapshots`, `shard_keys`, `shards`, `cluster`, `peers`,
+  reach them, and so are `snapshots`, `shard_snapshots`, `shard_keys`, `shards`, `cluster`, `peers`,
   `telemetry`, `metrics`, `issues`, `health` (Qdrant's three health probes, a row each), and
   `optimizations` (each collection's running, queued, and latest completed optimizations), and
   `quotas` (the server's limits on memory and disk, which `ALTER SYSTEM SET (quotas.… = …)`
@@ -168,7 +168,14 @@ measured REST and SQL coverage is in [docs/coverage.md](docs/coverage.md).
   eleven more, for what Qdrant does that isn't about rows: shard keys, moving, replicating and
   dropping shards, resharding, removing a peer, recovering Raft. Arguments go by position or as
   `name => value`, constants or `?`, and `DatabaseMetaData` lists the procedures. Qdrant takes
-  them only when it runs as a cluster. Procedures for snapshots come later.
+  them only when it runs as a cluster.
+- [x] **Snapshot procedures** — fourteen more `CALL` procedures take, delete, recover, download
+  and upload a snapshot of a collection (`create_snapshot('docs')`), of one shard
+  (`create_shard_snapshot('docs', 0)`), or of the whole storage (`create_full_snapshot()`), and
+  `system.shard_snapshots` lists a shard's beside `system.snapshots`. A download saves the
+  snapshot to a file on the machine the driver runs on and an upload sends one from there, both
+  streamed, so a connection takes them only with `localFiles=true`. With them the driver calls
+  every route Qdrant documents.
 - [ ] **Buffered writes (later, opt-in)** — not real transactions, since Qdrant has none.
   With a setting on and auto-commit off, the driver holds `INSERT`, `UPDATE`, and `DELETE`
   until `commit()` and drops them on `rollback()`. Documented as "rollback before commit

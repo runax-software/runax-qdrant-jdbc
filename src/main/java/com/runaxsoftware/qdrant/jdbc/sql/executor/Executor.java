@@ -60,6 +60,9 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.UpdateQuotasPlan;
 import com.runaxsoftware.qdrant.jdbc.system.QdrantSystemTables;
 import com.runaxsoftware.qdrant.jdbc.system.SystemTableReader;
 
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
@@ -94,6 +97,10 @@ public final class Executor {
     private static final String UNKNOWN_COLUMN = "42S22";
 
     private static final JsonNodeFactory JSON = JsonNodeFactory.instance;
+
+    // The form field Qdrant reads an uploaded snapshot from
+    private static final String SNAPSHOT_FIELD = "snapshot";
+    private static final String FILE_ERROR = "58030";
 
     // What Qdrant answers when it's asked to embed with a model and has no inference service
     private static final String NO_INFERENCE = "InferenceService URL not configured";
@@ -317,7 +324,7 @@ public final class Executor {
         }
 
         if (plan instanceof ProcedurePlan call) {
-            writer.call(call.method(), call.path(), call.body());
+            call(call);
             return ExecutionResult.updated(0);
         }
 
@@ -846,6 +853,39 @@ public final class Executor {
     }
 
     /**
+     * Runs a procedure's one request. A file it names is looked at first, so a path that can't
+     * work fails before Qdrant is asked to do anything: taking a snapshot to stream is work,
+     * and so is receiving one.
+     */
+    private void call(ProcedurePlan call) throws SQLException {
+        Path file = call.file();
+
+        switch (call.procedure().transfer()) {
+            case NONE -> writer.call(call.method(), call.path(), call.body());
+            case DOWNLOAD -> {
+                if (Files.exists(file, LinkOption.NOFOLLOW_LINKS)) {
+                    throw new SQLException("Can't save to " + file + ": the file is already "
+                        + "there, and the driver doesn't overwrite one", FILE_ERROR);
+                }
+                if (file.getParent() == null || !Files.isDirectory(file.getParent())) {
+                    throw new SQLException("Can't save to " + file + ": its folder doesn't exist",
+                        FILE_ERROR);
+                }
+
+                writer.download(call.path(), file);
+            }
+            case UPLOAD -> {
+                if (!Files.isRegularFile(file)) {
+                    throw new SQLException("Can't read " + file + ": there is no such file",
+                        FILE_ERROR);
+                }
+
+                writer.upload(call.path(), file);
+            }
+        }
+    }
+
+    /**
      * Changes the quotas the plan names and keeps the rest. Qdrant takes a whole config and
      * replaces the one it has, so the driver reads it first, exact unless something else sets
      * quotas between the two calls. A null takes a limit away, which is leaving it out.
@@ -1053,7 +1093,17 @@ public final class Executor {
 
             @Override
             public void call(HttpMethod method, String path, JsonNode body) throws SQLException {
-                gateway.request(method, path, body);
+                gateway.run(method, path, body);
+            }
+
+            @Override
+            public long download(String path, Path file) throws SQLException {
+                return gateway.download(path, file);
+            }
+
+            @Override
+            public void upload(String path, Path file) throws SQLException {
+                gateway.upload(path, SNAPSHOT_FIELD, file);
             }
 
             @Override

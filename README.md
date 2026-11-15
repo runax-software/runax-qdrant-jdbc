@@ -33,8 +33,8 @@ LIMIT 10
 - **Similarity search** — rank points by similarity to a vector, with the score as a
   `_score` column, and `embed('text')` to search with text, embedded by Qdrant or by a
   provider such as OpenAI.
-- **System tables** — fourteen tables in a `system` schema describe the server itself
-  (`collections`, `aliases`, `snapshots`, `shards`, `shard_keys`, `cluster`, `peers`,
+- **System tables** — fifteen tables in a `system` schema describe the server itself
+  (`collections`, `aliases`, `snapshots`, `shard_snapshots`, `shards`, `shard_keys`, `cluster`, `peers`,
   `telemetry`, `cluster_telemetry`, `metrics`, `issues`, `health`, `optimizations`, `quotas`), so a collection's
   status, point counts, shards, and aliases are SQL rows rather than REST calls. They are read-only, but for
   `TRUNCATE TABLE system.issues`.
@@ -97,6 +97,7 @@ Other settings go in the URL (`?tls=true&timeout=60`) or in the connection prope
 | `defaultLimit` | `1000` | Rows a read returns when the statement gives no `LIMIT` and sets no maximum rows, for the reads Qdrant answers in one call and pages no further: an ordered read, a similarity search, and a `GROUP BY`. The statement warns when this bounds it; `0` makes such a statement an error instead |
 | `schemaCache` | `3600` | Seconds to keep a collection's columns, and the lists of collections and aliases, before reading them again; listing tables, as DataGrip's Refresh does, reads them again sooner, asking for a table by a name the kept lists don't have lists them again, and `0` reads them every time |
 | `logFile` | — | File to log every JDBC call to, for troubleshooting; API keys are never logged |
+| `localFiles` | `false` | Let SQL read and write files on the machine the driver runs on, which the procedures that download and upload snapshots do. Leave it off for a connection that runs SQL you didn't write |
 | `openaiApiKey` | — | OpenAI API key, for `embed('text', 'openai:…')`; never shown or logged |
 | `openaiUrl` | `https://api.openai.com/v1` | OpenAI's API URL, or one that answers like it, such as an Azure OpenAI deployment or a proxy |
 | `voyageApiKey` | — | Voyage AI API key, for `embed('text', 'voyage:…')`; never shown or logged |
@@ -244,6 +245,7 @@ RESET ALL;
 | `ALTER TABLE docs SET (hnsw.m = 16)`, `ALTER TABLE docs ALTER COLUMN dense SET (on_disk = true)` | Update collection | HNSW, optimizers, strict mode, quantization, metadata; a setting is `group.name`, its name alone, or its group as JSON |
 | `ALTER SYSTEM SET (quotas.max_disk_usage_percent = 90)` | Set global quotas | The server's limits on memory and disk; read them in `system.quotas` |
 | `CALL qdrant.create_shard_key('docs', 'eu')`, `CALL move_shard(…)` | Shard keys and cluster operations | Twelve procedures; Qdrant takes them only when it runs as a cluster |
+| `CALL create_snapshot('docs')`, `CALL download_snapshot('docs', '…', '/backups/docs.snapshot')` | Snapshots of a collection, a shard, or the whole storage | Fourteen procedures: create, delete, recover, download, upload. Downloads and uploads need `localFiles=true`; list snapshots in `system.snapshots` and `system.shard_snapshots` |
 | `CREATE INDEX ON docs (lang)`, `DROP INDEX lang_idx ON docs` | Create or delete a payload index | `USING text WITH (tokenizer = word, …)` for a type and its options |
 | `CREATE [OR REPLACE] VIEW current AS SELECT * FROM docs` | Create or switch an alias | Also `ALTER VIEW … RENAME TO`, `DROP VIEW` |
 | `CREATE TABLE docs (dense VECTOR(384) DISTANCE COSINE, lang KEYWORD INDEX)` | Create the collection, then its payload indexes | `_vector VECTOR(n)` makes the unnamed vector |

@@ -1,6 +1,7 @@
 package com.runaxsoftware.qdrant.jdbc.statement;
 
 import com.runaxsoftware.qdrant.jdbc.connection.QdrantConnection;
+import com.runaxsoftware.qdrant.jdbc.connection.Setting;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.RequestOption;
 import com.runaxsoftware.qdrant.jdbc.gateway.models.RequestOptions;
 import com.runaxsoftware.qdrant.jdbc.resultset.ListResultSet;
@@ -26,6 +27,7 @@ import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropVectorPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.DropViewPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.InsertPointsPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
+import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.ProcedurePlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.QueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.RenameViewPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.SetOptionPlan;
@@ -62,6 +64,7 @@ import java.util.Set;
 public class QdrantStatement extends AbstractStatement {
 
     private static final String UNKNOWN_COLUMN = "42S22";
+    private static final String NO_LOCAL_FILES = "42501";
 
     private final Planner planner = new Planner();
     private final Executor executor;
@@ -241,6 +244,13 @@ public class QdrantStatement extends AbstractStatement {
                 + "holds: call setReadOnly(false), or turn off read-only in the tool", "25006");
         }
 
+        if (plan instanceof ProcedurePlan call && call.file() != null
+            && !connection.localFiles()) {
+            throw new SQLException(call.procedure().procedureName() + " reads or writes a file "
+                + "on this machine, which the connection doesn't allow: set "
+                + Setting.LOCAL_FILES.key() + "=true in its properties or URL", NO_LOCAL_FILES);
+        }
+
         // Read before the plan runs: dropping a collection deletes the aliases that showed it
         Set<String> stale = stale(plan);
 
@@ -291,6 +301,11 @@ public class QdrantStatement extends AbstractStatement {
         if (plan instanceof RenameViewPlan view) return Set.of(view.view(), view.newName());
         if (plan instanceof DropViewPlan view) return Set.of(view.view());
 
+        // A snapshot brings its own fields and vectors
+        if (plan instanceof ProcedurePlan call && call.restores() != null) {
+            return withAliases(call.restores());
+        }
+
         return Set.of();
     }
 
@@ -312,7 +327,8 @@ public class QdrantStatement extends AbstractStatement {
     private static boolean changesNames(Plan plan) {
         return plan instanceof CreateCollectionPlan || plan instanceof DropCollectionPlan
             || plan instanceof CreateViewPlan || plan instanceof RenameViewPlan
-            || plan instanceof DropViewPlan;
+            || plan instanceof DropViewPlan
+            || plan instanceof ProcedurePlan call && call.restores() != null;
     }
 
     /**

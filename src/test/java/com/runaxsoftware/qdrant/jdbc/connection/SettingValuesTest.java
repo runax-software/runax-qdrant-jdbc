@@ -141,7 +141,7 @@ class SettingValuesTest {
     void listsTheSettingsInTheOrderToolsShowThem() {
         assertEquals(List.of("password", "tls", "timeout", "sampleSize", "schemaCache",
             "defaultLimit", "logFile", "openaiApiKey", "openaiUrl", "voyageApiKey",
-            "voyageUrl"),
+            "voyageUrl", "localFiles"),
             List.of(Setting.values()).stream().map(Setting::key).toList());
     }
 
@@ -156,11 +156,12 @@ class SettingValuesTest {
     }
 
     @Test
-    void offersChoicesOnlyForTls() {
+    void offersChoicesOnlyForTheSettingsThatAreOnOrOff() {
         assertEquals(List.of("false", "true"), Setting.TLS.choices());
+        assertEquals(List.of("false", "true"), Setting.LOCAL_FILES.choices());
 
         for (Setting setting : Setting.values()) {
-            if (setting != Setting.TLS) {
+            if (setting != Setting.TLS && setting != Setting.LOCAL_FILES) {
                 assertEquals(List.of(), setting.choices(), setting.key());
             }
         }
