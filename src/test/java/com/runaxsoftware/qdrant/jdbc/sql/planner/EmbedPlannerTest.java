@@ -140,13 +140,13 @@ class EmbedPlannerTest {
     }
 
     @Test
-    void stillSearchesASparseVectorOnlyWithEmbed() {
-        SQLFeatureNotSupportedException error = assertThrows(SQLFeatureNotSupportedException.class,
+    void saysHowASparseVectorIsWrittenWhenItIsGivenADenseOne() {
+        SQLException error = assertThrows(SQLException.class,
                 () -> query(PLAIN, "SELECT _id FROM docs ORDER BY similarity(keywords, [0.1]) DESC LIMIT 5"));
 
-        assertEquals("Searching 'keywords', a SPARSE_VECTOR of docs, with a vector written out "
-                + "isn't supported yet: search it with embed('text', 'qdrant:qdrant/bm25'), which "
-                + "Qdrant embeds", error.getMessage());
+        assertEquals("Vector 'keywords' of docs takes a sparse vector, as "
+                + "'{\"indices\": [1, 7], \"values\": [0.5, 0.9]}', or embed('text')",
+                error.getMessage());
     }
 
     // The size a model ID asks for

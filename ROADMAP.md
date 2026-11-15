@@ -185,9 +185,9 @@ below are things a route already reached can do and no statement asks for yet.
 - [x] **Full-text ranking** — `ORDER BY text_rank(title, 'refund policy') DESC`, Qdrant's `text`
   query, which ranks by BM25 over a text index where `text_match` only filters. The index is
   built `WITH (scoring = true)`; BM25's `k` and `b` stay at Qdrant's defaults.
-- [ ] **Searching sparse vectors and multivectors** with a vector written out, as
-  `'{"indices": […], "values": […]}'` and `'[[…], […]]'`. A search takes a dense literal or
-  `embed()` today.
+- [x] **Searching sparse vectors and multivectors** with a vector written out, as
+  `'{"indices": […], "values": […]}'` and `'[[…], […]]'`, the JSON an `INSERT` takes for the
+  same column, or as a `?`.
 - [ ] **Score formulas** — arithmetic over `similarity(…)` and payload columns in `ORDER BY`,
   `CASE WHEN`, and `geo_distance(…)`, as Qdrant's `formula` query.
 - [ ] **Recommendation, discovery and diverse results** — `recommend(v, positive, negative)`,

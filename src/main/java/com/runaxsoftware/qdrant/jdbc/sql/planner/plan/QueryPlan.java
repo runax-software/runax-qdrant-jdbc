@@ -16,7 +16,8 @@ import java.util.List;
  *                    vector; for a search by text, the payload field to rank by, as Qdrant
  *                    names it
  * @param query       the vector to search with, of that vector's dimensions; empty when the
- *                    search embeds text or ranks by text instead
+ *                    search embeds text, ranks by text, or searches with a vector of
+ *                    another shape instead
  * @param withPayload whether any column needs the payload
  * @param withVector  whether any column needs a vector
  * @param limit       the maximum number of rows, or {@code null} when the statement gave none
@@ -29,6 +30,9 @@ import java.util.List;
  *                    written out
  * @param text        the words to rank a payload field's text by, with BM25 over its text
  *                    index, or {@code null} for a search of a vector
+ * @param nearest     the vector to search with as Qdrant takes it, when it isn't a list of
+ *                    numbers: a sparse vector's indices and values, or a multivector's rows.
+ *                    {@code null} for any other search
  */
 public record QueryPlan(
     String collection,
@@ -41,12 +45,14 @@ public record QueryPlan(
     long offset,
     JsonNode filter,
     EmbedText embed,
-    String text
+    String text,
+    JsonNode nearest
 ) implements Plan {
 
     public QueryPlan(String collection, List<ColumnDefinition> columns, String vector,
                      List<Double> query, boolean withPayload, boolean withVector, Long limit,
-                     long offset, JsonNode filter, EmbedText embed, String text) {
+                     long offset, JsonNode filter, EmbedText embed, String text,
+                     JsonNode nearest) {
         this.collection = collection;
         this.columns = List.copyOf(columns);
         this.vector = vector;
@@ -58,6 +64,17 @@ public record QueryPlan(
         this.filter = filter;
         this.embed = embed;
         this.text = text;
+        this.nearest = nearest;
+    }
+
+    /**
+     * A search by text, or of a vector with a dense one or with text to embed.
+     */
+    public QueryPlan(String collection, List<ColumnDefinition> columns, String vector,
+                     List<Double> query, boolean withPayload, boolean withVector, Long limit,
+                     long offset, JsonNode filter, EmbedText embed, String text) {
+        this(collection, columns, vector, query, withPayload, withVector, limit, offset, filter,
+            embed, text, null);
     }
 
     /**

@@ -105,6 +105,13 @@ class InsertPlannerTest {
     }
 
     @Test
+    void writesAMultivectorsWholeNumbersAsDecimals() throws SQLException {
+        // Qdrant reads [[1,0],[0,1]] as a sparse vector's indices and values, and rejects it
+        assertEquals(Map.of("colbert", "[[1.0,0.0],[0.0,1.0]]"), text(insert(DOCS,
+                "INSERT INTO docs (colbert) VALUES ('[[1, 0], [0, 1]]')").points().get(0).vectors()));
+    }
+
+    @Test
     void putsTheUnnamedVectorUnderNoName() throws SQLException {
         assertEquals(Map.of("", "[0.1,0.2]"), text(insert(PLAIN,
                 "INSERT INTO plain (_id, _vector) VALUES (1, [0.1, 0.2])").points().get(0).vectors()));
@@ -132,6 +139,9 @@ class InsertPlannerTest {
             "INSERT INTO docs (colbert) VALUES ('[[1, 2, 3]]')",
             "INSERT INTO docs (keywords) VALUES ('[0.1]')",
             "INSERT INTO docs (keywords) VALUES ([0.1, 0.2])",
+            "INSERT INTO docs (keywords) VALUES ('{\"indices\": [7, 7], \"values\": [1, 2]}')",
+            "INSERT INTO docs (keywords) VALUES ('{\"indices\": [-1], \"values\": [1]}')",
+            "INSERT INTO docs (colbert) VALUES ('[[\"a\", \"b\"]]')",
             "INSERT INTO docs (_payload) VALUES ('[1]')",
             "INSERT INTO docs (lang, \"lang.x\") VALUES ('en', 1)"})
     void rejectsValuesTheColumnsCantHold(String sql) {

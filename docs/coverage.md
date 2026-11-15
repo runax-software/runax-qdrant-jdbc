@@ -297,7 +297,7 @@ is stored as a number, and text that can't be one is `22018`.
 | `OFFSET n` | partial | Every kind of read, and `OFFSET ?` in a prepared statement; Qdrant applies it only for a search, so the others skip in the driver, up to 10,000 rows |
 | `ORDER BY _id` | partial | Ascending only; `DESC` is an error, since Qdrant scrolls by ID upwards |
 | `ORDER BY <field>` | partial | Needs an `integer`, `float` or `datetime` payload index, and a bound |
-| `ORDER BY similarity(v, …) DESC` | works | Needs a bound; `ASC` is an error; dense vectors, or any vector via `embed()` |
+| `ORDER BY similarity(v, …) DESC` | works | Needs a bound; `ASC` is an error. A dense vector in brackets, a sparse vector or a multivector as JSON in quotes, or any of them via `embed()` |
 | `ORDER BY text_rank(field, 'words') DESC` | works | Needs a bound, and a text index on the field built `WITH (scoring = true)`; `ASC` is an error. BM25's `k` and `b` stay at Qdrant's defaults |
 | `ORDER BY` on two things | missing | Qdrant orders by one field or ranks by one score |
 | `GROUP BY <field>` + `COUNT(*)` | partial | Needs a `keyword`, `integer`, `bool` or `uuid` index, and a bound |
@@ -439,9 +439,11 @@ SET search_path = public
 
 A vector's dimensions are checked against the collection before the search is sent, so a typo
 is a driver error rather than a Qdrant one: `Vector '_vector' of sample_products has 4
-dimensions, the vector searching it has 2`. A sparse vector or a multivector cannot be searched
-with a vector written out — the error points at `embed('text', 'qdrant:qdrant/bm25')`, which
-does work, since Qdrant builds the sparse vector itself.
+dimensions, the vector searching it has 2`. A sparse vector and a multivector are written as
+JSON in quotes, `'{"indices": [1, 7], "values": [0.5, 0.9]}'` and `'[[0.1, 0.2], [0.3, 0.4]]'`,
+and checked the same way: a multivector's rows against the column's dimensions, a sparse
+vector's indices for being whole numbers from 0 up, each once, since Qdrant answers a
+malformed one with an error about the request's JSON that names neither.
 
 ### Vector search and `embed()`
 

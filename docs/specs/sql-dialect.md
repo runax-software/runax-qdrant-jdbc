@@ -201,7 +201,8 @@ names, so a collection may still have payload fields called `like`, `between`, `
 A search is a `SELECT` ordered by a ranking function. It runs one Query API call, with the
 `WHERE` filter, `LIMIT`, and `OFFSET`, and returns the score as `_score`.
 
-**What runs today:** `similarity(vector, [0.1, ...]) DESC` over a dense vector, with `LIMIT`.
+**What runs today:** `similarity(vector, [0.1, ...]) DESC` over a dense vector, a sparse vector
+or a multivector, with `LIMIT`.
 The vector to search is a vector column of the collection — its own name for a named vector,
 `_vector` for a collection's single unnamed one — and its dimensions are checked against the
 vector in the statement before the search runs. `_score` is a `DOUBLE` column that only a
@@ -214,6 +215,19 @@ query may also be `embed('text' [, 'provider:model'])`, described under
 the way SQL does, so `LIMIT` still counts the points returned after it and the scores stay the
 scores of the points Qdrant ranked (see [`OFFSET`](#offset)). A `WHERE` filters the points
 Qdrant ranks, as in a scroll.
+
+A sparse vector and a multivector have no literal of their own, so a search writes one as JSON
+in quotes, exactly as an `INSERT` does: `similarity(keywords, '{"indices": [1, 7], "values":
+[0.5, 0.9]}')` and `similarity(colbert, '[[0.1, 0.2], [0.3, 0.4]]')`. A dense vector may be
+written that way too, `'[0.1, 0.2]'`, which is how a tool sends one. Each is checked against
+the column before Qdrant is asked: a multivector's rows have the column's dimensions, and a
+sparse vector's indices are whole numbers from 0 up, each once, with a value apiece. A sparse
+vector with no indices is an error, since Qdrant answers it with no points rather than one. A
+`?` takes the same text, or a `float[][]` or `double[][]` for a multivector.
+
+The driver writes a multivector's numbers as decimals, `[[1.0, 0.0], [0.0, 1.0]]`, whatever
+the statement wrote: Qdrant reads two rows of which the first holds whole numbers as a sparse
+vector's indices and values, and rejects the request.
 
 `text_rank(field, 'words') DESC` runs too: Qdrant's `text` query, which ranks by BM25 over the
 text index of a payload field, with no vector and no model. A point scores when it holds any of
@@ -248,8 +262,8 @@ LIMIT 10
 
 The *query* argument can be:
 
-- a vector literal: `'[0.1, 0.2, …]'`, `'{"indices": [1, 7], "values": [0.5, 0.9]}'` for
-  sparse, `'[[…], […]]'` for multivectors;
+- a vector literal: `[0.1, 0.2, …]` or `'[0.1, 0.2, …]'`, `'{"indices": [1, 7], "values":
+  [0.5, 0.9]}'` for sparse, `'[[…], […]]'` for multivectors (all run);
 - a point ID: `similarity(dense, 42)` searches with point 42's vector; `ref('other', 42)`
   takes it from another collection (`lookup_from`);
 - `embed('text' [, 'provider:model'])`: the text, embedded with the vector's model by Qdrant
@@ -723,6 +737,7 @@ statement, never in the SQL text, so it can't change what the statement means.
 | `Timestamp`, `Instant`, `OffsetDateTime`, `ZonedDateTime`, `java.util.Date` | RFC 3339 text in UTC, for date-time fields |
 | `java.sql.Date`, `LocalDate` | The start of that day in UTC |
 | `float[]`, `double[]`, `Number[]`, a `List` of numbers | A vector |
+| `float[][]`, `double[][]` | A multivector, as the JSON text a statement writes one as |
 | `setNull` | `NULL`, which a comparison rejects: write `IS NULL` instead |
 
 `addBatch()` and `executeBatch()` run the statement once per set of values, in order; Qdrant has

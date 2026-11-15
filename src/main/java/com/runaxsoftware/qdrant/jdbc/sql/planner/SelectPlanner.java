@@ -103,8 +103,11 @@ final class SelectPlanner {
      *                 text
      * @param embed    the text to embed, or {@code null}
      * @param text     the words to rank a payload field's text by, or {@code null}
+     * @param nearest  a sparse vector or a multivector to search with, as Qdrant takes it, or
+     *                 {@code null}
      */
-    private record Search(String vector, List<Double> query, EmbedText embed, String text) {
+    private record Search(String vector, List<Double> query, EmbedText embed, String text,
+                          JsonNode nearest) {
     }
 
     public Plan plan(SelectStatement statement, Catalog catalog) throws SQLException {
@@ -168,7 +171,7 @@ final class SelectPlanner {
             // Qdrant's Query API skips by row count itself, so this offset needs no cap
             return new QueryPlan(schema.name(), columns, search.vector(), search.query(),
                 withPayload, withVector, limit(statement), offset(statement), filter,
-                search.embed(), search.text());
+                search.embed(), search.text(), search.nearest());
         }
 
         JsonNode id = order == null ? onlyId(filter) : null;
@@ -241,7 +244,7 @@ final class SelectPlanner {
         return new GroupedQueryPlan(
             new QueryPlan(schema.name(), columns, search.vector(), search.query(), withPayload,
                 withVector, limit(statement), skip(statement, GROUPS_HAVE_NO_OFFSET), filter,
-                search.embed(), search.text()),
+                search.embed(), search.text(), search.nearest()),
             column.source(), size, lowerIsBest);
     }
 
@@ -512,14 +515,17 @@ final class SelectPlanner {
         Expression with = call.arguments().get(1);
 
         if (with instanceof FunctionCall function && function.is(EMBED)) {
-            return new Search(vector.source(), List.of(), embed(function, vector, schema), null);
+            return new Search(vector.source(), List.of(), embed(function, vector, schema), null,
+                null);
         }
 
-        if (vector.type() != ColumnType.VECTOR) {
-            throw new SQLFeatureNotSupportedException("Searching '" + vector.name() + "', a "
-                + vector.type().typeName() + " of " + schema.name() + ", with a vector written "
-                + "out isn't supported yet: search it with " + EMBED + "('text', "
-                + "'qdrant:qdrant/bm25'), which Qdrant embeds");
+        if (with instanceof Literal literal && literal.value() instanceof String text) {
+            return written(text, vector, schema);
+        }
+
+        // A sparse vector and a multivector have no literal of their own: they're JSON in quotes
+        if (vector.type() != ColumnType.VECTOR && with instanceof VectorLiteral) {
+            throw VectorValues.shape(vector, schema);
         }
 
         VectorLiteral query = vectorLiteral(with, vector);
@@ -530,7 +536,34 @@ final class SelectPlanner {
                 + query.size(), "42000");
         }
 
-        return new Search(vector.source(), query.values(), null, null);
+        return new Search(vector.source(), query.values(), null, null, null);
+    }
+
+    /**
+     * A search with a vector written as JSON in quotes, which is how a statement writes a
+     * sparse vector ({@code '{"indices": [1, 7], "values": [0.5, 0.9]}'}) and a multivector
+     * ({@code '[[0.1, 0.2], [0.3, 0.4]]'}), and how a tool sends a dense one. The JSON is the
+     * one an INSERT takes for the same column, checked the same way.
+     */
+    private static Search written(String text, ColumnDefinition vector, TableSchema schema)
+        throws SQLException {
+        JsonNode json = VectorValues.written(text, vector, schema);
+
+        if (vector.type() == ColumnType.VECTOR) {
+            var values = new ArrayList<Double>(json.size());
+            for (JsonNode value : json) values.add(value.asDouble());
+
+            return new Search(vector.source(), values, null, null, null);
+        }
+
+        // Qdrant answers a sparse vector of nothing with no points rather than an error
+        if (vector.type() == ColumnType.SPARSE_VECTOR && json.get(VectorValues.INDICES).isEmpty()) {
+            throw new SQLSyntaxErrorException("A sparse vector with no indices is near no point: "
+                + "searching '" + vector.name() + "' of " + schema.name() + " takes at least "
+                + "one, as '{\"indices\": [1, 7], \"values\": [0.5, 0.9]}'", "42000");
+        }
+
+        return new Search(vector.source(), List.of(), null, null, json);
     }
 
     /**
@@ -573,7 +606,7 @@ final class SelectPlanner {
         }
 
         return new Search(field.source(), List.of(), null,
-            text(call.arguments().get(1), TEXT_RANK, usage));
+            text(call.arguments().get(1), TEXT_RANK, usage), null);
     }
 
     /**
