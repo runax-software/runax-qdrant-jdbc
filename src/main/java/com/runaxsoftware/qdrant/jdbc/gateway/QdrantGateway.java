@@ -334,6 +334,9 @@ public class QdrantGateway implements AutoCloseable {
             // Qdrant embeds the text with the model, then searches with what it made
             body.putObject("query").put("text", query.document().text())
                 .put("model", query.document().model());
+        } else if (query.nearest() != null) {
+            // A sparse vector or a multivector, in the shape Qdrant takes each
+            body.putObject("query").set("nearest", query.nearest());
         } else {
             ArrayNode vector = body.putObject("query").putArray("nearest");
             for (double value : query.query()) vector.add(value);

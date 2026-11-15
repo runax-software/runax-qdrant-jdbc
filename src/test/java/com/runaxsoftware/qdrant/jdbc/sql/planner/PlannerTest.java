@@ -2,6 +2,7 @@ package com.runaxsoftware.qdrant.jdbc.sql.planner;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -666,14 +667,92 @@ class PlannerTest {
     }
 
     @Test
-    void rejectsSearchingASparseOrMultiVector() {
-        for (String vector : List.of("sparse", "colbert")) {
-            SQLException error = assertThrows(SQLFeatureNotSupportedException.class,
-                    () -> plan("SELECT _id FROM named ORDER BY similarity(" + vector
-                            + ", [0.1, 0.2]) DESC", CATALOG));
+    void searchesASparseVectorWithItsIndicesAndValues() throws SQLException {
+        QueryPlan plan = (QueryPlan) plan("SELECT _id, _score FROM named ORDER BY similarity("
+                + "sparse, '{\"indices\": [1, 7], \"values\": [0.5, 2], \"note\": \"x\"}') DESC "
+                + "LIMIT 5", CATALOG);
 
-            assertTrue(error.getMessage().contains("isn't supported yet"), error.getMessage());
-        }
+        assertEquals("{\"indices\":[1,7],\"values\":[0.5,2]}", plan.nearest().toString(),
+                "the two arrays, and nothing else the text held");
+        assertEquals("sparse", plan.vector());
+        assertEquals(List.of(), plan.query());
+        assertNull(plan.embed());
+        assertNull(plan.text());
+    }
+
+    @Test
+    void searchesAMultivectorWithItsRowsWrittenAsDecimals() throws SQLException {
+        QueryPlan plan = (QueryPlan) plan("SELECT _id FROM named ORDER BY similarity(colbert, "
+                + "'[[1, 0], [0, 1]]') DESC LIMIT 5", CATALOG);
+
+        // Qdrant reads [[1,0],[0,1]] as a sparse vector's indices and values
+        assertEquals("[[1.0,0.0],[0.0,1.0]]", plan.nearest().toString());
+        assertEquals("colbert", plan.vector());
+        assertEquals(List.of(), plan.query());
+    }
+
+    @Test
+    void searchesADenseVectorWrittenAsTextAsOneInBrackets() throws SQLException {
+        QueryPlan plan = (QueryPlan) plan("SELECT _id FROM named ORDER BY similarity(dense, "
+                + "'[0.1, 2]') DESC LIMIT 5", CATALOG);
+
+        assertEquals(List.of(0.1, 2.0), plan.query());
+        assertNull(plan.nearest());
+
+        assertEquals("Vector 'dense' of named has 2 dimensions, the value has 3",
+                assertThrows(SQLException.class, () -> plan("SELECT _id FROM named ORDER BY "
+                        + "similarity(dense, '[0.1, 0.2, 0.3]') DESC LIMIT 5", CATALOG)).getMessage());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "[0.1, 0.2]",                                   // a dense vector
+        "'[0.1, 0.2]'",
+        "'{\"indices\": [1, 2], \"values\": [0.5]}'",     // an index without a value
+        "'{\"indices\": [-1], \"values\": [0.5]}'",
+        "'{\"indices\": [1.5], \"values\": [0.5]}'",
+        "'{\"indices\": [4294967296], \"values\": [0.5]}'",
+        "'{\"indices\": [1], \"values\": [\"a\"]}'",
+        "'{\"indices\": 1, \"values\": 0.5}'",
+        "'refund policy'"})
+    void saysHowASparseVectorIsWritten(String vector) {
+        SQLException error = assertThrows(SQLException.class, () -> plan("SELECT _id FROM named "
+                + "ORDER BY similarity(sparse, " + vector + ") DESC LIMIT 5", CATALOG));
+
+        assertEquals("Vector 'sparse' of named takes a sparse vector, as "
+                + "'{\"indices\": [1, 7], \"values\": [0.5, 0.9]}', or embed('text')",
+                error.getMessage());
+        assertEquals("22018", error.getSQLState());
+    }
+
+    @Test
+    void rejectsASparseVectorQdrantWouldAnswerBadlyOrNotAtAll() {
+        assertEquals("Sparse vector 'sparse' of named takes each index once, and the value has 7 "
+                + "twice", assertThrows(SQLException.class, () -> plan("SELECT _id FROM named "
+                + "ORDER BY similarity(sparse, '{\"indices\": [7, 7], \"values\": [1, 2]}') DESC "
+                + "LIMIT 5", CATALOG)).getMessage());
+        assertEquals("A sparse vector with no indices is near no point: searching 'sparse' of "
+                + "named takes at least one, as '{\"indices\": [1, 7], \"values\": [0.5, 0.9]}'",
+                assertThrows(SQLSyntaxErrorException.class, () -> plan("SELECT _id FROM named "
+                        + "ORDER BY similarity(sparse, '{\"indices\": [], \"values\": []}') DESC "
+                        + "LIMIT 5", CATALOG)).getMessage());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "[0.1, 0.2]",                    // one row, without the brackets around it
+        "'[0.1, 0.2]'",
+        "'[[0.1, 0.2], [0.3]]'",
+        "'[[0.1, 0.2, 0.3]]'",
+        "'[[\"a\", \"b\"]]'",
+        "'[]'",
+        "'{\"indices\": [1], \"values\": [0.5]}'"})
+    void saysHowAMultivectorIsWritten(String vector) {
+        SQLException error = assertThrows(SQLException.class, () -> plan("SELECT _id FROM named "
+                + "ORDER BY similarity(colbert, " + vector + ") DESC LIMIT 5", CATALOG));
+
+        assertEquals("Vector 'colbert' of named takes vectors of 2, as '[[0.1, 0.2], [0.3, 0.4]]', "
+                + "or embed('text')", error.getMessage());
     }
 
     @Test
@@ -687,8 +766,8 @@ class PlannerTest {
 
     @Test
     void rejectsWhatASearchCantTakeYet() {
-        // A vector to embed, a parameter, and a vector written as a string
-        for (String query : List.of("embed('refund')", "?", "'[0.1, 0.2, 0.3, 0.4]'")) {
+        // A vector to embed with no model, a parameter, and text that isn't a vector
+        for (String query : List.of("embed('refund')", "?", "'refund'")) {
             assertThrows(SQLException.class,
                     () -> plan("SELECT _id FROM docs ORDER BY similarity(_vector, " + query
                             + ") DESC", CATALOG), query);

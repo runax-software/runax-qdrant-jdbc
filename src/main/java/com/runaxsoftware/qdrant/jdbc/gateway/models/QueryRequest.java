@@ -24,6 +24,9 @@ import java.util.List;
  *                    {@code null}
  * @param text        the words to rank the payload field's text by, with BM25 over its text
  *                    index, or {@code null} for a search of a vector
+ * @param nearest     the vector to search with as Qdrant takes it, when it isn't a list of
+ *                    numbers: a sparse vector's indices and values, or a multivector's rows.
+ *                    {@code null} for any other search
  */
 public record QueryRequest(
     String collection,
@@ -35,11 +38,12 @@ public record QueryRequest(
     boolean withVector,
     JsonNode filter,
     Document document,
-    String text) {
+    String text,
+    JsonNode nearest) {
 
     public QueryRequest(String collection, String vector, List<Double> query, long limit,
                         long offset, boolean withPayload, boolean withVector, JsonNode filter,
-                        Document document, String text) {
+                        Document document, String text, JsonNode nearest) {
         this.collection = collection;
         this.vector = vector;
         this.query = List.copyOf(query);
@@ -50,6 +54,17 @@ public record QueryRequest(
         this.filter = filter;
         this.document = document;
         this.text = text;
+        this.nearest = nearest;
+    }
+
+    /**
+     * A search by text, or of a vector with a dense one or with text for Qdrant to embed.
+     */
+    public QueryRequest(String collection, String vector, List<Double> query, long limit,
+                        long offset, boolean withPayload, boolean withVector, JsonNode filter,
+                        Document document, String text) {
+        this(collection, vector, query, limit, offset, withPayload, withVector, filter, document,
+            text, null);
     }
 
     /**

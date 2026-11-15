@@ -386,6 +386,23 @@ class QdrantGatewayTest {
     }
 
     @Test
+    void sendsASparseVectorOrAMultivectorInItsOwnShape() throws SQLException {
+        server.collection("events", plainCollection(), points(3));
+        ObjectNode sparse = Json.object("indices", Json.array(1, 7), "values", Json.array(0.5, 0.9));
+        JsonNode rows = Json.array(Json.array(1.0, 0.0), Json.array(0.0, 1.0));
+
+        gateway.query(new QueryRequest("events", "keywords", List.of(), 2, 0, false, false, null,
+            null, null, sparse));
+        gateway.query(new QueryRequest("events", "colbert", List.of(), 2, 0, false, false, null,
+            null, null, rows));
+
+        assertEquals(Json.object("nearest", sparse), server.queryRequests().get(0).get("query"));
+        assertEquals("keywords", server.queryRequests().get(0).get("using").asText());
+        assertEquals("{\"nearest\":[[1.0,0.0],[0.0,1.0]]}",
+            server.queryRequests().get(1).get("query").toString());
+    }
+
+    @Test
     void sendsTheSearchAsAsked() throws SQLException {
         server.collection("events", plainCollection(), points(3));
 

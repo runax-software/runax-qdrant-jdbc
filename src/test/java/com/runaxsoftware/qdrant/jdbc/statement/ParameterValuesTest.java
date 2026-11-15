@@ -75,6 +75,16 @@ class ParameterValuesTest {
     }
 
     @Test
+    void readsArraysOfArraysAsAMultivectorWrittenAsText() throws SQLException {
+        Literal rows = new Literal("[[0.1, 0.5], [1.0, 0.0]]");
+
+        assertEquals(rows, ParameterValues.of(new float[][] {{0.1f, 0.5f}, {1f, 0f}}));
+        assertEquals(rows, ParameterValues.of(new double[][] {{0.1, 0.5}, {1, 0}}));
+        assertEquals("22023", assertThrows(SQLException.class,
+                () -> ParameterValues.of(new float[0][])).getSQLState());
+    }
+
+    @Test
     void rejectsValuesQdrantHasNoUseFor() {
         assertThrows(SQLFeatureNotSupportedException.class, () -> ParameterValues.of(new Object()));
         assertThrows(SQLFeatureNotSupportedException.class, () -> ParameterValues.of(Time.valueOf("10:00:00")));

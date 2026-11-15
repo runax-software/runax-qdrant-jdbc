@@ -30,9 +30,9 @@ LIMIT 10
   `_id` (the point ID), `_payload` (the whole payload as JSON), and the vectors.
 - **SQL over the Qdrant API** — `WHERE` becomes a Qdrant filter, plus `LIMIT`, `OFFSET`,
   `COUNT(*)`, `GROUP BY` through facets, and `ORDER BY` on range-indexed fields.
-- **Similarity search** — rank points by similarity to a vector, with the score as a
-  `_score` column, and `embed('text')` to search with text, embedded by Qdrant or by a
-  provider such as OpenAI.
+- **Similarity search** — rank points by similarity to a vector, dense, sparse or a
+  multivector, with the score as a `_score` column, and `embed('text')` to search with text,
+  embedded by Qdrant or by a provider such as OpenAI.
 - **Full-text ranking** — `ORDER BY text_rank(title, 'refund policy') DESC` ranks points by
   BM25 over a text index, with no vectors and no embedding model.
 - **System tables** — fifteen tables in a `system` schema describe the server itself
@@ -167,6 +167,17 @@ ORDER BY similarity(dense, embed('refund policy', 'openai:text-embedding-3-small
 LIMIT 10
 ```
 
+A sparse vector and a multivector are searched the same way, with the vector written as JSON
+in quotes, the way an `INSERT` takes them:
+
+```sql
+SELECT _id, _score FROM docs
+ORDER BY similarity(keywords, '{"indices": [1, 7], "values": [0.5, 0.9]}') DESC LIMIT 10;
+
+SELECT _id, _score FROM docs
+ORDER BY similarity(colbert, '[[0.1, 0.2], [0.3, 0.4]]') DESC LIMIT 10;
+```
+
 To rank by the words themselves, with no vector at all, `text_rank` runs Qdrant's BM25 over a
 payload field's text index. Any of the words scores a point, the best match comes first, and
 the index has to be built to score:
@@ -248,7 +259,7 @@ RESET ALL;
 | `ORDER BY field` | Scroll `order_by` | Needs a range index on the field; bounded by `LIMIT`, maximum rows, or `defaultLimit` |
 | `COUNT(*)` | Count API | |
 | `GROUP BY field` + `COUNT(*)` | Facet API | Needs a keyword, integer, bool, or uuid index; bounded like an ordered read |
-| `ORDER BY similarity(v, [0.1, ...]) DESC` | Query API | Score returned as `_score`; bounded like an ordered read |
+| `ORDER BY similarity(v, [0.1, ...]) DESC` | Query API | Score returned as `_score`; bounded like an ordered read. A sparse vector is `'{"indices": […], "values": […]}'` and a multivector `'[[…], […]]'` |
 | `ORDER BY text_rank(title, 'refund policy') DESC` | Query API, `text` query | BM25 over the field's text index, built `WITH (scoring = true)`; score returned as `_score` |
 | Several searches of one collection, separated by `;` | Query API, batch | One call; a result set each, read with `getMoreResults` |
 | `SELECT DISTINCT ON (doc_id) … ORDER BY similarity(…) DESC`, `… LIMIT 3 BY doc_id LIMIT 10` | Query API, groups | The best point, or the best few, of each value of a payload field |

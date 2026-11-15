@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.IntFunction;
 
 /**
  * Turns a value given to a prepared statement into the constant it stands for in the statement:
@@ -64,12 +65,23 @@ final class ParameterValues {
             for (double x : doubles) values.add(x);
             return vector(values);
         }
+        if (value instanceof float[][] rows) return multivector(rows.length, i -> {
+            var values = new ArrayList<Double>(rows[i].length);
+            for (float x : rows[i]) values.add(Double.parseDouble(Float.toString(x)));
+            return values;
+        });
+        if (value instanceof double[][] rows) return multivector(rows.length, i -> {
+            var values = new ArrayList<Double>(rows[i].length);
+            for (double x : rows[i]) values.add(x);
+            return values;
+        });
         if (value instanceof Number[] numbers) return vector(List.of(numbers));
         if (value instanceof Collection<?> collection) return vector(collection);
 
         throw new SQLFeatureNotSupportedException("A parameter of type "
             + value.getClass().getName() + " isn't supported: give text, a number, a boolean, a "
-            + "date-time, a UUID, or a vector as float[] or double[]");
+            + "date-time, a UUID, a vector as float[] or double[], or a multivector as "
+            + "float[][] or double[][]");
     }
 
     private static long wholeNumber(BigInteger number) throws SQLException {
@@ -96,6 +108,24 @@ final class ParameterValues {
 
     private static Literal startOfDay(LocalDate date) {
         return dateTime(date.atStartOfDay(ZoneOffset.UTC).toInstant());
+    }
+
+    /**
+     * A multivector, as the JSON text a statement writes one as: {@code [[0.1, 0.2], [0.3,
+     * 0.4]]}. It has no literal of its own, so it is text the planner reads against the column.
+     */
+    private static Literal multivector(int rows, IntFunction<List<Double>> row)
+        throws SQLException {
+        if (rows == 0) {
+            throw new SQLException("An empty multivector searches nothing", "22023");
+        }
+
+        var text = new StringBuilder("[");
+        for (int i = 0; i < rows; i++) {
+            text.append(i == 0 ? "" : ", ").append(row.apply(i));
+        }
+
+        return new Literal(text.append("]").toString());
     }
 
     private static VectorLiteral vector(Collection<?> values) throws SQLException {

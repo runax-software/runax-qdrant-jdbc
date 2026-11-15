@@ -696,8 +696,9 @@ public final class Executor {
     }
 
     /**
-     * The search request: the vector written out, the vector a provider made of the text, the
-     * text itself for Qdrant to embed, or the words to rank a payload field's text by.
+     * The search request: the vector written out, whatever its shape, the vector a provider
+     * made of the text, the text itself for Qdrant to embed, or the words to rank a payload
+     * field's text by.
      */
     private QueryRequest request(QueryPlan plan, long limit) throws SQLException {
         EmbedText embed = plan.embed();
@@ -718,7 +719,8 @@ public final class Executor {
         }
 
         return new QueryRequest(plan.collection(), plan.vector(), query, limit, plan.offset(),
-            plan.withPayload(), plan.withVector(), plan.filter(), document, plan.text());
+            plan.withPayload(), plan.withVector(), plan.filter(), document, plan.text(),
+            plan.nearest());
     }
 
     /**
@@ -1260,7 +1262,7 @@ public final class Executor {
         // The offset is the driver's to pass over, so the request goes without one
         QueryRequest request = new QueryRequest(ranked.collection(), ranked.vector(),
             ranked.query(), ranked.limit(), 0, ranked.withPayload(), ranked.withVector(),
-            ranked.filter(), ranked.document(), ranked.text());
+            ranked.filter(), ranked.document(), ranked.text(), ranked.nearest());
         List<ScoredPoint> found;
 
         try {

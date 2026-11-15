@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Searching a sparse vector or a multivector with a vector written out: `ORDER BY
+  similarity(keywords, '{"indices": [1, 7], "values": [0.5, 0.9]}') DESC` and
+  `similarity(colbert, '[[0.1, 0.2], [0.3, 0.4]]')`, the JSON an `INSERT` takes for the same
+  column, checked against it before Qdrant is asked. Until now only `embed()` reached those
+  vectors. A dense vector may be written as text too, as a tool sends one, and a prepared
+  statement takes a multivector as `float[][]` or `double[][]`. ([#60])
 - Full-text ranking: `ORDER BY text_rank(title, 'refund policy') DESC` ranks points by BM25
   over a payload field's text index, through Qdrant's `text` query, with no vector and no
   embedding model. A point scores when it holds any of the words, where `text_match` keeps only
@@ -377,6 +383,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A multivector of two rows written with whole numbers, as `'[[1, 0], [0, 1]]'`, is stored
+  instead of rejected. Qdrant reads that JSON as a sparse vector's indices and values, so the
+  driver now writes a multivector's numbers as decimals. A sparse vector whose indices repeat,
+  or aren't whole numbers from 0 up, is an error that says so rather than Qdrant's about the
+  request's JSON. ([#60])
 - A collection with both an unnamed vector and named ones now writes and reads all of them.
   The driver took the unnamed vector to be the only one a collection could have: an `INSERT` or
   `UPDATE` that set `_vector` beside a named vector stored `_vector` and dropped the other, and
@@ -487,3 +498,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#57]: https://github.com/runax-software/runax-qdrant-jdbc/pull/57
 [#58]: https://github.com/runax-software/runax-qdrant-jdbc/pull/58
 [#59]: https://github.com/runax-software/runax-qdrant-jdbc/pull/59
+[#60]: https://github.com/runax-software/runax-qdrant-jdbc/pull/60
