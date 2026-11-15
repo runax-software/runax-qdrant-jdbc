@@ -212,8 +212,20 @@ driver picked. `ASC` is an error too, since Qdrant returns the closest points fi
 query may also be `embed('text' [, 'provider:model'])`, described under
 [Embeddings](#embeddings). `OFFSET n` runs too, as the Query API's own `offset`: it counts rows
 the way SQL does, so `LIMIT` still counts the points returned after it and the scores stay the
-scores of the points Qdrant ranked (see [`OFFSET`](#offset)). The rest of this section is still
-the target; a `WHERE` filters the points Qdrant ranks, as in a scroll.
+scores of the points Qdrant ranked (see [`OFFSET`](#offset)). A `WHERE` filters the points
+Qdrant ranks, as in a scroll.
+
+`text_rank(field, 'words') DESC` runs too: Qdrant's `text` query, which ranks by BM25 over the
+text index of a payload field, with no vector and no model. A point scores when it holds any of
+the words, and the more and the rarer the better, where `text_match` keeps the points that hold
+them all and ranks nothing; a word every result must have, or none may, goes in the `WHERE`.
+The words are a constant or a `?`. The field needs a text index built to score, `CREATE INDEX
+ON docs (title) USING text WITH (scoring = true)`: a field with no text index is an error
+before Qdrant is asked, and one whose text index doesn't score is Qdrant's error, to which the
+driver adds the `DROP INDEX` and `CREATE INDEX` that replace it. It takes `WHERE`, `LIMIT`,
+`OFFSET`, `DISTINCT ON` and `LIMIT … BY` as a similarity search does, returns the relevance as
+`_score`, and needs the same bound. BM25's `k` and `b`, which Qdrant takes with each query,
+stay at its defaults of 1.2 and 0.75. The rest of this section is still the target.
 
 ```sql
 SELECT _id, _score, title
@@ -260,7 +272,8 @@ SELECT _id, title  FROM docs WHERE lang = 'en' ORDER BY similarity(dense, [0.7, 
 **This runs today.** Each search keeps its own columns, `WHERE`, `LIMIT`, `OFFSET` and vector,
 and its rows are a result set of their own, in the order written: `execute` answers with the
 first, and `getMoreResults()` moves to each next one. A search answers as it would alone, down
-to the bound and the warning a missing `LIMIT` gets. Only similarity searches batch, and only of
+to the bound and the warning a missing `LIMIT` gets. Only searches batch, by `similarity` or
+`text_rank` and mixed freely, and only of
 one collection, as Qdrant's batch is per collection; a script holding anything else is an error
 before anything runs, since several writes in one string would stop halfway with no way to say
 how far they got. It works on a `Statement`: a `PreparedStatement` is one statement.
@@ -531,7 +544,7 @@ any other is an error, since Qdrant accepts an unknown one and drops it without 
 | `integer` | `lookup`, `range`, `is_principal`, `on_disk` |
 | `float`, `datetime` | `is_principal`, `on_disk` |
 | `bool`, `geo` | `on_disk` |
-| `text` | `tokenizer`, `min_token_len`, `max_token_len`, `lowercase`, `ascii_folding`, `phrase_matching`, `stopwords`, `stemmer` (a language, for Qdrant's Snowball stemmer), `on_disk` |
+| `text` | `tokenizer`, `min_token_len`, `max_token_len`, `lowercase`, `ascii_folding`, `phrase_matching`, `stopwords`, `stemmer` (a language, for Qdrant's Snowball stemmer), `on_disk`, `scoring` (`true` to rank by BM25 with `text_rank`) |
 
 Qdrant would replace an index already on the field, and answers a field without one as
 dropped, so the driver looks first: a second `CREATE INDEX` on a field is `42S11` (nothing to do
@@ -697,8 +710,8 @@ Still the target, for each `embed()`:
 **What runs today:** `Connection.prepareStatement` parses the SQL once and reports syntax errors
 then; unknown collections and columns are reported when it runs, since the columns may change in
 between. A `?` stands for one constant wherever a constant goes: in `WHERE`, in the select list,
-as the vector of `similarity(…)`, and as the whole number of a `LIMIT`, an `OFFSET` or a `LIMIT n
-BY`. A value takes the placeholder's place in the parsed
+as the vector of `similarity(…)`, as the words of `text_rank(…)`, and as the whole number of a
+`LIMIT`, an `OFFSET` or a `LIMIT n BY`. A value takes the placeholder's place in the parsed
 statement, never in the SQL text, so it can't change what the statement means.
 
 | Java value | Constant |
@@ -1019,7 +1032,6 @@ These are errors, not emulated:
 - How the driver gets the embedder abstraction (a library dependency, or a plug-in found at
   runtime). Its interface takes a batch of texts and their role already; sparse and multivector
   output from [Embeddings](#embeddings) is what it lacks.
-- Which field does a `text` query search, and what scoring options does it take?
 - Do all these forms parse with JSqlParser 5.4: types with arguments and `DISTANCE` in
   `CREATE TABLE`, table functions in `FROM`, `ON CONFLICT … WHERE`, and the PostgreSQL
   operators `->`, `->>`, `::`, `@>`, `||` on JSON? Hints are read from the SQL text before

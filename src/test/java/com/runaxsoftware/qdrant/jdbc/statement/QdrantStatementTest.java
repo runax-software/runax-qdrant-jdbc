@@ -27,6 +27,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
@@ -143,6 +144,59 @@ class QdrantStatementTest {
         assertEquals(Json.object("limit", 5, "with_payload", true, "with_vector", false,
             "query", Json.object("nearest", Json.array(0.1, 0.2, 0.3, 0.4))),
             server.queryRequests().get(0));
+    }
+
+    @Test
+    void ranksTheRowsOfASearchByText() throws SQLException {
+        server.collection("articles", unnamedVector(4, "Cosine", Map.of("title", "text")),
+            List.of(point(1, Json.object("title", "Refund policy", "lang", "en"))));
+
+        try (ResultSet rows = statement.executeQuery("SELECT _id, _score, title FROM articles "
+            + "WHERE lang = 'en' ORDER BY text_rank(title, 'refund policy') DESC LIMIT 5 "
+            + "OFFSET 2")) {
+            assertEquals("_score", rows.getMetaData().getColumnLabel(2));
+        }
+
+        // The words as Qdrant's text query, and the field where a search names its vector
+        assertEquals(Json.object("limit", 5, "with_payload", true, "with_vector", false,
+            "query", Json.object("text", "refund policy"), "using", "title", "offset", 2,
+            "filter", Json.object("must", Json.array(
+                Json.object("key", "lang", "match", Json.object("value", "en"))))),
+            server.queryRequests().get(0));
+    }
+
+    @Test
+    void takesTheWordsOfASearchByTextAsAParameter() throws SQLException {
+        server.collection("articles", unnamedVector(4, "Cosine", Map.of("title", "text")),
+            List.of(point(1, Json.object("title", "Refund policy"))));
+
+        try (PreparedStatement prepared = connection.prepareStatement(
+            "SELECT _id FROM articles ORDER BY text_rank(title, ?) DESC LIMIT 3")) {
+            prepared.setString(1, "it's a refund");
+
+            try (ResultSet rows = prepared.executeQuery()) {
+                assertTrue(rows.next());
+            }
+        }
+
+        assertEquals(Json.object("text", "it's a refund"),
+            server.queryRequests().get(0).get("query"));
+    }
+
+    @Test
+    void saysHowToBuildATextIndexThatScores() throws SQLException {
+        server.collection("articles", unnamedVector(4, "Cosine", Map.of("title", "text")),
+            List.of());
+        server.fail(FakeQdrantServer.Endpoint.QUERY, 400, "Bad request: The text index on "
+            + "`title` does not score: set `scoring` on it to query it");
+
+        SQLException error = assertThrows(SQLException.class, () -> statement.executeQuery(
+            "SELECT _id FROM articles ORDER BY text_rank(title, 'refund') DESC LIMIT 3"));
+
+        assertEquals("The text index on 'title' of articles wasn't built to score, so Qdrant "
+            + "can't rank by it. Replace it: DROP INDEX ON articles (title), then CREATE INDEX "
+            + "ON articles (title) USING text WITH (scoring = true)", error.getMessage());
+        assertEquals("42000", error.getSQLState());
     }
 
     @Test
@@ -676,9 +730,9 @@ class QdrantStatementTest {
             + "[0.1, 0.2, 0.3, 0.4]) DESC LIMIT 1";
         server.collection("docs", unnamedVector(4, "Cosine", Map.of()), List.of());
 
-        assertEquals("Several statements in one call run as a batch of similarity searches, and "
-                + "statement 2 isn't one: each needs ORDER BY similarity(...) DESC. Run other "
-                + "statements one at a time",
+        assertEquals("Several statements in one call run as a batch of searches, and "
+                + "statement 2 isn't one: each needs ORDER BY similarity(...) DESC or "
+                + "text_rank(...) DESC. Run other statements one at a time",
             assertThrows(SQLFeatureNotSupportedException.class,
                 () -> statement.execute(search + "; SELECT _id FROM products")).getMessage());
         assertEquals("A batch of searches is of one collection: statement 1 searches products "

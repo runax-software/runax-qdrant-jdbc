@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Full-text ranking: `ORDER BY text_rank(title, 'refund policy') DESC` ranks points by BM25
+  over a payload field's text index, through Qdrant's `text` query, with no vector and no
+  embedding model. A point scores when it holds any of the words, where `text_match` keeps only
+  the points that hold them all and ranks nothing. It takes `WHERE`, `LIMIT`, `OFFSET`,
+  `DISTINCT ON`, `LIMIT … BY` and a `?` for the words, returns the relevance as `_score`, and
+  runs in a batch beside similarity searches. The index has to be built to score, which
+  `CREATE INDEX … USING text WITH (scoring = true)` now does; an index that doesn't is an error
+  naming the two statements that replace it. ([#59])
 - `BETWEEN` and `NOT BETWEEN` in `WHERE`: `price BETWEEN 10 AND 20` is one Qdrant `range` with
   both bounds included, on numbers and on `TIMESTAMP WITH TIME ZONE` columns, and either bound
   may be a `?`. `NOT BETWEEN` follows SQL's rule that a point without the field matches
@@ -478,3 +486,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#56]: https://github.com/runax-software/runax-qdrant-jdbc/pull/56
 [#57]: https://github.com/runax-software/runax-qdrant-jdbc/pull/57
 [#58]: https://github.com/runax-software/runax-qdrant-jdbc/pull/58
+[#59]: https://github.com/runax-software/runax-qdrant-jdbc/pull/59

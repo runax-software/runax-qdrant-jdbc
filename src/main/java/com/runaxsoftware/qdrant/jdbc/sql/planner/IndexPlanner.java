@@ -49,7 +49,7 @@ final class IndexPlanner {
         "text", Map.of("tokenizer", Kind.TEXT, "min_token_len", Kind.WHOLE,
             "max_token_len", Kind.WHOLE, "lowercase", Kind.BOOL, "ascii_folding", Kind.BOOL,
             "phrase_matching", Kind.BOOL, "stopwords", Kind.TEXT, "stemmer", Kind.TEXT,
-            "on_disk", Kind.BOOL));
+            "on_disk", Kind.BOOL, "scoring", Kind.BOOL));
 
     Plan plan(CreateIndexStatement statement, Catalog catalog) throws SQLException {
         TableSchema schema = catalog.table(WritePlanner.collection(statement.table(),

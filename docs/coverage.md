@@ -52,7 +52,7 @@ spec without judgement calls.
 | --- | --- | --- | --- |
 | Collections | **9** | **9** | Listing and describing tables, `CREATE TABLE`, `DROP TABLE`, `IF NOT EXISTS`, `system.optimizations`, and all of `ALTER TABLE`: `ADD COLUMN`, `DROP COLUMN`, `SET (…)` |
 | Points | **14** | **14** | `SELECT` (scroll, or one point by its ID), `COUNT(*)`, `GROUP BY` (facet), `DELETE`, `TRUNCATE`, `UPDATE` (a route for each kind of change, or the batch for several), `INSERT` (upsert, and the ID check before it) — and `LIKE` and the full-text conditions, which are fields of the filter all of them send |
-| Search | **5** | **5** | `ORDER BY similarity(...) DESC`, including `embed()`, several such searches in one call, the best points of each group with `DISTINCT ON` and `LIMIT … BY`, and `distance_matrix(…)` |
+| Search | **5** | **5** | `ORDER BY similarity(...) DESC`, including `embed()`, `ORDER BY text_rank(...) DESC`, several such searches in one call, the best points of each group with `DISTINCT ON` and `LIMIT … BY`, and `distance_matrix(…)` |
 | Aliases | **3** | **3** | Views: listing, `system.aliases`, `CREATE [OR REPLACE] VIEW`, `ALTER VIEW`, `DROP VIEW`, and the aliases a dropped collection takes with it |
 | Indexes | **2** | **2** | `CREATE INDEX`, `DROP INDEX`, and the indexes `CREATE TABLE` declares |
 | Snapshots | **17** | **17** | `system.snapshots`, `system.shard_snapshots`, and fourteen `CALL` procedures: taking, deleting, downloading, uploading and recovering a snapshot of a collection, of one shard, or of the whole storage |
@@ -84,7 +84,7 @@ and nineteen from `Procedure`, which declares each `CALL` procedure as the one r
 | `DELETE /collections/{c}/index/{field}` | `deleteIndex` | `DROP INDEX` |
 | `POST /collections/{c}/points/scroll` | `scroll`, `matchingIds` | `SELECT`, paged by cursor, the sample that infers columns, and the IDs an `UPDATE` of a vector writes to |
 | `GET /collections/{c}/points/{id}` | `point` | `SELECT … WHERE _id = 7`, when one ID is the whole `WHERE`: the point or no row, without a filter or a page |
-| `POST /collections/{c}/points/query` | `query` | `ORDER BY similarity(...) DESC` |
+| `POST /collections/{c}/points/query` | `query` | `ORDER BY similarity(...) DESC`, and `ORDER BY text_rank(...) DESC` as its `text` query |
 | `POST /collections/{c}/points/query/batch` | `queryBatch` | Several searches of one collection run in one `execute`, each one's rows a result of its own |
 | `POST /collections/{c}/points/query/groups` | `queryGroups` | `SELECT DISTINCT ON (field) …` and `LIMIT n BY field` on a search: the best points of each of a payload field's values |
 | `POST /collections/{c}/points/search/matrix/pairs` | `matrix` | `SELECT … FROM distance_matrix(…)`: sampled points and their nearest neighbours, as `_a`, `_b`, `_score` |
@@ -298,6 +298,7 @@ is stored as a number, and text that can't be one is `22018`.
 | `ORDER BY _id` | partial | Ascending only; `DESC` is an error, since Qdrant scrolls by ID upwards |
 | `ORDER BY <field>` | partial | Needs an `integer`, `float` or `datetime` payload index, and a bound |
 | `ORDER BY similarity(v, …) DESC` | works | Needs a bound; `ASC` is an error; dense vectors, or any vector via `embed()` |
+| `ORDER BY text_rank(field, 'words') DESC` | works | Needs a bound, and a text index on the field built `WITH (scoring = true)`; `ASC` is an error. BM25's `k` and `b` stay at Qdrant's defaults |
 | `ORDER BY` on two things | missing | Qdrant orders by one field or ranks by one score |
 | `GROUP BY <field>` + `COUNT(*)` | partial | Needs a `keyword`, `integer`, `bool` or `uuid` index, and a bound |
 | `GROUP BY` on two fields | missing | Qdrant facets one field at a time |
@@ -409,8 +410,8 @@ SELECT name FROM sample_products ORDER BY price, name LIMIT 3
   Ordering by more than one thing isn't supported yet
 
 SELECT _id, _score FROM sample_products LIMIT 1
-  Column '_score' is only in a similarity search: add ORDER BY similarity(vector, [0.1, ...])
-  DESC
+  Column '_score' is only in a search: add ORDER BY similarity(vector, [0.1, ...]) DESC or
+  text_rank(field, 'words') DESC
 
 SELECT name FROM sample_products WHERE name = NULL
   Comparing 'name' with NULL is never true: use IS NULL or IS NOT NULL
@@ -497,11 +498,10 @@ and delete from it. What remains, most important first:
    filter alone, so `UPDATE … SET dense = …` scrolls the matching IDs first and is capped at
    10,000 points. Re-embedding a collection larger than that still means splitting the statement
    up. Only Qdrant growing a filter form for that operation would lift the cap.
-2. **Text matching reaches the index but not the ranking.** `text_match` filters by a text
-   index; Qdrant's `text` *query*, which ranks by full-text relevance and is what a BM25-style
-   search needs, has no SQL yet, so `ORDER BY text_rank(title, 'refund policy') DESC` from the
-   dialect spec is still the target. `at_least` (`min_should`) and the geo and nested-array
-   conditions are the rest of the filter surface.
+2. **Full-text ranking takes Qdrant's defaults.** `ORDER BY text_rank(title, 'refund policy')
+   DESC` ranks by BM25, but its `k` and `b` parameters, which Qdrant takes per query, have no
+   SQL, and the ranking can't yet be one side of a hybrid search. `at_least` (`min_should`)
+   and the geo and nested-array conditions are the rest of the filter surface.
 3. **One `embed()` per statement, not per collection.** A batch now goes to the provider in one
    request, but each statement embeds on its own: loading a collection through a thousand
    `INSERT`s is still a thousand calls, where one `INSERT` of a thousand rows is one. Nothing in

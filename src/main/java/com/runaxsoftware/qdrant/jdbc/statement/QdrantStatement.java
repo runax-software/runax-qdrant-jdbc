@@ -204,9 +204,9 @@ public class QdrantStatement extends AbstractStatement {
 
             if (!(plan instanceof QueryPlan search)) {
                 throw new SQLFeatureNotSupportedException("Several statements in one call run "
-                    + "as a batch of similarity searches, and statement " + (i + 1) + " isn't "
-                    + "one: each needs ORDER BY similarity(...) DESC. Run other statements one "
-                    + "at a time");
+                    + "as a batch of searches, and statement " + (i + 1) + " isn't one: each "
+                    + "needs ORDER BY similarity(...) DESC or text_rank(...) DESC. Run other "
+                    + "statements one at a time");
             }
             if (!plans.isEmpty() && !plans.get(0).collection().equals(search.collection())) {
                 throw new SQLFeatureNotSupportedException("A batch of searches is of one "

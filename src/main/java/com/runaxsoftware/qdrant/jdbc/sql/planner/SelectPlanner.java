@@ -62,6 +62,9 @@ final class SelectPlanner {
 
     private static final String SIMILARITY = "similarity";
 
+    // The function a search by text orders by: BM25 over a payload field's text index
+    private static final String TEXT_RANK = "text_rank";
+
     // The one aggregate Qdrant answers itself, lower case, and the name PostgreSQL gives its
     // column when the statement gives it none
     private static final String COUNT = "count";
@@ -94,11 +97,14 @@ final class SelectPlanner {
     /**
      * What a statement's ORDER BY asks Qdrant to rank by.
      *
-     * @param vector   the Qdrant name of the vector to search, empty for an unnamed one
-     * @param query    the vector to search with, empty when the search embeds text
+     * @param vector   the Qdrant name of the vector to search, empty for an unnamed one; the
+     *                 payload field, for a search by text
+     * @param query    the vector to search with, empty when the search embeds text or ranks by
+     *                 text
      * @param embed    the text to embed, or {@code null}
+     * @param text     the words to rank a payload field's text by, or {@code null}
      */
-    private record Search(String vector, List<Double> query, EmbedText embed) {
+    private record Search(String vector, List<Double> query, EmbedText embed, String text) {
     }
 
     public Plan plan(SelectStatement statement, Catalog catalog) throws SQLException {
@@ -162,7 +168,7 @@ final class SelectPlanner {
             // Qdrant's Query API skips by row count itself, so this offset needs no cap
             return new QueryPlan(schema.name(), columns, search.vector(), search.query(),
                 withPayload, withVector, limit(statement), offset(statement), filter,
-                search.embed());
+                search.embed(), search.text());
         }
 
         JsonNode id = order == null ? onlyId(filter) : null;
@@ -206,7 +212,8 @@ final class SelectPlanner {
         if (search == null) {
             throw new SQLFeatureNotSupportedException("DISTINCT ON and LIMIT ... BY keep the best "
                 + "points of each group, and only a search says which are best: add ORDER BY "
-                + "similarity(vector, [0.1, ...]) DESC. To count a field's values instead, use "
+                + "similarity(vector, [0.1, ...]) DESC or " + TEXT_RANK + "(field, 'words') "
+                + "DESC. To count a field's values instead, use "
                 + "GROUP BY with COUNT(*)");
         }
         if (size < 1) {
@@ -225,15 +232,16 @@ final class SelectPlanner {
                 : "not a payload field"));
         }
 
-        // Euclid and Manhattan are distances, so the closest point has the lowest score
-        boolean lowerIsBest = schema.collection().vectors().stream()
+        // Euclid and Manhattan are distances, so the closest point has the lowest score; a
+        // search by text has a relevance, and the best match the highest
+        boolean lowerIsBest = search.text() == null && schema.collection().vectors().stream()
             .filter(vector -> vector.name().equals(search.vector()))
             .anyMatch(vector -> LOWER_IS_BEST.contains(String.valueOf(vector.distance())));
 
         return new GroupedQueryPlan(
             new QueryPlan(schema.name(), columns, search.vector(), search.query(), withPayload,
                 withVector, limit(statement), skip(statement, GROUPS_HAVE_NO_OFFSET), filter,
-                search.embed()),
+                search.embed(), search.text()),
             column.source(), size, lowerIsBest);
     }
 
@@ -299,8 +307,9 @@ final class SelectPlanner {
     private static Ordering ordering(OrderItem order, TableSchema schema, String alias)
         throws SQLException {
         if (!(order.expression() instanceof Column named)) {
-            throw new SQLFeatureNotSupportedException("ORDER BY takes a column or "
-                + SIMILARITY + "(vector, [0.1, ...]) DESC");
+            throw new SQLFeatureNotSupportedException("ORDER BY takes a column, "
+                + SIMILARITY + "(vector, [0.1, ...]) DESC, or " + TEXT_RANK
+                + "(field, 'words') DESC");
         }
 
         ColumnDefinition column = find(schema, named, alias, false);
@@ -482,10 +491,13 @@ final class SelectPlanner {
         if (!(item.expression() instanceof FunctionCall call)) {
             return null;   // a column, which orders a scroll instead
         }
+        if (call.is(TEXT_RANK)) {
+            return textRank(item, call, schema, alias);
+        }
         if (!call.is(SIMILARITY)) {
             throw new SQLFeatureNotSupportedException("'" + call.name() + "' isn't a function "
                 + "this driver has; a search orders by " + SIMILARITY + "(vector, [0.1, ...]) "
-                + "DESC");
+                + "DESC or " + TEXT_RANK + "(field, 'words') DESC");
         }
         if (!item.descending()) {
             throw new SQLFeatureNotSupportedException("A similarity search returns the closest "
@@ -500,7 +512,7 @@ final class SelectPlanner {
         Expression with = call.arguments().get(1);
 
         if (with instanceof FunctionCall function && function.is(EMBED)) {
-            return new Search(vector.source(), List.of(), embed(function, vector, schema));
+            return new Search(vector.source(), List.of(), embed(function, vector, schema), null);
         }
 
         if (vector.type() != ColumnType.VECTOR) {
@@ -518,7 +530,50 @@ final class SelectPlanner {
                 + query.size(), "42000");
         }
 
-        return new Search(vector.source(), query.values(), null);
+        return new Search(vector.source(), query.values(), null, null);
+    }
+
+    /**
+     * The search {@code text_rank(title, 'refund policy')} asks for: Qdrant's text query, which
+     * ranks points by BM25 over a payload field's text index. Any of the words scores a point,
+     * unlike {@code text_match}, which keeps the points that hold them all and ranks nothing.
+     * The index has to be one built to score. Qdrant says so itself when it isn't, unlike a
+     * phrase match on an index that matches none, so that is left to Qdrant and the executor
+     * adds the statements that build one.
+     */
+    private static Search textRank(OrderItem item, FunctionCall call, TableSchema schema,
+                                   String alias) throws SQLException {
+        String usage = TEXT_RANK + "(title, 'refund policy')";
+
+        if (!item.descending()) {
+            throw new SQLFeatureNotSupportedException("A search by text returns the best matches "
+                + "first, so it needs ORDER BY " + TEXT_RANK + "(...) DESC");
+        }
+        if (call.arguments().size() != 2 || !(call.arguments().get(0) instanceof Column named)) {
+            throw new SQLSyntaxErrorException(TEXT_RANK + " takes a payload field and the words "
+                + "to rank it by, as " + usage, "42000");
+        }
+
+        ColumnDefinition field = find(schema, named, alias, false);
+
+        if (field.kind() != ColumnKind.PAYLOAD_FIELD) {
+            throw new SQLSyntaxErrorException("Column '" + field.name() + "' of " + schema.name()
+                + " isn't a payload field: " + TEXT_RANK + " ranks by a field's text, as "
+                + usage, "42000");
+        }
+
+        PayloadIndexType index = schema.collection().payloadIndexes().get(field.source());
+
+        if (index != PayloadIndexType.TEXT) {
+            throw new SQLFeatureNotSupportedException("Ranking by '" + field.name() + "' of "
+                + schema.name() + " needs a text index that scores, and this field is "
+                + (index == null ? "not indexed" : "indexed as " + index.qdrantName())
+                + ": CREATE INDEX ON " + schema.name() + " (" + field.name()
+                + ") USING text WITH (scoring = true)");
+        }
+
+        return new Search(field.source(), List.of(), null,
+            text(call.arguments().get(1), TEXT_RANK, usage));
     }
 
     /**
@@ -538,9 +593,9 @@ final class SelectPlanner {
                 + "keeps one, the model: " + usage, "42000");
         }
 
-        String text = text(call.arguments().get(0), usage);
+        String text = text(call.arguments().get(0), EMBED, usage);
         EmbeddingModel named = call.arguments().size() == 2
-            ? EmbeddingModel.parse(text(call.arguments().get(1), usage))
+            ? EmbeddingModel.parse(text(call.arguments().get(1), EMBED, usage))
             : null;
         EmbeddingModel kept = keptModel(vector, schema);
 
@@ -594,7 +649,9 @@ final class SelectPlanner {
         }
     }
 
-    private static String text(Expression argument, String usage) throws SQLException {
+    // The text a function is given in quotes, which a prepared statement may give as a parameter
+    private static String text(Expression argument, String function, String usage)
+        throws SQLException {
         if (argument instanceof Literal literal && literal.value() instanceof String text) {
             return text;
         }
@@ -603,7 +660,7 @@ final class SelectPlanner {
                 + "PreparedStatement");
         }
 
-        throw new SQLSyntaxErrorException(EMBED + " takes text in quotes: " + usage, "42000");
+        throw new SQLSyntaxErrorException(function + " takes text in quotes: " + usage, "42000");
     }
 
     /**
@@ -862,8 +919,9 @@ final class SelectPlanner {
      */
     private static ColumnDefinition score(boolean searching) throws SQLException {
         if (!searching) {
-            throw new SQLSyntaxErrorException("Column '" + SCORE + "' is only in a similarity "
-                + "search: add ORDER BY " + SIMILARITY + "(vector, [0.1, ...]) DESC", "42S22");
+            throw new SQLSyntaxErrorException("Column '" + SCORE + "' is only in a search: add "
+                + "ORDER BY " + SIMILARITY + "(vector, [0.1, ...]) DESC or " + TEXT_RANK
+                + "(field, 'words') DESC", "42S22");
         }
 
         return ColumnDefinition.score();

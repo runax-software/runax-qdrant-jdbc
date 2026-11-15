@@ -635,8 +635,9 @@ class PlannerTest {
         SQLSyntaxErrorException error = assertThrows(SQLSyntaxErrorException.class,
                 () -> plan("SELECT _id, _score FROM docs", CATALOG));
 
-        assertEquals("Column '_score' is only in a similarity search: add ORDER BY "
-                + "similarity(vector, [0.1, ...]) DESC", error.getMessage());
+        assertEquals("Column '_score' is only in a search: add ORDER BY "
+                + "similarity(vector, [0.1, ...]) DESC or text_rank(field, 'words') DESC",
+                error.getMessage());
         assertEquals("42S22", error.getSQLState());
     }
 

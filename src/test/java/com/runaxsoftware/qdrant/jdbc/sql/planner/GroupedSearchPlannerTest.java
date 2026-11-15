@@ -106,8 +106,8 @@ class GroupedSearchPlannerTest {
     @Test
     void needsASearchToSayWhichPointsAreBest() {
         assertEquals("DISTINCT ON and LIMIT ... BY keep the best points of each group, and only a "
-                + "search says which are best: add ORDER BY similarity(vector, [0.1, ...]) DESC. "
-                + "To count a field's values instead, use GROUP BY with COUNT(*)",
+                + "search says which are best: add ORDER BY similarity(vector, [0.1, ...]) DESC or "
+                + "text_rank(field, 'words') DESC. To count a field's values instead, use GROUP BY with COUNT(*)",
             error("SELECT DISTINCT ON (doc_id) _id FROM chunks LIMIT 5").getMessage());
         assertThrows(SQLFeatureNotSupportedException.class,
             () -> plan("SELECT _id FROM chunks ORDER BY year LIMIT 2 BY doc_id LIMIT 5"));

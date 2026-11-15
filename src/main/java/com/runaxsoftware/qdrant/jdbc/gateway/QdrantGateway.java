@@ -240,7 +240,8 @@ public class QdrantGateway implements AutoCloseable {
     }
 
     /**
-     * The points nearest a vector, best first, through Qdrant's Query API. One call answers a
+     * The points nearest a vector, or the ones whose text matches a query best, best first,
+     * through Qdrant's Query API. One call answers a
      * whole search: it returns the request's limit of points and no cursor, unlike a scroll.
      * The Query API's {@code offset} is a row count, so a request that gives one is answered
      * with the points after it and nothing has to be discarded here.
@@ -326,7 +327,10 @@ public class QdrantGateway implements AutoCloseable {
             .put("with_payload", query.withPayload())
             .put("with_vector", query.withVector());
 
-        if (query.document() != null) {
+        if (query.text() != null) {
+            // BM25 over the text index of the payload field that `using` names
+            body.putObject("query").put("text", query.text());
+        } else if (query.document() != null) {
             // Qdrant embeds the text with the model, then searches with what it made
             body.putObject("query").put("text", query.document().text())
                 .put("model", query.document().model());
@@ -335,7 +339,8 @@ public class QdrantGateway implements AutoCloseable {
             for (double value : query.query()) vector.add(value);
         }
 
-        // A collection's single unnamed vector is the one Qdrant searches when none is named
+        // A collection's single unnamed vector is the one Qdrant searches when none is named; a
+        // search by text always names its payload field
         if (!query.vector().isEmpty()) body.put("using", query.vector());
         if (query.offset() > 0) body.put("offset", query.offset());
         if (query.filter() != null) body.set("filter", query.filter());

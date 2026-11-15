@@ -5,11 +5,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import java.util.List;
 
 /**
- * One request for Qdrant's Query API: the points nearest a vector, best first.
+ * One request for Qdrant's Query API: the points nearest a vector, or the points whose text
+ * matches a query best, best first.
  *
  * @param collection  the collection to search
  * @param vector      the name of the vector to search, or an empty string for a collection's
- *                    single unnamed vector
+ *                    single unnamed vector; for a search by text, the payload field to rank by
  * @param query       the vector to search with, of the searched vector's dimensions
  * @param limit       how many points to return, which a search always says
  * @param offset      how many of the best-ranked points to pass over before the first returned
@@ -21,6 +22,8 @@ import java.util.List;
  * @param filter      the points to rank, as a Qdrant filter, or {@code null} for every point
  * @param document    text for Qdrant to embed and search with instead of the query vector, or
  *                    {@code null}
+ * @param text        the words to rank the payload field's text by, with BM25 over its text
+ *                    index, or {@code null} for a search of a vector
  */
 public record QueryRequest(
     String collection,
@@ -31,11 +34,12 @@ public record QueryRequest(
     boolean withPayload,
     boolean withVector,
     JsonNode filter,
-    Document document) {
+    Document document,
+    String text) {
 
     public QueryRequest(String collection, String vector, List<Double> query, long limit,
                         long offset, boolean withPayload, boolean withVector, JsonNode filter,
-                        Document document) {
+                        Document document, String text) {
         this.collection = collection;
         this.vector = vector;
         this.query = List.copyOf(query);
@@ -45,6 +49,17 @@ public record QueryRequest(
         this.withVector = withVector;
         this.filter = filter;
         this.document = document;
+        this.text = text;
+    }
+
+    /**
+     * A search of a vector, with one written out or with text for Qdrant to embed.
+     */
+    public QueryRequest(String collection, String vector, List<Double> query, long limit,
+                        long offset, boolean withPayload, boolean withVector, JsonNode filter,
+                        Document document) {
+        this(collection, vector, query, limit, offset, withPayload, withVector, filter, document,
+            null);
     }
 
     /**

@@ -33,6 +33,8 @@ LIMIT 10
 - **Similarity search** — rank points by similarity to a vector, with the score as a
   `_score` column, and `embed('text')` to search with text, embedded by Qdrant or by a
   provider such as OpenAI.
+- **Full-text ranking** — `ORDER BY text_rank(title, 'refund policy') DESC` ranks points by
+  BM25 over a text index, with no vectors and no embedding model.
 - **System tables** — fifteen tables in a `system` schema describe the server itself
   (`collections`, `aliases`, `snapshots`, `shard_snapshots`, `shards`, `shard_keys`, `cluster`, `peers`,
   `telemetry`, `cluster_telemetry`, `metrics`, `issues`, `health`, `optimizations`, `quotas`), so a collection's
@@ -165,6 +167,22 @@ ORDER BY similarity(dense, embed('refund policy', 'openai:text-embedding-3-small
 LIMIT 10
 ```
 
+To rank by the words themselves, with no vector at all, `text_rank` runs Qdrant's BM25 over a
+payload field's text index. Any of the words scores a point, the best match comes first, and
+the index has to be built to score:
+
+```sql
+CREATE INDEX ON docs (title) USING text WITH (scoring = true);
+
+SELECT _id, _score, title
+FROM docs
+WHERE lang = 'en'
+ORDER BY text_rank(title, 'refund policy') DESC
+LIMIT 10
+```
+
+The models `embed()` takes:
+
 | Model | Who embeds | Needs |
 | --- | --- | --- |
 | `qdrant:qdrant/bm25` | Qdrant, into a sparse vector | Nothing: every Qdrant runs it |
@@ -231,7 +249,8 @@ RESET ALL;
 | `COUNT(*)` | Count API | |
 | `GROUP BY field` + `COUNT(*)` | Facet API | Needs a keyword, integer, bool, or uuid index; bounded like an ordered read |
 | `ORDER BY similarity(v, [0.1, ...]) DESC` | Query API | Score returned as `_score`; bounded like an ordered read |
-| Several such searches of one collection, separated by `;` | Query API, batch | One call; a result set each, read with `getMoreResults` |
+| `ORDER BY text_rank(title, 'refund policy') DESC` | Query API, `text` query | BM25 over the field's text index, built `WITH (scoring = true)`; score returned as `_score` |
+| Several searches of one collection, separated by `;` | Query API, batch | One call; a result set each, read with `getMoreResults` |
 | `SELECT DISTINCT ON (doc_id) … ORDER BY similarity(…) DESC`, `… LIMIT 3 BY doc_id LIMIT 10` | Query API, groups | The best point, or the best few, of each value of a payload field |
 | `SELECT * FROM distance_matrix(docs, dense, 100, 5)` | Search matrix | Sampled points and their nearest neighbours, as `_a`, `_b`, `_score` |
 | `FROM system.collections`, `system.aliases` | Collection and alias APIs | Read-only system tables |
