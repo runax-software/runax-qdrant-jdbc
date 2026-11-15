@@ -695,7 +695,8 @@ Still the target, for each `embed()`:
 **What runs today:** `Connection.prepareStatement` parses the SQL once and reports syntax errors
 then; unknown collections and columns are reported when it runs, since the columns may change in
 between. A `?` stands for one constant wherever a constant goes: in `WHERE`, in the select list,
-and as the vector of `similarity(…)`. A value takes the placeholder's place in the parsed
+as the vector of `similarity(…)`, and as the whole number of a `LIMIT`, an `OFFSET` or a `LIMIT n
+BY`. A value takes the placeholder's place in the parsed
 statement, never in the SQL text, so it can't change what the statement means.
 
 | Java value | Constant |
@@ -713,8 +714,17 @@ statement, never in the SQL text, so it can't change what the statement means.
 no transactions, so when one fails, the sets before it stay applied and the
 `BatchUpdateException` reports their counts. `getParameterMetaData()` reports how many
 placeholders there are, each of type `OTHER`, since a payload field's type comes from its
-points; `getMetaData()` returns `null` until the statement runs. `LIMIT ?` and `OFFSET ?` aren't
-supported yet.
+points; `getMetaData()` returns `null` until the statement runs.
+
+**`LIMIT ?` and `OFFSET ?` run today.** Their placeholders are numbered where they stand, after
+those of `WHERE` and `ORDER BY`, and `getParameterMetaData()` reports them as `BIGINT`. The
+values are bound before the statement is planned, so a statement plans exactly as it would with
+the numbers written out: a search sends the offset to Qdrant, the reads the driver skips itself
+keep the 10,000-row cap, `COUNT(*)` skips its one row, and a missing `LIMIT` falls back to the
+maximum rows or `defaultLimit` as before. A value that isn't a whole number of 0 or more —
+negative, decimal, text, or `NULL` — is a `SQLDataException` with SQLState `22023`, JDBC's
+invalid parameter value, since it's the value given that's wrong rather than the SQL; a
+placeholder given no value is `07001`, as any other.
 
 ## Request options
 

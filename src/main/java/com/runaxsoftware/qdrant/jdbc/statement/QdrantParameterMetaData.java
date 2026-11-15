@@ -3,17 +3,24 @@ package com.runaxsoftware.qdrant.jdbc.statement;
 import java.sql.ParameterMetaData;
 import java.sql.SQLException;
 import java.sql.Types;
+import java.util.Set;
 
 /**
- * How many parameters a prepared statement takes. Their types aren't known until values are
+ * How many parameters a prepared statement takes. Most types aren't known until values are
  * given, since a payload field holds whatever its points hold, so each is reported as any type.
+ * A LIMIT or OFFSET takes a whole number, so its placeholder is reported as a {@code BIGINT}.
  */
 final class QdrantParameterMetaData implements ParameterMetaData {
 
     private final int count;
+    private final Set<Integer> rowCounts;
 
-    QdrantParameterMetaData(int count) {
+    /**
+     * @param rowCounts the numbers of the parameters that take a row count
+     */
+    QdrantParameterMetaData(int count, Set<Integer> rowCounts) {
         this.count = count;
+        this.rowCounts = Set.copyOf(rowCounts);
     }
 
     @Override
@@ -24,19 +31,19 @@ final class QdrantParameterMetaData implements ParameterMetaData {
     @Override
     public int isNullable(int param) throws SQLException {
         check(param);
-        return parameterNullableUnknown;
+        return rowCounts.contains(param) ? parameterNoNulls : parameterNullableUnknown;
     }
 
     @Override
     public boolean isSigned(int param) throws SQLException {
         check(param);
-        return false;
+        return rowCounts.contains(param);
     }
 
     @Override
     public int getPrecision(int param) throws SQLException {
         check(param);
-        return 0;
+        return rowCounts.contains(param) ? 19 : 0;
     }
 
     @Override
@@ -48,19 +55,19 @@ final class QdrantParameterMetaData implements ParameterMetaData {
     @Override
     public int getParameterType(int param) throws SQLException {
         check(param);
-        return Types.OTHER;
+        return rowCounts.contains(param) ? Types.BIGINT : Types.OTHER;
     }
 
     @Override
     public String getParameterTypeName(int param) throws SQLException {
         check(param);
-        return "OTHER";
+        return rowCounts.contains(param) ? "BIGINT" : "OTHER";
     }
 
     @Override
     public String getParameterClassName(int param) throws SQLException {
         check(param);
-        return Object.class.getName();
+        return (rowCounts.contains(param) ? Long.class : Object.class).getName();
     }
 
     @Override

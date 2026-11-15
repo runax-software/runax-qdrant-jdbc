@@ -157,7 +157,7 @@ class ParserTest {
 
     @Test
     void readsKeywordsInAnyCaseAndKeepsTheCaseOfNames() throws SQLSyntaxErrorException {
-        assertEquals(new SelectStatement(List.of(column("Name")), TableName.of("MyDocs"), null, eq("lang", "en"), List.of(), List.of(), 5L, null),
+        assertEquals(new SelectStatement(List.of(column("Name")), TableName.of("MyDocs"), null, eq("lang", "en"), List.of(), List.of(), new Literal(5L), null),
                 Parser.parse("select Name from MyDocs Where lang = 'en' limit 5"));
     }
 
@@ -172,7 +172,7 @@ class ParserTest {
                         Column.of("dense"), new VectorLiteral(List.of(0.1, 0.2, 0.3)))), true)),
                 select.orderBy());
         assertEquals(List.of(column("_id"), column("_score")), select.items());
-        assertEquals(10L, select.limit());
+        assertEquals(new Literal(10L), select.limit());
     }
 
     @Test
@@ -287,11 +287,11 @@ class ParserTest {
         SelectStatement select = (SelectStatement) Parser.parse(
             "SELECT DISTINCT ON (doc_id) _id, doc_id FROM docs LIMIT 10 OFFSET 2");
 
-        assertEquals(new PerGroup(Column.of("doc_id"), 1), select.perGroup());
+        assertEquals(new PerGroup(Column.of("doc_id"), new Literal(1L)), select.perGroup());
         assertEquals(2, select.items().size());
-        assertEquals(10L, select.limit());
-        assertEquals(2L, select.offset());
-        assertEquals(new PerGroup(new Column("t", "doc_id"), 1), ((SelectStatement) Parser.parse(
+        assertEquals(new Literal(10L), select.limit());
+        assertEquals(new Literal(2L), select.offset());
+        assertEquals(new PerGroup(new Column("t", "doc_id"), new Literal(1L)), ((SelectStatement) Parser.parse(
             "select distinct on (t.doc_id) * from docs t")).perGroup());
     }
 
@@ -300,13 +300,13 @@ class ParserTest {
         SelectStatement select = (SelectStatement) Parser.parse(
             "SELECT _id FROM docs LIMIT 3 BY doc_id LIMIT 10 OFFSET 5");
 
-        assertEquals(new PerGroup(Column.of("doc_id"), 3), select.perGroup());
-        assertEquals(10L, select.limit());
-        assertEquals(5L, select.offset());
+        assertEquals(new PerGroup(Column.of("doc_id"), new Literal(3L)), select.perGroup());
+        assertEquals(new Literal(10L), select.limit());
+        assertEquals(new Literal(5L), select.offset());
 
         SelectStatement unbounded = (SelectStatement) Parser.parse(
             "SELECT _id FROM docs LIMIT 2 BY \"specs.color\"");
-        assertEquals(new PerGroup(Column.of("specs.color"), 2), unbounded.perGroup());
+        assertEquals(new PerGroup(Column.of("specs.color"), new Literal(2L)), unbounded.perGroup());
         assertNull(unbounded.limit());
         assertNull(((SelectStatement) Parser.parse("SELECT _id FROM docs LIMIT 3")).perGroup());
     }
@@ -362,7 +362,7 @@ class ParserTest {
 
     @Test
     void parsesLimitWithoutFrom() throws SQLSyntaxErrorException {
-        assertEquals(0L, select("SELECT 1 LIMIT 0").limit());
+        assertEquals(new Literal(0L), select("SELECT 1 LIMIT 0").limit());
     }
 
     @Test
@@ -499,8 +499,8 @@ class ParserTest {
     void parsesLimitAndOffset() throws SQLSyntaxErrorException {
         SelectStatement select = select("SELECT * FROM docs LIMIT 10 OFFSET 20");
 
-        assertEquals(10L, select.limit());
-        assertEquals(20L, select.offset());
+        assertEquals(new Literal(10L), select.limit());
+        assertEquals(new Literal(20L), select.offset());
     }
 
     @Test
@@ -508,7 +508,7 @@ class ParserTest {
         SelectStatement select = select("SELECT * FROM docs OFFSET 20");
 
         assertNull(select.limit());
-        assertEquals(20L, select.offset());
+        assertEquals(new Literal(20L), select.offset());
         assertNull(select("SELECT * FROM docs LIMIT 10").offset());
     }
 
@@ -520,12 +520,35 @@ class ParserTest {
         }
     }
 
+    /**
+     * A prepared statement gives LIMIT and OFFSET as values too. Their placeholders are numbered
+     * where they stand, after those of WHERE and ORDER BY, as JDBC counts them.
+     */
+    @Test
+    void parsesPlaceholdersForLimitAndOffset() throws SQLSyntaxErrorException {
+        SelectStatement select = select("SELECT _id FROM docs WHERE lang = ? "
+                + "ORDER BY similarity(dense, ?) DESC LIMIT ? OFFSET ?");
+
+        assertEquals(new Parameter(3), select.limit());
+        assertEquals(new Parameter(4), select.offset());
+
+        SelectStatement grouped = select("SELECT _id FROM docs LIMIT ? BY doc_id LIMIT ? OFFSET 2");
+        assertEquals(new PerGroup(Column.of("doc_id"), new Parameter(1)), grouped.perGroup());
+        assertEquals(new Parameter(2), grouped.limit());
+        assertEquals(new Literal(2L), grouped.offset());
+
+        DistanceMatrixStatement matrix = (DistanceMatrixStatement) Parser.parse(
+                "SELECT * FROM distance_matrix(docs, dense) WHERE lang = ? LIMIT ? OFFSET ?");
+        assertEquals(new Parameter(2), matrix.limit());
+        assertEquals(new Parameter(3), matrix.offset());
+    }
+
     @Test
     void parsesEveryClauseTogether() throws SQLSyntaxErrorException {
         assertEquals(
                 new SelectStatement(List.of(column("name")), TableName.of("docs"), null,
-                        eq("lang", "en"), List.of(), List.of(new OrderItem(Column.of("price"), true)), 10L,
-                        5L),
+                        eq("lang", "en"), List.of(), List.of(new OrderItem(Column.of("price"), true)),
+                        new Literal(10L), new Literal(5L)),
                 Parser.parse("SELECT name FROM docs WHERE lang = 'en' ORDER BY price DESC LIMIT 10 OFFSET 5"));
     }
 
@@ -770,8 +793,8 @@ class ParserTest {
         assertEquals("m", matrix.alias());
         assertEquals(2, matrix.items().size());
         assertEquals("neighbour", matrix.items().get(1).alias());
-        assertEquals(20L, matrix.limit());
-        assertEquals(4L, matrix.offset());
+        assertEquals(new Literal(20L), matrix.limit());
+        assertEquals(new Literal(4L), matrix.offset());
 
         assertEquals(50L, ((DistanceMatrixStatement) Parser.parse(
             "SELECT * FROM distance_matrix(docs, dense, 50)")).sample());
@@ -800,8 +823,8 @@ class ParserTest {
             "SELECT _id FROM docs LIMIT 1; SELECT _id FROM docs LIMIT 2;\nSELECT 3;");
 
         assertEquals(3, statements.size());
-        assertEquals(1L, ((SelectStatement) statements.get(0)).limit());
-        assertEquals(2L, ((SelectStatement) statements.get(1)).limit());
+        assertEquals(new Literal(1L), ((SelectStatement) statements.get(0)).limit());
+        assertEquals(new Literal(2L), ((SelectStatement) statements.get(1)).limit());
         assertEquals(List.of(Parser.parse("SELECT 1")), Parser.parseAll("SELECT 1"));
         assertEquals(List.of(Parser.parse("SELECT 1")), Parser.parseAll("SELECT 1;"));
     }

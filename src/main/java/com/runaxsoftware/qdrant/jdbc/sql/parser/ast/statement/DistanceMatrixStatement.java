@@ -18,12 +18,13 @@ import java.util.List;
  * @param alias      the name the statement gives the matrix, or {@code null}
  * @param where      the points to sample from, as a WHERE over the collection's columns, or
  *                   {@code null}
- * @param limit      the LIMIT, or {@code null}
- * @param offset     the OFFSET, or {@code null}
+ * @param limit      the LIMIT, a whole number or a {@code ?} placeholder, or {@code null}
+ * @param offset     the OFFSET, likewise
  */
 public record DistanceMatrixStatement(List<SelectItem> items, TableName table, String vector,
                                       Long sample, Long neighbours, String alias,
-                                      Expression where, Long limit, Long offset)
+                                      Expression where, Expression limit,
+                                      Expression offset)
     implements Statement {
 
     public DistanceMatrixStatement {

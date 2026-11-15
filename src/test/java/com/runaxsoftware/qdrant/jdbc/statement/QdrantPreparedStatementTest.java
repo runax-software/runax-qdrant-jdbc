@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.runaxsoftware.qdrant.jdbc.QdrantDriver;
 import com.runaxsoftware.qdrant.jdbc.support.FakeQdrantServer;
 import com.runaxsoftware.qdrant.jdbc.support.Json;
+import com.fasterxml.jackson.databind.JsonNode;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,10 +21,12 @@ import java.sql.Connection;
 import java.sql.ParameterMetaData;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLDataException;
 import java.sql.SQLException;
 import java.sql.SQLFeatureNotSupportedException;
 import java.sql.SQLSyntaxErrorException;
 import java.sql.Types;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -156,6 +159,80 @@ class QdrantPreparedStatementTest {
     }
 
     @Test
+    void takesTheLimitAndOffsetAsValues() throws SQLException {
+        server.collection("items", unnamedVector(2, "Cosine", Map.of()), List.of(
+            point(1, Json.object("lang", "en")), point(2, Json.object("lang", "en")),
+            point(3, Json.object("lang", "en")), point(4, Json.object("lang", "en"))));
+
+        try (PreparedStatement statement = connection.prepareStatement(
+            "SELECT _id FROM items WHERE lang = ? LIMIT ? OFFSET ?")) {
+            statement.setString(1, "en");
+            statement.setInt(2, 2);
+            statement.setLong(3, 1);
+            assertEquals(List.of("2", "3"), ids(statement));
+
+            statement.setInt(2, 1);
+            statement.setInt(3, 3);
+            assertEquals(List.of("4"), ids(statement), "each run plans with its own values");
+        }
+
+        try (PreparedStatement statement = connection.prepareStatement(
+            "SELECT _id FROM items ORDER BY similarity(_vector, ?) DESC LIMIT ? OFFSET ?")) {
+            statement.setObject(1, new float[] {0.1f, 0.2f});
+            statement.setInt(2, 3);
+            statement.setInt(3, 2);
+            statement.executeQuery().close();
+        }
+
+        JsonNode search = server.queryRequests().get(server.queryRequests().size() - 1);
+        assertEquals(3, search.get("limit").asInt());
+        assertEquals(2, search.get("offset").asInt(), "a search's offset goes to Qdrant");
+    }
+
+    @Test
+    void rejectsALimitOrOffsetValueThatIsNotAWholeNumberOfRows() throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+            "SELECT _id FROM products LIMIT ? OFFSET ?")) {
+            statement.setInt(2, 0);
+
+            assertEquals("07001", assertThrows(SQLException.class, statement::executeQuery)
+                .getSQLState(), "an unbound LIMIT is as missing as any other value");
+
+            for (Object bad : new Object[] {-1, 2.5, "3", null, true}) {
+                statement.setObject(1, bad);
+                SQLException error = assertThrows(SQLDataException.class,
+                    statement::executeQuery, String.valueOf(bad));
+
+                assertEquals("22023", error.getSQLState());
+                assertTrue(error.getMessage().startsWith("LIMIT takes a whole number of 0 or more"),
+                    error.getMessage());
+            }
+
+            statement.setInt(1, 5);
+            statement.setInt(2, -3);
+            assertEquals("OFFSET takes a whole number of 0 or more, not -3",
+                assertThrows(SQLDataException.class, statement::executeQuery).getMessage());
+        }
+    }
+
+    @Test
+    void describesALimitOrOffsetParameterAsAWholeNumber() throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+            "SELECT _id FROM products WHERE name = ? LIMIT ? OFFSET ?")) {
+            ParameterMetaData parameters = statement.getParameterMetaData();
+
+            assertEquals(3, parameters.getParameterCount());
+            assertEquals(Types.OTHER, parameters.getParameterType(1));
+            assertEquals(Types.BIGINT, parameters.getParameterType(2));
+            assertEquals("BIGINT", parameters.getParameterTypeName(3));
+            assertEquals(Long.class.getName(), parameters.getParameterClassName(3));
+            assertEquals(ParameterMetaData.parameterNoNulls, parameters.isNullable(2));
+            assertEquals(ParameterMetaData.parameterNullableUnknown, parameters.isNullable(1));
+            assertNull(statement.getMetaData(), "the columns are still known once it runs");
+        }
+    }
+
+    @Test
     void runsAsExecuteToo() throws SQLException {
         try (PreparedStatement statement = connection.prepareStatement("SELECT ?")) {
             statement.setBoolean(1, true);
@@ -167,5 +244,15 @@ class QdrantPreparedStatementTest {
                 assertFalse(rows.next());
             }
         }
+    }
+
+    private static List<String> ids(PreparedStatement statement) throws SQLException {
+        var ids = new ArrayList<String>();
+
+        try (ResultSet rows = statement.executeQuery()) {
+            while (rows.next()) ids.add(rows.getString("_id"));
+        }
+
+        return ids;
     }
 }

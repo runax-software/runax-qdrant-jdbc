@@ -92,8 +92,8 @@ below are things a route already reached can do and no statement asks for yet.
   a whole collection. `COUNT(*)` is one row, so any `OFFSET` skips it. Paging an ordered read by
   value instead of by count (`order_by.start_from`, above) would lift its cap.
 - [x] **Prepared statements** with parameters: `?` for constants in `WHERE`, the select list,
-  and a search's vector (`float[]` or `double[]`), batches of values for `DELETE`, and
-  parameter metadata. `LIMIT ?` and `OFFSET ?` come later.
+  a search's vector (`float[]` or `double[]`), `LIMIT` and `OFFSET`, batches of values for
+  `INSERT`, `UPDATE` and `DELETE`, and parameter metadata.
 - [x] **Request options** — `SET qdrant.consistency = majority` and the other options
   Qdrant takes with each request (`ordering`, `wait`, `timeout`, `hnsw_ef`, `exact`,
   `indexed_only`), kept for the connection, with `RESET` and `SHOW`. `shard_key`, the

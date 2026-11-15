@@ -37,6 +37,19 @@ public final class TokenStream {
         return ++parameterCount;
     }
 
+    /**
+     * Steps past a {@code ?} placeholder if the stream is on one; the caller numbers it with
+     * {@link #nextParameterIndex()}.
+     */
+    public boolean matchParameter() {
+        if (peek().type() != TokenType.PARAMETER) {
+            return false;
+        }
+
+        advance();
+        return true;
+    }
+
     public boolean peekIdentifier() {
         return peek().type() == TokenType.IDENTIFIER;
     }

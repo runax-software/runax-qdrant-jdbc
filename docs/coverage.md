@@ -270,8 +270,9 @@ above has stopped predicting how much SQL runs.
 
 A statement runs on `Statement` and on `PreparedStatement` alike. `prepareStatement` parses
 once and reports syntax errors then, binding each `?` into the parsed tree rather than into the
-SQL text — in `WHERE`, the select list, a search's vector, `embed(?, ?)`, `UPDATE`'s `SET` and
-`INSERT`'s `VALUES`. `getParameterMetaData` reports the count with type `OTHER` (1111), and
+SQL text — in `WHERE`, the select list, a search's vector, `embed(?, ?)`, `UPDATE`'s `SET`,
+`INSERT`'s `VALUES`, and `LIMIT`, `OFFSET` and `LIMIT n BY`. `getParameterMetaData` reports the
+count with type `OTHER` (1111), or `BIGINT` (-5) for a `LIMIT` or `OFFSET` placeholder, and
 `getMetaData` is `null` until the statement runs. `addBatch` and `executeBatch` run a prepared
 `INSERT`, `UPDATE` or `DELETE` once per set of values; Qdrant has no transactions, so a
 `BatchUpdateException` reports the sets that ran before a failure.
@@ -290,8 +291,8 @@ is stored as a number, and text that can't be one is `22018`.
 | `LIKE` / `NOT LIKE` | partial | `'Desk%'` is `prefix`, `'%desk%'` is `substring`, no wildcard is `=`; case-sensitive. A suffix, an interior `%`, `_`, `'%'` and `ILIKE` are errors naming what to write |
 | `text_match`, `text_any` | works | `match` text and text_any; no index needed, a text index makes them fast |
 | `phrase_match` | partial | Needs a text index built with `phrase_matching`, checked first because Qdrant answers without one with no points |
-| `LIMIT n` | works | A literal; `LIMIT ?` is rejected at parse time |
-| `OFFSET n` | partial | Every kind of read; Qdrant applies it only for a search, so the others skip in the driver, up to 10,000 rows |
+| `LIMIT n` | works | A whole number, or `LIMIT ?` in a prepared statement, checked when it runs |
+| `OFFSET n` | partial | Every kind of read, and `OFFSET ?` in a prepared statement; Qdrant applies it only for a search, so the others skip in the driver, up to 10,000 rows |
 | `ORDER BY _id` | partial | Ascending only; `DESC` is an error, since Qdrant scrolls by ID upwards |
 | `ORDER BY <field>` | partial | Needs an `integer`, `float` or `datetime` payload index, and a bound |
 | `ORDER BY similarity(v, …) DESC` | works | Needs a bound; `ASC` is an error; dense vectors, or any vector via `embed()` |
@@ -530,6 +531,6 @@ on a branch shouldn't say "this branch": it stops being one at merge, and that p
 already gone stale twice here.
 
 Everything the roadmap ticks does behave as described, including the limits it admits to:
-`LIMIT ?` and `OFFSET ?` are rejected, `ORDER BY _id DESC` is an error, dense vectors are the
+`ORDER BY _id DESC` is an error, dense vectors are the
 only ones a written-out vector can search, and an ordered, grouped or ranked read is bounded
 by a `LIMIT`, by `setMaxRows`, or by `defaultLimit` with a warning.

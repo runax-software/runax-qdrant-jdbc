@@ -13,7 +13,9 @@ import com.runaxsoftware.qdrant.jdbc.schema.ColumnDefinition;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnKind;
 import com.runaxsoftware.qdrant.jdbc.schema.ColumnType;
 import com.runaxsoftware.qdrant.jdbc.schema.TableSchema;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.Parameters;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.Parser;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.expression.Literal;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.GroupedQueryPlan;
 import com.runaxsoftware.qdrant.jdbc.sql.planner.plan.Plan;
 
@@ -137,6 +139,28 @@ class GroupedSearchPlannerTest {
 
         assertTrue(error.getMessage().startsWith("OFFSET 20000 isn't supported: Qdrant's grouped "
             + "search has no offset, so the driver reads the rows it skips"), error.getMessage());
+    }
+
+    /**
+     * The rows kept of each group can be a value given to a prepared statement too, numbered
+     * before the statement's own LIMIT, and checked the same once it's bound.
+     */
+    @Test
+    void takesTheRowsOfEachGroupAndTheLimitAsValues() throws SQLException {
+        String sql = "SELECT _id FROM chunks" + SEARCH + " LIMIT ? BY doc_id LIMIT ? OFFSET ?";
+        GroupedQueryPlan plan = (GroupedQueryPlan) planner.plan(Parameters.bind(Parser.parse(sql),
+            index -> new Literal((long) index + 1)), CATALOG);
+
+        assertEquals(2, plan.groupSize());
+        assertEquals(3L, plan.search().limit());
+        assertEquals(4, plan.search().offset());
+
+        SQLException error = assertThrows(SQLException.class, () -> planner.plan(
+            Parameters.bind(Parser.parse(sql), index -> new Literal(index == 1 ? 0L : 5L)), CATALOG));
+        assertEquals("LIMIT ... BY keeps at least one row of each group, not 0", error.getMessage());
+        assertEquals("LIMIT ... BY takes a whole number of 0 or more, not 'two'", assertThrows(
+            SQLException.class, () -> planner.plan(Parameters.bind(Parser.parse(sql),
+                index -> new Literal(index == 1 ? "two" : 5L)), CATALOG)).getMessage());
     }
 
     private GroupedQueryPlan plan(String sql) throws SQLException {

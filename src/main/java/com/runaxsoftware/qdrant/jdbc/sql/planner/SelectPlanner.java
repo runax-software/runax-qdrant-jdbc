@@ -161,19 +161,19 @@ final class SelectPlanner {
         if (search != null) {
             // Qdrant's Query API skips by row count itself, so this offset needs no cap
             return new QueryPlan(schema.name(), columns, search.vector(), search.query(),
-                withPayload, withVector, statement.limit(), offset(statement), filter,
+                withPayload, withVector, limit(statement), offset(statement), filter,
                 search.embed());
         }
 
         JsonNode id = order == null ? onlyId(filter) : null;
         if (id != null) {
-            return new PointPlan(schema.name(), id, columns, statement.limit(), offset(statement));
+            return new PointPlan(schema.name(), id, columns, limit(statement), offset(statement));
         }
 
         Ordering ordering = order == null
             ? null : ordering(order, schema, statement.alias());
 
-        return new ScrollPlan(schema.name(), columns, withPayload, withVector, statement.limit(),
+        return new ScrollPlan(schema.name(), columns, withPayload, withVector, limit(statement),
             skip(statement, SCROLL_PAGES_BY_ID), filter, ordering);
     }
 
@@ -201,6 +201,7 @@ final class SelectPlanner {
                                 List<ColumnDefinition> columns, boolean withPayload,
                                 boolean withVector, JsonNode filter) throws SQLException {
         PerGroup perGroup = statement.perGroup();
+        long size = RowCounts.of(perGroup.size(), "LIMIT ... BY");
 
         if (search == null) {
             throw new SQLFeatureNotSupportedException("DISTINCT ON and LIMIT ... BY keep the best "
@@ -208,9 +209,9 @@ final class SelectPlanner {
                 + "similarity(vector, [0.1, ...]) DESC. To count a field's values instead, use "
                 + "GROUP BY with COUNT(*)");
         }
-        if (perGroup.size() < 1) {
+        if (size < 1) {
             throw new SQLSyntaxErrorException("LIMIT ... BY keeps at least one row of each "
-                + "group, not " + perGroup.size(), "42000");
+                + "group, not " + size, "42000");
         }
 
         ColumnDefinition column = find(schema, perGroup.column(), statement.alias(), false);
@@ -231,17 +232,25 @@ final class SelectPlanner {
 
         return new GroupedQueryPlan(
             new QueryPlan(schema.name(), columns, search.vector(), search.query(), withPayload,
-                withVector, statement.limit(), skip(statement, GROUPS_HAVE_NO_OFFSET), filter,
+                withVector, limit(statement), skip(statement, GROUPS_HAVE_NO_OFFSET), filter,
                 search.embed()),
-            column.source(), perGroup.size(), lowerIsBest);
+            column.source(), size, lowerIsBest);
+    }
+
+    /**
+     * The rows a LIMIT keeps, or {@code null} when the statement gives none.
+     */
+    private static Long limit(SelectStatement statement) throws SQLException {
+        return RowCounts.of(statement.limit(), "LIMIT");
     }
 
     /**
      * The rows an OFFSET passes over, 0 when the statement gives none: {@code OFFSET 0} is no
      * offset at all, as it is in SQL.
      */
-    private static long offset(SelectStatement statement) {
-        return statement.offset() == null ? 0 : statement.offset();
+    private static long offset(SelectStatement statement) throws SQLException {
+        Long offset = RowCounts.of(statement.offset(), "OFFSET");
+        return offset == null ? 0 : offset;
     }
 
     /**
@@ -375,7 +384,7 @@ final class SelectPlanner {
 
         // A count is one row, so an OFFSET needs no cap: it either keeps that row or skips it
         return new CountPlan(table.name(), alias == null ? COUNT : alias, filter,
-            statement.limit(), offset(statement));
+            limit(statement), offset(statement));
     }
 
     /**
@@ -421,7 +430,7 @@ final class SelectPlanner {
         ColumnType type = ColumnType.forIndex(index);
 
         return new FacetPlan(schema.name(), column.source(),
-            facetColumns(statement, schema, column, type, counted), filter, statement.limit(),
+            facetColumns(statement, schema, column, type, counted), filter, limit(statement),
             skip(statement, FACET_HAS_NO_OFFSET));
     }
 
@@ -666,7 +675,7 @@ final class SelectPlanner {
         List<SystemColumn> columns = resolve(statement.items(), table, statement.alias());
 
         // The table is read whole either way, so skipping its first rows needs no cap
-        return new SystemTablePlan(table, columns, statement.limit(), offset(statement));
+        return new SystemTablePlan(table, columns, limit(statement), offset(statement));
     }
 
     // A collection is named on its own or in the schema the collections sit in
@@ -710,8 +719,8 @@ final class SelectPlanner {
             row.add(value);
         }
 
-        boolean hasRow = (statement.limit() == null || statement.limit() > 0)
-            && (statement.offset() == null || statement.offset() == 0);
+        Long limit = limit(statement);
+        boolean hasRow = (limit == null || limit > 0) && offset(statement) == 0;
 
         return new ConstantPlan(columns, hasRow ? List.of(Collections.unmodifiableList(row)) : List.of());
     }

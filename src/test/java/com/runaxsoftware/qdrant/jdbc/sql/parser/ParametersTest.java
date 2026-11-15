@@ -16,6 +16,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 
 import java.sql.SQLSyntaxErrorException;
 import java.util.List;
+import java.util.Set;
 
 class ParametersTest {
 
@@ -44,7 +45,10 @@ class ParametersTest {
             "SELECT * FROM docs WHERE lang = ? AND (year > ? OR NOT x IN (?, ?)) | 4",
             "SELECT _id FROM docs ORDER BY similarity(dense, ?) DESC LIMIT 5  | 1",
             "DELETE FROM docs WHERE _id = ?                                   | 1",
-            "DROP TABLE docs                                                  | 0"})
+            "DROP TABLE docs                                                  | 0",
+            "SELECT _id FROM docs WHERE lang = ? LIMIT ? OFFSET ?             | 3",
+            "SELECT _id FROM docs LIMIT ? BY doc_id LIMIT ?                    | 2",
+            "SELECT * FROM distance_matrix(docs, dense) LIMIT ? OFFSET ?      | 2"})
     void countsThePlaceholders(String sql, int count) throws SQLSyntaxErrorException {
         assertEquals(count, Parameters.count(Parser.parse(sql)));
     }
@@ -58,6 +62,33 @@ class ParametersTest {
 
         assertEquals(Parser.parse("SELECT 1 AS a FROM docs WHERE lang = 2 AND year IN (3, 2024) "
                 + "ORDER BY similarity(dense, [0.1, 0.2]) DESC LIMIT 5"), bound);
+    }
+
+    @Test
+    void bindsTheLimitOffsetAndRowsPerGroup() throws SQLSyntaxErrorException {
+        assertEquals(Parser.parse("SELECT _id FROM docs WHERE lang = 1 ORDER BY similarity(dense, "
+                        + "[0.1]) DESC LIMIT 2 BY doc_id LIMIT 3 OFFSET 4"),
+                Parameters.bind(Parser.parse("SELECT _id FROM docs WHERE lang = ? ORDER BY "
+                                + "similarity(dense, [0.1]) DESC LIMIT ? BY doc_id LIMIT ? OFFSET ?"),
+                        index -> new Literal((long) index)));
+        assertEquals(Parser.parse("SELECT * FROM distance_matrix(docs, dense) LIMIT 1 OFFSET 2"),
+                Parameters.bind(Parser.parse("SELECT * FROM distance_matrix(docs, dense) LIMIT ? OFFSET ?"),
+                        index -> new Literal((long) index)));
+    }
+
+    /**
+     * A LIMIT or OFFSET placeholder takes a whole number, where any other takes whatever its
+     * field holds, so parameter metadata can say so for those alone.
+     */
+    @Test
+    void knowsWhichPlaceholdersAreRowCounts() throws SQLSyntaxErrorException {
+        assertEquals(Set.of(2, 3, 4), Parameters.rowCounts(Parser.parse(
+                "SELECT _id FROM docs WHERE lang = ? LIMIT ? BY doc_id LIMIT ? OFFSET ?")));
+        assertEquals(Set.of(1), Parameters.rowCounts(Parser.parse(
+                "SELECT * FROM distance_matrix(docs, dense) LIMIT 5 OFFSET ?")));
+        assertEquals(Set.of(), Parameters.rowCounts(Parser.parse(
+                "SELECT _id FROM docs WHERE lang = ? LIMIT 5 OFFSET 2")));
+        assertEquals(Set.of(), Parameters.rowCounts(Parser.parse("DELETE FROM docs WHERE _id = ?")));
     }
 
     @Test

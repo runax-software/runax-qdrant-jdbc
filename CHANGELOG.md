@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `LIMIT ?` and `OFFSET ?` in a prepared statement, and `LIMIT ? BY field`, so a data grid or an
+  application pages with one prepared statement instead of new SQL for every page. The values
+  are bound before the statement is planned, so each kind of read uses them as it uses the
+  numbers written out: a search's offset goes to Qdrant, the reads the driver skips itself keep
+  the 10,000-row cap, and `setMaxRows` and `defaultLimit` bound a statement without a `LIMIT` as
+  before. `getParameterMetaData()` reports these placeholders as `BIGINT`. A value that isn't a
+  whole number of 0 or more is a `SQLDataException` with SQLState `22023`, invalid parameter
+  value, when the statement runs. ([#57])
 - Fourteen `CALL` procedures for snapshots, of a collection, of one shard, and of the whole
   storage: `create_snapshot('docs')`, `delete_snapshot`, `recover_snapshot` from a URL Qdrant
   fetches itself, and `download_snapshot` and `upload_snapshot`, which save a snapshot to a file
@@ -461,4 +469,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#51]: https://github.com/runax-software/runax-qdrant-jdbc/pull/51
 [#53]: https://github.com/runax-software/runax-qdrant-jdbc/pull/53
 [#54]: https://github.com/runax-software/runax-qdrant-jdbc/pull/54
+[#57]: https://github.com/runax-software/runax-qdrant-jdbc/pull/57
 [#58]: https://github.com/runax-software/runax-qdrant-jdbc/pull/58

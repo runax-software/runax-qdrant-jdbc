@@ -19,12 +19,15 @@ import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DeleteStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.DistanceMatrixStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.InsertStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.OnConflict;
+import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.PerGroup;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.SelectStatement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.Statement;
 import com.runaxsoftware.qdrant.jdbc.sql.parser.ast.statement.UpdateStatement;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.function.IntFunction;
 
 /**
@@ -52,6 +55,30 @@ public final class Parameters {
     }
 
     /**
+     * The numbers of the placeholders that stand for a row count: a LIMIT, an OFFSET, or the
+     * rows {@code LIMIT n BY column} keeps of each group. Each takes a whole number, where any
+     * other placeholder takes whatever its field holds.
+     */
+    public static Set<Integer> rowCounts(Statement statement) {
+        var indexes = new TreeSet<Integer>();
+
+        if (statement instanceof SelectStatement select) {
+            addIndex(indexes, select.limit());
+            addIndex(indexes, select.offset());
+            if (select.perGroup() != null) addIndex(indexes, select.perGroup().size());
+        } else if (statement instanceof DistanceMatrixStatement matrix) {
+            addIndex(indexes, matrix.limit());
+            addIndex(indexes, matrix.offset());
+        }
+
+        return indexes;
+    }
+
+    private static void addIndex(Set<Integer> indexes, Expression count) {
+        if (count instanceof Parameter parameter) indexes.add(parameter.index());
+    }
+
+    /**
      * The statement with each placeholder replaced by the value for its number.
      *
      * @param values the expression for the n-th placeholder, given n
@@ -68,10 +95,13 @@ public final class Parameters {
                 orderBy.add(new OrderItem(bind(item.expression(), values), item.descending()));
             }
 
+            PerGroup perGroup = select.perGroup() == null ? null
+                : new PerGroup(select.perGroup().column(), bind(select.perGroup().size(), values));
+
             // GROUP BY names columns only, so it holds no placeholder
             return new SelectStatement(items, select.table(), select.alias(),
-                bind(select.where(), values), select.groupBy(), orderBy, select.limit(),
-                select.offset(), select.perGroup());
+                bind(select.where(), values), select.groupBy(), orderBy,
+                bind(select.limit(), values), bind(select.offset(), values), perGroup);
         }
         if (statement instanceof InsertStatement insert) {
             var rows = new ArrayList<List<Expression>>();
@@ -99,7 +129,8 @@ public final class Parameters {
         if (statement instanceof DistanceMatrixStatement matrix) {
             return new DistanceMatrixStatement(matrix.items(), matrix.table(), matrix.vector(),
                 matrix.sample(), matrix.neighbours(), matrix.alias(),
-                bind(matrix.where(), values), matrix.limit(), matrix.offset());
+                bind(matrix.where(), values), bind(matrix.limit(), values),
+                bind(matrix.offset(), values));
         }
         if (statement instanceof CallStatement call) {
             var arguments = new ArrayList<CallArgument>();
