@@ -241,7 +241,7 @@ above has stopped predicting how much SQL runs.
 | Statement | State | Condition |
 | --- | --- | --- |
 | `SELECT … FROM <collection>` | works | Scrolls by cursor; `*` returns every column but the vectors |
-| `SELECT … FROM system.<table>` | works | Fifteen tables; a column list and `LIMIT` only |
+| `SELECT … FROM system.<table>` | works | Fifteen tables; a column list, `LIMIT` and `OFFSET` only |
 | `SELECT … FROM distance_matrix(collection, vector [, sample [, neighbours]])` | works | The one table function. Its columns are `_a`, `_b`, `_score`, `_row`, `_col`; a `WHERE` over the collection's columns says which points to sample from; `LIMIT` and `OFFSET` are taken in the driver. No `ORDER BY`, and a sparse vector is an error |
 | `SELECT` without `FROM` | partial | Constants only; a column or `*` is an error |
 | `SELECT COUNT(*)` | works | One exact count call; must be the only select item unless grouped |
@@ -456,18 +456,19 @@ nothing installed; `openai:` and `voyage:` call the provider from the driver and
 the connection properties. Naming no model is an error unless the collection's
 `runax.embed.<vector>` metadata holds one, which is deliberate — a vector searched with the
 wrong model returns plausible nonsense rather than failing. `embed()` is also a value of
-`INSERT`: Qdrant embeds a `qdrant:` model as it stores the point, and the driver embeds any
-other first, one provider call per row. `UPDATE` doesn't take it yet, since `UPDATE` doesn't
-change vectors.
+`INSERT` and of `UPDATE … SET`: Qdrant embeds a `qdrant:` model as it stores the point, and the
+driver embeds any other first. An `INSERT`'s texts go to the provider in one call per model,
+however many rows give them, and an `UPDATE` embeds one text per vector it sets and writes that
+vector to every point its `WHERE` matches.
 
 ### The JDBC surface
 
-`java.sql.DatabaseMetaData` declares 177 methods. `QdrantDatabaseMetaData` implements **20** of
-them — the 19 that a tool needs to draw a tree and a grid, `getSchemas` twice for its two
-overloads — and `AbstractDatabaseMetaData` supplies harmless defaults for the other 157, so no
-tool ever sees an `AbstractMethodError`. What is implemented is `getTables`, `getColumns`,
-`getSchemas`, `getCatalogs`, `getTableTypes`, `getPrimaryKeys`, `getIndexInfo`, `getTypeInfo`,
-and the product, driver and version strings. `getProcedures` and `getProcedureColumns` list the
+`java.sql.DatabaseMetaData` declares 177 methods. `QdrantDatabaseMetaData` implements **21** of
+them — the 20 that a tool needs to draw a tree and a grid and to list procedures, `getSchemas`
+twice for its two overloads — and `AbstractDatabaseMetaData` supplies harmless defaults for the
+other 156, so no tool ever sees an `AbstractMethodError`. What is implemented is `getTables`,
+`getColumns`, `getSchemas`, `getCatalogs`, `getTableTypes`, `getPrimaryKeys`, `getIndexInfo`,
+`getTypeInfo`, and the product, driver and version strings. `getProcedures` and `getProcedureColumns` list the
 `CALL` procedures and their arguments, in the `system` schema.
 
 Reads are paged by the scroll cursor rather than loaded whole. `setReadOnly(true)` refuses

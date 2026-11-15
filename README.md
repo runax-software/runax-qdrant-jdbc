@@ -237,7 +237,7 @@ RESET ALL;
 | `FROM system.collections`, `system.aliases` | Collection and alias APIs | Read-only system tables |
 | `TRUNCATE TABLE system.issues` | Clear issues | The one write a system table takes |
 | `INSERT INTO docs (_id, lang, dense) VALUES (…)` | Upsert that skips points already there | A taken ID is an error; no `_id` gets a UUID, from `getGeneratedKeys` |
-| `UPDATE docs SET lang = 'de' WHERE _id = 7` | Set or delete payload fields, in one batch | What DataGrip's data editor sends; needs a `WHERE` |
+| `UPDATE docs SET lang = 'de' WHERE _id = 7` | Set or delete payload fields and vectors, in one batch | What DataGrip's data editor sends; needs a `WHERE` |
 | `DELETE FROM docs WHERE …` | Delete points by filter | Returns the number deleted; needs a `WHERE` |
 | `TRUNCATE TABLE docs` | Delete every point | The collection and its indexes stay |
 | `DROP TABLE [IF EXISTS] docs` | Delete the collection | |

@@ -64,11 +64,11 @@ below are things a route already reached can do and no statement asks for yet.
 - [x] **`embed('text')`** in a search: `similarity(dense, embed('refund policy',
   'openai:text-embedding-3-small'))`. The model is `provider:model`: `openai:` and `voyage:`
   are called by the driver, with their keys from the connection's `openaiApiKey` and
-  `voyageApiKey`, and in `INSERT`, where Qdrant or the driver embeds the text as the point is
-  stored. Every text a statement needs goes to the provider in one request, split only to the
-  provider's own limits, so an `INSERT` of many rows is one call. A model may be asked for fewer
-  dimensions than it was trained for (`?dimensions=1024`), and whether a text is a query or a
-  document travels with it. Other providers come later.
+  `voyageApiKey`, and in `INSERT` and `UPDATE`, where Qdrant or the driver embeds the text as
+  the point is stored. Every text a statement needs goes to the provider in one request, split
+  only to the provider's own limits, so an `INSERT` of many rows is one call. A model may be
+  asked for fewer dimensions than it was trained for (`?dimensions=1024`), and whether a text is
+  a query or a document travels with it. Other providers come later.
 - [x] **Qdrant Cloud inference** — let Qdrant embed the text server-side where available,
   through the same function: `embed('refund policy', 'qdrant:qdrant/bm25')`. Every Qdrant runs
   BM25 into sparse vectors; hosted dense models need Qdrant Cloud's inference.
@@ -126,8 +126,7 @@ below are things a route already reached can do and no statement asks for yet.
   needs no ID lookup, and `DO UPDATE` is `upsert`, which replaces it. `DO UPDATE … WHERE
   price < 100` sends the condition as Qdrant's `update_filter`, so only the points already there
   that match are replaced while new ones are inserted regardless — PostgreSQL's own meaning for
-  that clause. `DO UPDATE` takes no `SET` list, since Qdrant replaces a whole point. Batching the
-  provider calls a driver-side `embed()` makes comes later.
+  that clause. `DO UPDATE` takes no `SET` list, since Qdrant replaces a whole point.
 - [x] **DELETE** mapped to deleting points: `DELETE FROM docs WHERE …` through the same
   filters as `SELECT`, `TRUNCATE TABLE docs` for every point, and `DROP TABLE [IF EXISTS] docs`
   for the collection itself. A `DELETE` without `WHERE` is an error that points to `TRUNCATE`.
